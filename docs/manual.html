@@ -545,7 +545,7 @@ pnpm install                   <span class="c"># workspaces + builds core dist/<
 
       <h3>The three human gates — one verb</h3>
       <div class="gates">
-        <div class="gate"><span class="n">Gate 1 · task gate</span><b>approve</b><code>/agentic-workflow:engineering approve &lt;id&gt;</code><span>You accept the goal &amp; acceptance criteria. draft → queued. Explicit id always required for drafts.</span></div>
+        <div class="gate"><span class="n">Gate 1 · task gate</span><b>approve</b><code>/agentic-workflow:engineering approve &lt;id&gt;</code><span>You accept the goal &amp; acceptance criteria. draft → queued. Explicit id always required for drafts. Add <code>--auto-plan</code> to skip Gate 2 for this one task: its plan is approved automatically when it parks (replan or a fresh approve clears it; Gate 3 stays yours).</span></div>
         <div class="gate"><span class="n">Gate 2 · plan gate</span><b>approve</b><code>/agentic-workflow:engineering approve [id]</code><span>You accept the plan the loop parked. plan-review → in-progress. Reject with <code>replan [id] [reason]</code>.</span></div>
         <div class="gate"><span class="n">Gate 3 · ship</span><b>approve</b><code>/agentic-workflow:engineering approve [id]</code><span>You accept the reviewed diff. in-review → completed. Publishes per <code>shipPublish</code> — override per ship with <code>--pr</code> / <code>--push</code> / <code>--local</code>. The PR targets the branch the run was cut from; override with <code>--base=&lt;branch&gt;</code>.</span></div>
       </div>
@@ -679,11 +679,11 @@ pnpm install                   <span class="c"># workspaces + builds core dist/<
             <tr><td><code>abandon &lt;id&gt; [reason]</code></td><td>Cancel a task by moving it to abandoned — the reversible cancellation (file kept). Refused while a loop drives the task or a claim is held.</td></tr>
             <tr><td><code>remove &lt;id&gt; --force</code></td><td>Hard-delete a task from the backlog entirely, from any folder — file deleted, not moved, and the removal committed. Bare <code>remove</code> is a dry run that deletes nothing.</td></tr>
             <tr><td><code>plan &lt;id&gt;</code></td><td>Run PLAN on one queued task now and park it in plan-review, without waiting for a claim tick.</td></tr>
-            <tr><td><code>claim</code></td><td>Pull &amp; drive the next item: build-ready in-progress/ work first, then an approved queued/ task to plan.</td></tr>
+            <tr><td><code>claim [id]</code></td><td>Pull &amp; drive the next item: build-ready in-progress/ work first, then an approved queued/ task to plan. With a task id, runs exactly that task now — BUILD if build-ready, else its PLAN pass.</td></tr>
             <tr><td><code>watch [trigger]</code> · <code>unwatch</code></td><td>Standing worker scoped to the engineering kind / clear the watch flag (OpenCode only). Bare <code>watch</code> uses <code>workflows.&lt;kind&gt;.trigger</code> (default poll); the argument overrides it for this session — <code>poll [interval]</code> or a bare interval (<code>30s</code>, <code>5m</code>, <code>2h</code>, bare number = minutes), <code>cron &lt;schedule&gt;</code>, or <code>idle</code>.</td></tr>
             <tr><td><kbd>Esc</kbd></td><td>Pause a running loop — halts after the in-flight stage settles and keeps the snapshot. Resume with <code>recover</code>.</td></tr>
             <tr><td><code>recover &lt;id&gt;</code></td><td>Resume an interrupted task (crash or <kbd>Esc</kbd> pause) at the exact stage it stopped.</td></tr>
-            <tr><td><code>kinds</code> · <code>doctor [fix]</code></td><td>List the workflow kinds &amp; enabled state; diagnose/repair backlog damage.</td></tr>
+            <tr><td><code>kinds</code> · <code>doctor [fix]</code></td><td>List the workflow kinds &amp; enabled state; diagnose/repair backlog damage and report denied bash commands with the config change that would admit each.</td></tr>
             <tr><td><code>stop</code> · <code>status</code></td><td>Deliberate end (drops the snapshot — nothing to recover, unlike <kbd>Esc</kbd>); loop + backlog roll-up (bare command = status).</td></tr>
           </tbody></table></div>
         </div>

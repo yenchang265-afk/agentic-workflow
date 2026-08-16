@@ -21,13 +21,13 @@ No configuration needed — the engineering loop runs by default. To disable it:
 **OpenCode**
 
 ```
-/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
+/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
 ```
 
 **Claude Code (MCP)**
 
 ```
-/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim | recover <id> | kinds | doctor [fix] | stop | status
+/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | recover <id> | kinds | doctor [fix] | stop | status
 ```
 
 (Claude Code has no standing watcher; `claim` is the one-shot pull verb.)
@@ -67,7 +67,7 @@ flowchart TB
 
     subgraph execution["THE LOOP — /agentic-workflow:engineering · unattended, driven on session.idle"]
         direction TB
-        claim["<b>/agentic-workflow:engineering plan &lt;id&gt;</b> — plan one now, no tick needed<br/><b>/agentic-workflow:engineering claim</b> — one-shot pull<br/><b>/agentic-workflow:engineering watch [trigger]</b> — worker session,<br/>claims via atomic mkdir lock<br/>(build-ready in-progress/ first, then queued/ to plan)"]
+        claim["<b>/agentic-workflow:engineering plan &lt;id&gt;</b> — plan one now, no tick needed<br/><b>/agentic-workflow:engineering claim [id]</b> — one-shot pull (with an id: that task now)<br/><b>/agentic-workflow:engineering watch [trigger]</b> — worker session,<br/>claims via atomic mkdir lock<br/>(build-ready in-progress/ first, then queued/ to plan)"]
         planstage["<b>PLAN</b><br/>agent: workflow-plan-author · task file only, main tree<br/>skill: planning-and-task-breakdown<br/>(+ api-and-interface-design, deprecation-and-migration,<br/>documentation-and-adrs when relevant)<br/><i>writes ## Implementation Plan in place,<br/>then parks — the loop exits</i>"]
         build["<b>BUILD</b><br/>agent: workflow-build · edit ✅ bash ✅<br/>skills: incremental-implementation,<br/>test-driven-development<br/>(+ frontend-ui-engineering, observability-and-instrumentation,<br/>code-simplification when relevant)<br/><i>TDD on feature/&lt;id&gt; branch or worktree,<br/>commit checkpoint per iteration</i>"]
         verify["<b>VERIFY</b><br/>agent: workflow-verify · edit ❌ bash: test allowlist<br/>skill on FAIL: debugging-and-error-recovery<br/><i>loop runs the plan's agentic-checks first (exit codes bind),<br/>then acceptance criteria — verdict via workflow_verdict only</i>"]

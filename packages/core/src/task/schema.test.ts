@@ -324,3 +324,12 @@ test("serializeTask round-trips the aligned fields through parseTask", () => {
   assert.deepEqual(task.labels, ["backend"])
   assert.deepEqual(task.tracker, { system: "jira", key: "PROJ-123", parent: "PROJ-100" })
 })
+
+test("autoPlan round-trips when true and is omitted otherwise", () => {
+  const armed = serializeTask({ title: "Chore", autoPlan: true, body: "x" })
+  assert.match(armed, /^autoPlan: true$/m)
+  assert.equal(parseTask("chore.md", armed, "/p/chore.md").autoPlan, true)
+  // Absent and explicit-false serialize identically: no dead key on every task.
+  assert.ok(!/autoPlan/.test(serializeTask({ title: "Chore", body: "x" })))
+  assert.ok(!/autoPlan/.test(serializeTask({ title: "Chore", autoPlan: false, body: "x" })))
+})

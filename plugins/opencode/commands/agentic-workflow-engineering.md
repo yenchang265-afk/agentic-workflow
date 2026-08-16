@@ -1,7 +1,7 @@
 ---
 name: agentic-workflow:engineering
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
 ---
 
 The engineering agentic loop — one command for authoring, the human gates,
@@ -171,6 +171,13 @@ Dispatch:
   `docs/tasks/*/<id>*`: the task will still sit in its old folder. Report
   that the gate did NOT happen, with the fix (`pnpm install` at the
   agentic-workflow repo root, then restart opencode) — never claim it did.
+- **`--auto-plan` thins the PLAN gate for this one task, and the plugin
+  parses it — not you.** At the task gate it arms the task so that when its
+  plan later parks, the plan gate is crossed automatically and BUILD follows
+  on this session — for chore-sized work whose plan review is a rubber stamp.
+  The ship gate is never automated. A `replan` clears it (a rejected plan's
+  revision parks for review), and so does a later plain `approve` on the same
+  draft. Never add it to a command the user did not write.
 <!-- /aw:verb approve -->
 <!-- aw:verb replan -->
 - **`replan [id] [reason]`** — the sole rejection verb, and it chains the
@@ -230,7 +237,8 @@ Dispatch:
 - **`plan <id>`** — plan one approved task now: claims the `queued/` task and
   runs the PLAN stage (writes the `## Implementation Plan` onto the task
   file, parks it in `plan-review/` for your gate, exits). Building is not
-  reachable from here — `claim`/`watch` drive builds. The PLAN pass finishes in
+  reachable from here — `claim <id>` builds one now; `claim`/`watch` drive
+  builds by priority. The PLAN pass finishes in
   the background driver, after this turn has ended, so the plan gate arrives as
   its OWN turn: once the plan parks, the plugin starts a fresh turn carrying a
   **`NEXT STEP`** line that asks you to put the gate question to the user
@@ -240,11 +248,15 @@ Dispatch:
   alone, because nobody is sitting at it.
 <!-- /aw:verb plan -->
 <!-- aw:verb claim -->
-- **`claim`** — one-shot pull: claim the next task (lowest priority number
-  first, unless a `queued/` task holds a plan request — the hub's Plan
-  button — which claims that one first) and drive it once this turn
-  settles — build-ready `in-progress/` work, then an approved `queued/` task
-  to plan when no build work is left.
+- **`claim [id]`** — one-shot pull. Bare, it claims the next task (lowest
+  priority number first, unless a `queued/` task holds a plan request — the
+  hub's Plan button — which claims that one first) and drives it once this
+  turn settles — build-ready `in-progress/` work, then an approved `queued/`
+  task to plan when no build work is left. With an id (short-hash handles
+  resolve), it runs THAT task now instead of the priority walk: a build-ready
+  `in-progress/` task starts at BUILD on its feature branch, an approved
+  `queued/` task runs its PLAN pass and parks in `plan-review/` for your
+  gate; any other folder is refused with the verb to use instead.
 <!-- /aw:verb claim -->
 <!-- aw:verb watch -->
 - **`watch [trigger]`** — put **this** session into engineering worker mode.
@@ -311,9 +323,12 @@ Dispatch:
 <!-- aw:verb doctor -->
 - **`doctor [fix]`** — audit the backlog for structural damage (stray folders
   like `run/`, task files outside every status folder, duplicate ids, held
-  claim markers, stray plan-request markers). With `fix`, applies the
-  unambiguous repairs: rescues strays to `draft/`, removes emptied stray
-  folders, releases stale claim markers, and drops stray plan requests.
+  claim markers, stray plan-request markers) and report the allowlist deny
+  log — bash commands the check stages refused, aggregated with the config
+  change that would admit each (the suggestions land in the log; the config
+  edit is the human's call). With `fix`, applies the unambiguous repairs:
+  rescues strays to `draft/`, removes emptied stray folders, releases stale
+  claim markers, drops stray plan requests, and clears the reported deny log.
   Duplicates are always left for you.
 <!-- /aw:verb doctor -->
 

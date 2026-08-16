@@ -14,7 +14,7 @@ import {
 } from "@agentic-workflow/core/workflow/stage-marker"
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
 import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
-import { stageDef, stageRequiresCriteria, type LoadedManifest } from "@agentic-workflow/core/manifest/schema"
+import { effectiveAllowlist, stageDef, stageRequiresCriteria, type LoadedManifest } from "@agentic-workflow/core/manifest/schema"
 import { combineSkips, pollOnce } from "@agentic-workflow/core/scheduler/scheduler"
 import { appendSchedulerEvents, skipSetKey, type SchedulerEvent } from "@agentic-workflow/core/scheduler/events-log"
 import {
@@ -87,7 +87,7 @@ import {
 import type { AdoGateway } from "@agentic-workflow/core/source/ado-gateway"
 import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
 import { clearState, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
-import { abandonTask, approveAny, rejectAny, removeTask, retaskTask, type GateCandidate, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
+import { abandonTask, approveAny, approvePlan, rejectAny, removeTask, retaskTask, type GateCandidate, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
 import { runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
@@ -139,7 +139,10 @@ import {
   deprecatedAdoKeys,
   unreviewedAxes,
   worktreesDirFor,
+  bashAllowlistExtras,
+  platformFor,
 } from "@agentic-workflow/core/config"
+import { aggregateDenials, clearDenyLog, formatDenyFindings, readDenyLog } from "@agentic-workflow/core/workflow/deny-log"
 import { boundedShell } from "../bounded-shell.ts"
 import type { Config } from "../config.ts"
 import { splitVerb } from "../verb.ts"
@@ -2428,6 +2431,12 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config, only?: st
         ...(outcome.retryable !== undefined ? { retryable: outcome.retryable } : {}),
       })
     }
+    // A watch-claimed PLAN that parks a task armed with --auto-plan continues
+    // into BUILD unattended — the whole point of the opt-in. Never throws, so
+    // it cannot reach the release arm below and free a claim it did not take.
+    if (outcome?.kind === "park" && item.workflowKind === "engineering" && item.state.task) {
+      await autoAdvanceParkedPlan(deps, sessionID, config, item.state.task.id)
+    }
   } catch (err) {
     // Died before real work started (e.g. ensureIsolation threw, before
     // setWorkflow ran — onIdle's catch can't see the task): the claim is ours, so
@@ -2765,8 +2774,12 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
   // own ask is refused by the guards that stop a stage agent moving human gates.
   // And NEVER awaited — the turn it starts contains a question that blocks for as
   // long as the human takes, while `onIdle` is called from the event hook.
-  if (work?.kind === "start-plan" && work.askOnPark && planOutcome?.kind === "park") {
-    void promptPlanGateAsk(deps, sessionID, work.task.id)
+  if (work?.kind === "start-plan" && planOutcome?.kind === "park") {
+    // Auto-plan first: when the task opted in, the gate is crossed here and
+    // there is nothing left to ask; otherwise the human-requested plan gets
+    // its ask exactly as before.
+    const advanced = await autoAdvanceParkedPlan(deps, sessionID, config, work.task.id)
+    if (!advanced && work.askOnPark) void promptPlanGateAsk(deps, sessionID, work.task.id)
   }
 }
 
@@ -2958,7 +2971,7 @@ export const handleApprove = async (deps: Deps, sessionID: string, args: string,
   // parser knows which bare-looking words it already consumed as flag values.
   const id = opts.rest[0] ?? ""
   try {
-    const r = await approveAny(gateCtx(deps, config), id, "engineering", opts.publish, opts.base)
+    const r = await approveAny(gateCtx(deps, config), id, "engineering", opts.publish, opts.base, opts.autoPlan)
     // A task gate leaves an obvious next question, and this host DOES get a
     // model turn after a handled verb (impl.ts overrides the command prompt with
     // this outcome). So the outcome carries the ask: nothing else can open a
@@ -3565,7 +3578,7 @@ const startPlanById = async (deps: Deps, sessionID: string, id: string, config: 
     const elsewhere = await findAnyStatus(deps, config, id)
     const detail =
       elsewhere === "in-progress"
-        ? `its plan is already approved — it's build-ready; ${ECMD} claim (or watch) builds it`
+        ? `its plan is already approved — it's build-ready; ${ECMD} claim ${id} builds it now (or claim/watch picks it up by priority)`
         : elsewhere === "plan-review"
           ? `its plan is parked for review — ${ECMD} approve ${id} (or ${ECMD} replan ${id} <why>)`
           : elsewhere === "draft"
@@ -3584,12 +3597,131 @@ const startPlanById = async (deps: Deps, sessionID: string, id: string, config: 
   return report(client, `Loop started on "${queued.title}" — planning… (it will park in plan-review/ for your gate)`, "info")
 }
 
+/**
+ * Handle `claim <id>` — run ONE specific task now instead of the priority
+ * walk: a build-ready `in-progress/` task queues a BUILD drive (the
+ * `start-task` pending, whose consumer arm in `onIdle` predates this
+ * producer), an approved `queued/` task queues its PLAN pass exactly as
+ * `plan <id>` does. The by-id twin of the bare `claim`, matching the Claude
+ * host's `workflow_start({id})` — without it, a backlog with several
+ * build-ready tasks had no way to say "build THIS one" (priority order chose
+ * for you), while `plan <id>` refused build-ready ids and pointed back at
+ * the very walk that cannot target them.
+ */
+const startTaskById = async (deps: Deps, sessionID: string, id: string, config: Config): Promise<string | undefined> => {
+  const { client } = deps
+  // Same busy guard as `plan <id>`/`claim`: this session may already be
+  // driving a DIFFERENT task, and the clearWorkflow below would null that
+  // run's state mid-stage. (The claim branch of handleCommand also guards,
+  // but this function must hold on its own for any future caller.)
+  if (driving.has(sessionID) || getWorkflow(sessionID)) {
+    return report(client, `A loop is already driving in this session — ${ECMD} stop it first.`, "warning")
+  }
+  // Accept the short-hash handle (`claim f7k3`), same as `plan <id>` and the
+  // gate verbs.
+  const resolved = await resolveTaskIdAnywhere(deps.$, deps.directory, config.tasksDir, id, deps.log)
+  if (resolved && "ambiguous" in resolved) {
+    return report(client, `Ambiguous id "${id}" — matches ${resolved.ambiguous.join(", ")}. Use more characters.`, "warning")
+  }
+  if (resolved) id = resolved.id
+  if (findSessionDriving(id)) {
+    return report(client, `Task "${id}" is already being driven by a live loop.`, "warning")
+  }
+  const ready = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", id)
+  if (ready) {
+    if (!isClaimable(ready)) {
+      // Mirror recover's split: a started task resumes, a planless one replans.
+      return report(
+        client,
+        isRecoverable(ready)
+          ? `Task "${id}" has already started — resume it with ${ECMD} recover ${id}.`
+          : `Task "${id}" has no persisted plan — send it back with ${ECMD} replan ${id}.`,
+        "warning",
+      )
+    }
+    if (!(await claimTask(deps.$, ready))) {
+      return report(client, `Task "${id}" was just claimed by another watcher.`, "warning")
+    }
+    clearWorkflow(sessionID)
+    await setPending(deps, sessionID, { kind: "start-task", task: ready, goal: taskGoal(ready) })
+    return report(client, `Loop started on "${ready.title}" — building… (BUILD → VERIFY → REVIEW once this turn settles)`, "info")
+  }
+  const queued = await findByIdIn(deps.$, deps.directory, config.tasksDir, "queued", id)
+  if (queued) {
+    if (!(await claimForPlan(deps, sessionID, queued, config))) {
+      return report(client, `Task "${id}" was just claimed by another watcher.`, "warning")
+    }
+    return report(client, `Loop started on "${queued.title}" — planning… (it will park in plan-review/ for your gate)`, "info")
+  }
+  const elsewhere = await findAnyStatus(deps, config, id)
+  const detail =
+    elsewhere === "plan-review"
+      ? `its plan is parked for review — ${ECMD} approve ${id} (or ${ECMD} replan ${id} <why>)`
+      : elsewhere === "draft"
+        ? `it's a draft — approve it first with ${ECMD} approve ${id}`
+        : elsewhere === "in-review"
+          ? `it's finished and waiting for your ship gate — ${ECMD} approve ${id}`
+          : elsewhere === "completed" || elsewhere === "abandoned"
+            ? `it's in ${elsewhere} — nothing to run`
+            : elsewhere
+              ? `it's in ${elsewhere}`
+              : `no task "${id}" found`
+  return report(client, `Can't claim "${id}": ${detail}.`, "warning")
+}
+
+/**
+ * Cross the plan gate automatically after a PLAN drive parks, when the task
+ * opted in at its task gate (`approve <id> --auto-plan`): approve the parked
+ * plan and queue the BUILD drive on this session via the same `start-task`
+ * pending `claim <id>` uses. The SHIP gate is never automated. The flag is
+ * judged on the freshly parked FILE, never on the memory the claim was taken
+ * with — a replan or a fresh approve may have cleared it mid-drive.
+ *
+ * Returns true when the gate was crossed, and from that point every arm
+ * returns true: the callers' plan-gate ask must not be put for a gate that no
+ * longer exists, even when the follow-on BUILD claim lost a race (the task is
+ * build-ready; the next claim/watch tick builds it). Never throws — a failure
+ * before the gate move degrades to the ordinary parked plan plus a warning,
+ * which is exactly the state the human gate already handles.
+ */
+export const autoAdvanceParkedPlan = async (deps: Deps, sessionID: string, config: Config, id: string): Promise<boolean> => {
+  try {
+    const parked = await findByIdIn(deps.$, deps.directory, config.tasksDir, "plan-review", id)
+    if (parked?.autoPlan !== true) return false
+    const r = await approvePlan(gateCtx(deps, config), id)
+    if (!r.ok) {
+      await deps.log("warn", `auto-plan: could not approve the parked plan for "${id}": ${r.message}`)
+      void toast(deps.client, `Auto-plan: could not approve "${id}" — ${r.message}`, "warning")
+      return false
+    }
+    const ready = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", id)
+    if (
+      ready &&
+      isClaimable(ready) &&
+      !findSessionDriving(id) &&
+      !driving.has(sessionID) &&
+      !getWorkflow(sessionID) &&
+      (await claimTask(deps.$, ready))
+    ) {
+      clearWorkflow(sessionID)
+      await setPending(deps, sessionID, { kind: "start-task", task: ready, goal: taskGoal(ready) })
+      void toast(deps.client, `Auto-plan: plan approved for "${ready.title}" — building… (BUILD → VERIFY → REVIEW)`, "info")
+    } else {
+      void toast(deps.client, `Auto-plan: plan approved for "${id}" — build-ready; the next claim/watch tick builds it.`, "info")
+    }
+    return true
+  } catch (err) {
+    await deps.log("warn", `auto-plan advance failed for "${id}": ${(err as Error).message}`)
+    return false
+  }
+}
+
 /** Per-kind usage toasts. Engineering carries the full lifecycle; every other
  *  kind gets the minimal watcher verb set. */
 const USAGE =
   `Usage: ${ECMD} new <idea> · retask <id> [note] · approve [id] [--base=<branch>] [--pr|--push|--local] · replan [id] [reason] · ` +
   "abandon <id> [reason] · remove <id> --force · plan <id> · " +
-  "claim · watch [interval] · unwatch · recover <id> · kinds · doctor [fix] · stop · status"
+  "claim [id] · watch [interval] · unwatch · recover <id> · kinds · doctor [fix] · stop · status"
 const kindUsage = (kind: string): string => `Usage: /agentic-workflow:${kind} claim · watch [interval] · unwatch · stop · status`
 
 /**
@@ -3708,18 +3840,21 @@ export const handleCommand = async (
       return report(client, `A loop is already driving in this session — /agentic-workflow:${kind} stop it first.`, "warning")
     }
     // `claim <pr>` forces a specific PR on a PR-shaped kind (pr-sitter /
-    // review-sitter), overriding the poller's "what needs attention" heuristic.
+    // review-sitter), overriding the poller's "what needs attention" heuristic;
+    // engineering's `claim <id>` runs one specific TASK now instead of the
+    // priority walk.
     if (rest) {
       const isPrKind = manifestFor(kind).manifest.workSource.type === "pull-request"
-      if (!isPrKind) {
-        return report(client, `/agentic-workflow:${kind} claim takes no argument — a specific PR number only applies to the PR sitters.`, "warning")
+      if (isPrKind) {
+        const target = parsePrTarget(rest)
+        if (target === null) {
+          return report(client, `Could not read "${rest}" as a PR — pass a number (42), #42, or a PR URL.`, "warning")
+        }
+        claimRequested.set(sessionID, { kind, target })
+        return report(client, `Claiming PR #${target} for ${kind} — it starts when this turn settles.`, "info")
       }
-      const target = parsePrTarget(rest)
-      if (target === null) {
-        return report(client, `Could not read "${rest}" as a PR — pass a number (42), #42, or a PR URL.`, "warning")
-      }
-      claimRequested.set(sessionID, { kind, target })
-      return report(client, `Claiming PR #${target} for ${kind} — it starts when this turn settles.`, "info")
+      if (engineering) return startTaskById(deps, sessionID, rest, config)
+      return report(client, `/agentic-workflow:${kind} claim takes no argument — a specific target only applies to the PR sitters (a PR number) and engineering (a task id).`, "warning")
     }
     claimRequested.set(sessionID, { kind })
     return report(client, `Claiming the next ${kind} item — it starts when this turn settles.`, "info")
@@ -3974,14 +4109,26 @@ export const handleCommand = async (
       // unparseable files), and a request written after it — the hub's Plan
       // button, mid-doctor — must never be judged against it.
       const strayRequests = await confirmedStrayPlanRequestIds(deps.$, deps.directory, config.tasksDir, queuedIds, "queued", deps.log)
+      // Allowlist deny telemetry: what the enforcement seams refused, aggregated
+      // with the config change that would admit it — the report that used to
+      // take stage-transcript archaeology (a starved stage's DeniedError dump).
+      const denyFindings = aggregateDenials(readDenyLog(deps.directory, config.tasksDir), (dkind: string, dstage: string) => {
+        try {
+          const def = stageDef(manifestFor(dkind).manifest, dstage)
+          return [...effectiveAllowlist(def, platformFor(config, dkind)), ...bashAllowlistExtras(config)]
+        } catch {
+          return null
+        }
+      })
       for (const line of formatAnomalies(anomalies, config.tasksDir)) await deps.log("warn", `doctor: ${line}`)
       if (heldQueued.length) await deps.log("info", `doctor: claim marker(s) held in queued/.claims: ${heldQueued.join(", ")}`)
       if (heldInProgress.length) await deps.log("info", `doctor: claim marker(s) held in in-progress/.claims: ${heldInProgress.join(", ")}`)
       if (strayRequests.length) {
         await deps.log("info", `doctor: plan request(s) whose task left queued/: ${strayRequests.join(", ")}`)
       }
+      for (const line of formatDenyFindings(denyFindings)) await deps.log("warn", `doctor: allowlist: ${line}`)
       const findings =
-        formatAnomalies(anomalies, config.tasksDir).length + heldQueued.length + heldInProgress.length + strayRequests.length
+        formatAnomalies(anomalies, config.tasksDir).length + heldQueued.length + heldInProgress.length + strayRequests.length + denyFindings.length
       if (!fix) {
         return report(
           client,
@@ -4051,6 +4198,9 @@ export const handleCommand = async (
       // from above are revoked; a request written since (the hub's Plan
       // button racing this doctor) is left alone.
       const revokedRequests = await revokeStrayPlanRequests(deps.$, deps.directory, config.tasksDir, strayRequests)
+      // Deny telemetry is acknowledged by a fix: the report above carries the
+      // aggregate, so the raw log is cleared rather than re-reported forever.
+      const denyCleared = denyFindings.length ? clearDenyLog(deps.directory, config.tasksDir) : false
       if (rescued.length) {
         await commitTasks(deps, config, `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
       }
@@ -4059,6 +4209,7 @@ export const handleCommand = async (
         removedDirs.length ? `removed ${removedDirs.length} stray folder(s)` : "",
         released.length ? `released ${released.length} stale claim marker(s)` : "",
         revokedRequests.length ? `dropped ${revokedRequests.length} stray plan request(s)` : "",
+        denyCleared ? `cleared the allowlist deny log (${denyFindings.length} distinct command(s) — see the log for suggestions)` : "",
         anomalies.duplicates.length ? `${anomalies.duplicates.length} duplicate id(s) left for you` : "",
       ].filter(Boolean)
       return report(client, summary.length ? `Backlog doctor: ${summary.join(" · ")}.` : "Backlog doctor: nothing to repair.", "success")

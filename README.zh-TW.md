@@ -34,7 +34,9 @@
 diff 之後交付一份已完成的審查（發布）——一個任務永遠只處於一個資料夾中，
 因此這個動作永遠不會有歧義，省略 id 的 `approve` 會推進目前唯一停在迴圈
 把關點上的任務；只有在兩個迴圈把關點都沒有任務等待時，才會退而推進唯一的
-一份草稿。**`replan [id] [reason]`** 是唯一的拒絕
+一份草稿。`approve <id> --auto-plan` 為那一個任務削薄計畫閘門：計畫暫存時
+自動核准並接著 BUILD——`replan` 或重新 approve 會清除它，出貨閘門永不
+自動化。**`replan [id] [reason]`** 是唯一的拒絕
 動詞：一份暫存的計畫（或以 id 指定、觸發了上限的任務）會被送回
 `queued/` 重新規劃。規劃發生在**執行之前**——`claim`/`watch` 先取可建置的工作，
 沒有時才退而認領一個已核准的 `queued/` 任務來規劃，而 `plan <id>` 讓你不必等
@@ -52,6 +54,10 @@ diff 之後交付一份已完成的審查（發布）——一個任務永遠只
 `workflows.<kind>.stageContext` 可以限制階段提示還能帶上多少內容，當你把某個
 階段指向小模型時這一點很重要（見
 [docs/configuration.md](docs/configuration.md)）。
+
+在使用者設定裡設定 `notifyCommand`，即可在計畫停泊、run 抵達出貨閘門或
+迴圈停止時收到推播（`notify-send`、聊天 webhook）——而不是沒人看的
+scrollback 裡的一則 toast。
 
 執行是在 `feature/<id>` git 分支上隔離進行的，且預設會在自己的 git worktree
 （`.workflow-worktrees`）中簽出，因此你的工作樹永遠不會被動到——可設定
@@ -193,11 +199,12 @@ pnpm install
   任務 —— `--force` 才是確認。只有在你設定 `ignoreBacklog: false` 時才能從 git
   還原；預設會把 `docs/tasks/` 完全排除在 git 之外，所以除非你真的要讓檔案消失，
   否則請優先使用 `abandon`
-- `/agentic-workflow:engineering plan <id>` · `claim` · `watch [trigger]`（OpenCode）·
+- `/agentic-workflow:engineering plan <id>` · `claim [id]` · `watch [trigger]`（OpenCode）·
   `unwatch` · `recover <id>` · `stop` · `status` · `doctor [fix]` · `kinds` ——
   `plan` 為一個已排入佇列的任務執行 PLAN 並將其暫存，不必等巡查；
   `claim` 拉取下一個項目——先取可建置的 `in-progress/` 工作，沒有時再取一個
-  已核准的 `queued/` 任務來規劃；`watch` 是一個僅作用於 engineering 類型的常駐
+  已核准的 `queued/` 任務來規劃——或給定任務 id 時，立刻執行那一個任務
+  （建置就緒則進 BUILD，否則執行它的 PLAN 巡查）；`watch` 是一個僅作用於 engineering 類型的常駐
   worker，排程依 `workflows.<kind>.trigger` 決定，除非以參數覆寫
   （`poll [interval]`、像 `5m` 這樣的純間隔、`cron <schedule>` 或 `idle`）
 - `/agentic-workflow:pr-sitter claim [<pr>]` · `watch [trigger]`（OpenCode）· `unwatch` ·

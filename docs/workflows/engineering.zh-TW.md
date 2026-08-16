@@ -22,13 +22,13 @@ REVIEW，作用於 docs/tasks 待辦（backlog）。
 **OpenCode**
 
 ```
-/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
+/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
 ```
 
 **Claude Code (MCP)**
 
 ```
-/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim | recover <id> | kinds | doctor [fix] | stop | status
+/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim [id] | recover <id> | kinds | doctor [fix] | stop | status
 ```
 
 （Claude Code 沒有常駐的 watcher；`claim` 就是一次性的拉取動詞。）
@@ -68,7 +68,7 @@ flowchart TB
 
     subgraph execution["迴圈本身（THE LOOP）— /agentic-workflow:engineering · 無人值守，由 session.idle 驅動"]
         direction TB
-        claim["<b>/agentic-workflow:engineering plan &lt;id&gt;</b> — 立即規劃一個任務，不必等巡查<br/><b>/agentic-workflow:engineering claim</b> — 一次性拉取<br/><b>/agentic-workflow:engineering watch [trigger]</b> — worker session，<br/>透過原子性的 mkdir lock 認領<br/>（先取 in-progress/ 的可建置工作，再取 queued/ 來規劃）"]
+        claim["<b>/agentic-workflow:engineering plan &lt;id&gt;</b> — 立即規劃一個任務，不必等巡查<br/><b>/agentic-workflow:engineering claim [id]</b> — 一次性拉取（帶 id：立刻執行那個任務）<br/><b>/agentic-workflow:engineering watch [trigger]</b> — worker session，<br/>透過原子性的 mkdir lock 認領<br/>（先取 in-progress/ 的可建置工作，再取 queued/ 來規劃）"]
         planstage["<b>PLAN</b><br/>agent：workflow-plan-author · 僅限任務檔案，於主樹（main tree）<br/>skill：planning-and-task-breakdown<br/>（相關時 + api-and-interface-design、deprecation-and-migration、<br/>documentation-and-adrs）<br/><i>就地寫入 ## Implementation Plan，<br/>然後暫存 —— 迴圈結束</i>"]
         build["<b>BUILD</b><br/>agent：workflow-build · edit ✅ bash ✅<br/>skills：incremental-implementation、<br/>test-driven-development<br/>（相關時 + frontend-ui-engineering、observability-and-instrumentation、<br/>code-simplification）<br/><i>在 feature/&lt;id&gt; 分支或 worktree 上進行 TDD，<br/>每次疊代一個 commit checkpoint</i>"]
         verify["<b>VERIFY</b><br/>agent：workflow-verify · edit ❌ bash：測試白名單<br/>FAIL 時的 skill：debugging-and-error-recovery<br/><i>迴圈先跑計畫的 agentic-checks（結束碼具約束力），<br/>再判驗收標準——裁定只透過 workflow_verdict 工具產生</i>"]

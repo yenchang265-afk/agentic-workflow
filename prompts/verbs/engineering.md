@@ -185,6 +185,14 @@
     `approve <id> --pr` — on a task already in `completed/` that re-runs **only**
     the publish step. The flag is what asks for it: a bare `approve <id>` on a
     finished task still just reports that it already moved, and pushes nothing.
+  - **`--auto-plan` thins the PLAN gate for this one task, and the hook parses
+    it — not you.** At the task gate it arms the task so that when its plan
+    later parks, the plan gate is crossed automatically and BUILD follows —
+    for chore-sized work whose plan review is a rubber stamp. The ship gate is
+    never automated. A `replan` clears it (a rejected plan's revision parks
+    for review), and so does a later plain `approve` on the same draft. Never
+    add it to a command the user did not write: it removes a human review the
+    user did not choose to skip.
 <!-- /aw:verb approve -->
 <!-- aw:verb replan -->
 - **`replan [id] [reason]`** — the sole rejection verb, and it chains the
@@ -252,16 +260,22 @@
   the park is followed by a **`PLAN GATE`** block the harness emits beside the
   result, carrying the same question with the ids and tool names filled in —
   obey it. If the id is already build-ready
-  (`in-progress/`), don't start it here — `claim` builds it.
+  (`in-progress/`), don't start it here — `claim <id>` builds it now.
 <!-- /aw:verb approve|plan -->
 <!-- aw:verb claim -->
-- **`claim`** — call `mcp__agentic-workflow__workflow_claim` to pick up the next
+- **`claim [id]`** — with an id, run THAT task now: call
+  `mcp__agentic-workflow__workflow_start({id})` (short-hash handles resolve) — a
+  build-ready `in-progress/` task starts at BUILD on `feature/<id>`, an
+  approved `queued/` (planless) task starts at PLAN and parks the plan in
+  `plan-review/` for the gate; any other folder is refused with the verb to
+  use instead — relay that refusal, don't work around it. Without an id, call
+  `mcp__agentic-workflow__workflow_claim` to pick up the next
   engineering item and drive it: build-ready `in-progress/` tasks first, then a
   planless `queued/` task to plan, lowest priority number first within each,
   unless a `queued/` task holds a plan request (the hub's Plan button), which
   claims first. A
   `queued/` claim enters at PLAN and parks the plan for the gate. An `in-progress/`
-  task starts at BUILD on `feature/<id>`; follow the `workflow-orchestration`
+  task starts at BUILD on `feature/<id>`; either way, follow the `workflow-orchestration`
   protocol: `workflow_stage` before spawning each stage subagent (`workflow-build` /
   `workflow-verify` / `workflow-review` via the
   {{spawnTool}}{{modelClause}})
@@ -298,8 +312,11 @@
 - **`doctor [fix]`** — call `mcp__agentic-workflow__workflow_doctor({fix})` to audit
   the backlog for structural damage (stray folders, task files outside every
   status folder, duplicate ids, held claim markers, stray plan-request
-  markers); with `fix` it applies the unambiguous repairs. Never repair the
-  backlog by hand.
+  markers) and report the allowlist deny log — bash commands the check stages
+  refused, aggregated with the config change that would admit each (relay the
+  `deniedCommands` lines verbatim; the config edit is the human's call, never
+  yours); with `fix` it applies the unambiguous repairs and clears the
+  reported deny log. Never repair the backlog by hand.
 <!-- /aw:verb doctor -->
 <!-- aw:verb unknown -->
 - **anything else** (including a free-text goal) — do not run it. Show this

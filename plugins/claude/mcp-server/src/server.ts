@@ -18,6 +18,7 @@ import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
 import { effectiveAllowlist, effectivePlatformTools, stageDef, stageRequiresCriteria, type LoadedManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
 import { pollOnce } from "@agentic-workflow/core/scheduler/scheduler"
 import { appendSchedulerEvents, skipSetKey, type SchedulerEvent } from "@agentic-workflow/core/scheduler/events-log"
+import { aggregateDenials, clearDenyLog, formatDenyFindings, readDenyLog } from "@agentic-workflow/core/workflow/deny-log"
 import {
   buildEntryState,
   buildWorkSources,
@@ -2114,7 +2115,7 @@ const runPark = async (
   action: Extract<Action, { kind: "park" }>,
 ): Promise<
   | { error: string }
-  | { action: { kind: "park"; message: string }; path: string; gate: { kind: "plan"; id: string }; next: string }
+  | { action: { kind: "park"; message: string }; path: string; gate?: { kind: "plan"; id: string }; next: string }
 > => {
   if (!active) {
     activeClaim = null
@@ -2168,6 +2169,34 @@ const runPark = async (
   active = null
   resetLoopScratch()
   writeStageMarker(null)
+  // Auto-plan: the task opted in at its task gate (`approve <id> --auto-plan`),
+  // so the plan gate is crossed here — deterministically, by the server, never
+  // as an instruction the orchestrator might skip. The flag is judged on the
+  // freshly parked FILE (a replan or fresh approve may have cleared it), and
+  // the descriptor then omits `gate` on purpose: the plan-gate ask hook and the
+  // orchestrator's own gate prose key off it, and both would otherwise put a
+  // question for a gate that no longer exists. A failed approve degrades to the
+  // ordinary parked descriptor plus the failure, which the human gate handles.
+  const parkedTask = await findByIdIn(sh, directory, config.tasksDir, "plan-review", id)
+  if (parkedTask?.autoPlan === true) {
+    const gateResult = await approvePlan(id)
+    if (gateResult.ok) {
+      return {
+        action: { kind: "park", message: `${action.message} Auto-plan: the plan gate was crossed automatically — "${id}" is build-ready in in-progress/.` },
+        path: report.path,
+        next: `auto-plan: the plan was approved automatically (--auto-plan) — call workflow_start({id: "${id}"}) to begin BUILD now, or stop here and the next claim builds it. Do not ask the plan-gate question; that gate is already crossed.`,
+      }
+    }
+    return {
+      action: { kind: "park", message: action.message },
+      path: report.path,
+      gate: { kind: "plan", id },
+      next:
+        `auto-plan could not approve the parked plan (${gateResult.message}) — fall back to the human gate: ` +
+        `show the user the plan summary, then ask with ${dialect.askTool} — ` +
+        `Approve (workflow_plan_approve("${id}") then workflow_start("${id}")), Replan with a reason (workflow_replan("${id}", reason)), or Park for later.`,
+    }
+  }
   return {
     action: { kind: "park", message: action.message },
     path: report.path,
@@ -2329,7 +2358,7 @@ server.registerTool(
   "workflow_doctor",
   {
     description:
-      "Audit the backlog for structural damage a confused agent can cause: stray folders (not a status folder), task files outside every status folder, duplicate ids across status folders, and held claim markers. With fix:true, performs only the unambiguous repairs — rescue stray .md files back to draft/ (audited note + commit), remove now-empty stray folders, and release stale orphaned claim markers. Duplicates are always flagged for a human, never auto-resolved.",
+      "Audit the backlog for structural damage a confused agent can cause: stray folders (not a status folder), task files outside every status folder, duplicate ids across status folders, and held claim markers — plus the allowlist deny log (bash commands the check stages refused, aggregated with the config change that would admit each). With fix:true, performs only the unambiguous repairs — rescue stray .md files back to draft/ (audited note + commit), remove now-empty stray folders, release stale orphaned claim markers, and clear the reported deny log. Duplicates are always flagged for a human, never auto-resolved.",
     inputSchema: { fix: z.boolean().optional().describe("Apply the unambiguous repairs instead of only reporting.") },
   },
   async ({ fix }) => {
@@ -2354,13 +2383,32 @@ server.registerTool(
       "queued",
       log,
     )
+    // Allowlist deny telemetry: what the enforcement seams refused, aggregated
+    // with the config change that would admit it — the report that used to take
+    // stage-transcript archaeology (a starved stage's deny dump).
+    const denyFindings = aggregateDenials(readDenyLog(directory, config.tasksDir), (dkind: string, dstage: string) => {
+      try {
+        const def = stageDef(manifestFor(dkind).manifest, dstage)
+        return [...effectiveAllowlist(def, platformFor(config, dkind)), ...bashAllowlistExtras(config)]
+      } catch {
+        return null
+      }
+    })
     const report = {
       findings: formatAnomalies(anomalies, config.tasksDir),
       heldClaims,
       ...(strayRequests.length ? { strayPlanRequests: strayRequests } : {}),
+      ...(denyFindings.length ? { deniedCommands: formatDenyFindings(denyFindings) } : {}),
       ...(anomalies.duplicates.length ? { note: "duplicates are never auto-fixed — keep one copy, workflow_move the rest to abandoned" } : {}),
     }
-    if (!fix) return ok({ ...report, next: hasAnomalies(anomalies) || Object.keys(heldClaims).length ? "workflow_doctor with fix:true applies the unambiguous repairs" : "backlog is clean" })
+    if (!fix)
+      return ok({
+        ...report,
+        next:
+          hasAnomalies(anomalies) || Object.keys(heldClaims).length || denyFindings.length
+            ? "workflow_doctor with fix:true applies the unambiguous repairs"
+            : "backlog is clean",
+      })
 
     const actor = await gitActor(sh, directory)
     const rescued: string[] = []
@@ -2418,12 +2466,15 @@ server.registerTool(
     // the markers were never tracked. Only the CONFIRMED strays from above are
     // revoked; a request written since is left alone.
     const revokedRequests = await revokeStrayPlanRequests(sh, directory, config.tasksDir, strayRequests)
+    // Deny telemetry is acknowledged by a fix: the report above carries the
+    // aggregate, so the raw log is cleared rather than re-reported forever.
+    const denyLogCleared = denyFindings.length ? clearDenyLog(directory, config.tasksDir) : false
     if (rescued.length) {
       await commitPaths(sh, directory, [config.tasksDir], `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
     }
     return ok({
       ...report,
-      repaired: { rescued, removedDirs, releasedClaims, ...(revokedRequests.length ? { revokedRequests } : {}) },
+      repaired: { rescued, removedDirs, releasedClaims, ...(revokedRequests.length ? { revokedRequests } : {}), ...(denyLogCleared ? { denyLogCleared } : {}) },
       ...(failed.length ? { failed } : {}),
     })
   },
@@ -2439,7 +2490,7 @@ server.registerTool(
  */
 const approveTask = (id: string): Promise<GateResult> => coreApproveTask(gateCtx(), id)
 const approvePlan = (id: string): Promise<GateResult> => coreApprovePlan(gateCtx(), id)
-const approveAny = (id: string, publish?: ShipPublish, base?: string): Promise<GateResult> => coreApproveAny(gateCtx(), id, "engineering", publish, base)
+const approveAny = (id: string, publish?: ShipPublish, base?: string, autoPlan?: boolean): Promise<GateResult> => coreApproveAny(gateCtx(), id, "engineering", publish, base, autoPlan)
 const shipAny = (id: string, publish?: ShipPublish, base?: string): Promise<GateResult> => coreShipAny(gateCtx(), id, "engineering", publish, base)
 const replanTask = (id: string, reason: string | undefined, liveTaskId: string | null): Promise<GateResult> =>
   coreReplanTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, reason)
@@ -2666,11 +2717,21 @@ server.registerTool(
     description:
       "/agentic-workflow:engineering approve [id] — the unified, folder-driven gate. With an explicit id it advances that task by its folder's gate: draft/ → queued (task gate), plan-review/ → in-progress (plan gate, requires an ## Implementation Plan), or in-review/ → completed (ship). An explicit id naming an already-completed/ task re-runs its publish step, which is how a push/local ship opens its PR later. The id is OPTIONAL — omit it to advance the single task at a loop wait-gate (plan-review/ or in-review/), falling back to a lone draft/ task only when neither has anything waiting; tracking epics are never auto-resolved, and the id-less form never picks a completed task. Prefer this over the specific workflow_task_approve / workflow_plan_approve / workflow_ship tools. The agent writes nothing. " +
       PUBLISH_DOC,
-    inputSchema: { id: z.string().optional(), publish: publishArg, base: baseArg },
+    inputSchema: {
+      id: z.string().optional(),
+      publish: publishArg,
+      base: baseArg,
+      autoPlan: z
+        .boolean()
+        .optional()
+        .describe(
+          "Task gate only, and only when the user explicitly asked for --auto-plan: when this task's plan later parks, the plan gate is crossed automatically and BUILD follows. Never add it on your own - it removes a human review the user did not choose to skip. A replan or a fresh approve clears it; the ship gate is never automated.",
+        ),
+    },
   },
-  async ({ id, publish, base }) => {
+  async ({ id, publish, base, autoPlan }) => {
     await loadCfg()
-    const r = await approveAny((id ?? "").trim(), publish, base)
+    const r = await approveAny((id ?? "").trim(), publish, base, autoPlan)
     return okGate(r)
   },
 )
@@ -2923,7 +2984,7 @@ async function runGate(argv: string[]): Promise<number> {
     }
     // The id comes from the parser's leftovers, never from a fresh scan of
     // `rest`: only the parser knows which bare-looking words it consumed.
-    result = await approveAny(opts.rest[0] ?? "", opts.publish, opts.base)
+    result = await approveAny(opts.rest[0] ?? "", opts.publish, opts.base, opts.autoPlan)
   } else if (verb === "reject-any") result = await rejectAny(remainder, readStageTaskId())
   else {
     // Legacy verbs require an explicit id.

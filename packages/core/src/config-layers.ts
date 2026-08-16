@@ -142,7 +142,7 @@ export const readUserLayer = (userPath: string): unknown => {
  * merely-watched repo run arbitrary shell on first claim — npm-postinstall
  * class risk, silently. They are honored from the user-scope layer only.
  */
-export const SHELL_BEARING_KEYS = ["worktreeSetup"] as const
+export const SHELL_BEARING_KEYS = ["worktreeSetup", "notifyCommand"] as const
 
 /**
  * A model string without its provider prefix ("anthropic/claude-sonnet-4-5" →

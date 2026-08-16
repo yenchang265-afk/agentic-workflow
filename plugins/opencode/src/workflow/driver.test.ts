@@ -11,6 +11,7 @@ import type { Config } from "../config.ts"
 import {
   abortedSessionID,
   armTaskGateAsk,
+  autoAdvanceParkedPlan,
   claimSkipReason,
   classifyReplanChain,
   configSources,
@@ -418,6 +419,18 @@ const makeShellFS = (files: Record<string, string>, log: string[], overrides: Sh
         .map((p) => p.slice(dir.length + 1))
         .filter((n) => !n.includes("/"))
       out = names.length ? { exitCode: 0, stdout: names.join("\n"), stderr: "" } : { exitCode: 1, stdout: "", stderr: "" }
+    } else if (parts[0] === "printf") {
+      // `writeFileAtomic` (printf > tmp, then mv) and `appendFileChunked`
+      // (printf >> file) are how durable writes land — same model as the gate
+      // test harness. Matched against the RAW command: the payload carries
+      // newlines that `norm` destroys.
+      const write = /^printf '%s' ([\s\S]*) (>>|>) (\S+)$/.exec(cmd.trim())
+      if (!write) out = { exitCode: 1, stdout: "", stderr: "" }
+      else {
+        const [, content = "", mode, dest = ""] = write
+        fs[dest] = mode === ">>" ? `${fs[dest] ?? ""}${content}` : content
+        out = { exitCode: 0, stdout: "", stderr: "" }
+      }
     }
     const result = {
       exitCode: out.exitCode,
@@ -2120,6 +2133,139 @@ test("claim queues a one-shot pull scoped to the command's kind", async () => {
 
   assert.match(toasts[0]?.message ?? "", /Claiming the next engineering item/)
   assert.match(toasts[1]?.message ?? "", /Claiming the next pr-sitter item/)
+})
+
+test("claim <id> on a build-ready in-progress task queues a BUILD drive", async () => {
+  const planned = serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` })
+  const files = { "docs/tasks/in-progress/my-task.md": planned }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  const out = await handleCommand(deps, "sess-claim-build", "claim my-task", testConfig)
+
+  assert.equal(toasts[0]?.variant, "info")
+  assert.match(out ?? "", /Loop started on "Do the thing" — building…/, `unexpected: ${out}`)
+  assert.ok(log.some((cmd) => cmd.startsWith("mkdir ")), "the atomic claim marker was taken")
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "claim moves no gate files")
+})
+
+test("claim <short-id> resolves the short-hash handle to a queued task and starts planning", async () => {
+  const queued = serializeTask({ title: "Do the thing", body: "Just a body, no plan yet." })
+  const files = { "docs/tasks/queued/f7k3-do-the-thing.md": queued }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  const out = await handleCommand(deps, "sess-claim-queued", "claim f7k3", testConfig)
+
+  assert.equal(toasts[0]?.variant, "info")
+  assert.match(out ?? "", /Loop started on "Do the thing" — planning…/, `unexpected: ${out}`)
+})
+
+test("claim <id> on a started in-progress task points at recover, no second drive", async () => {
+  const started = serializeTask({
+    title: "Maybe crashed",
+    body: `${PLAN_HEADING}\n\n1. Step.\n\n> CLAIMED — loop starting [2026-01-01T00:00:00.000Z]`,
+  })
+  const files = { "docs/tasks/in-progress/my-task.md": started }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-claim-started", "claim my-task", testConfig)
+
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /already started — resume it with .* recover my-task/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mkdir ")), "no claim marker on a started task")
+})
+
+test("claim <id> on a draft points at approve, no move", async () => {
+  const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Do the thing", body: "x" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-claim-draft", "claim my-task", testConfig)
+
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /Can't claim "my-task": it's a draft — approve it first/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "claim never moves gate files")
+})
+
+test("claim <id> on an in-review task points at the ship gate", async () => {
+  const files = { "docs/tasks/in-review/my-task.md": serializeTask({ title: "Done", body: "x" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-claim-review", "claim my-task", testConfig)
+
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /waiting for your ship gate/)
+})
+
+test("claim <id> with an unknown id says so", async () => {
+  const { client, toasts } = makeClientFS({})
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-claim-none", "claim nope", testConfig)
+
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /no task "nope" found/)
+})
+
+test("approve --auto-plan arms the flag on the queued file (typed-verb path)", async () => {
+  const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Chore", body: "x" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  const out = await handleCommand(deps, "sess-auto-arm", "approve my-task --auto-plan", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.match(out ?? "", /Auto-plan armed/)
+})
+
+test("autoAdvanceParkedPlan crosses the plan gate and queues the BUILD drive", async () => {
+  const parked = serializeTask({ title: "Chore", autoPlan: true, body: `${PLAN_HEADING}\n\n1. Step.` })
+  const files = { "docs/tasks/plan-review/my-task.md": parked }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  const advanced = await autoAdvanceParkedPlan(deps, "sess-auto-advance", testConfig, "my-task")
+
+  assert.equal(advanced, true)
+  assert.ok(log.some((c) => c.startsWith("mv ") && c.includes("in-progress")), "the plan gate move ran")
+  assert.ok(log.some((c) => c.startsWith("mkdir ")), "the BUILD claim marker was taken")
+  assert.match(toasts.map((t) => t.message).join("\n"), /Auto-plan: plan approved .* building…/)
+})
+
+test("autoAdvanceParkedPlan is inert for a parked plan without the flag", async () => {
+  const parked = serializeTask({ title: "Chore", body: `${PLAN_HEADING}\n\n1. Step.` })
+  const files = { "docs/tasks/plan-review/my-task.md": parked }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  const advanced = await autoAdvanceParkedPlan(deps, "sess-auto-none", testConfig, "my-task")
+
+  assert.equal(advanced, false)
+  assert.equal(toasts.length, 0)
+  assert.ok(!log.some((c) => c.startsWith("mv ")), "no gate move without the opt-in")
+})
+
+test("claim with an argument on a non-PR sitter kind still refuses", async () => {
+  const { client, toasts } = makeClientFS({})
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-claim-dep", "claim 42", testConfig, "dep-sitter")
+
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /claim takes no argument/)
 })
 
 test("engineering-only verbs on another kind's command get that kind's usage", async () => {

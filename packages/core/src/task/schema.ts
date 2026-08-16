@@ -114,6 +114,23 @@ export const TaskFrontmatterSchema = z.object({
    */
   epic: z.string().min(1).optional(),
   /**
+   * Auto-cross the PLAN gate: when this task's plan parks in `plan-review/`,
+   * approve it automatically and continue into BUILD — set by the task gate's
+   * explicit `approve <id> --auto-plan` opt-in, never defaulted.
+   *
+   * Per-task and per-approval on purpose: gate fatigue is real for chore-sized
+   * tasks, but a repo-wide "skip the plan gate" knob would silently thin the
+   * gate for the risky tasks too. A plain `approve` on a draft that carries the
+   * flag CLEARS it (the approval is authoritative about what was asked THIS
+   * time), and a `replan` rejection clears it too — a human who rejected one
+   * plan wants eyes on the revision. The SHIP gate is never automated.
+   *
+   * In the schema rather than ad-hoc because an off-schema frontmatter key is
+   * destructive, not merely ignored: zod strips unknown keys, so every rewrite
+   * would delete it (same reason `epic` is here).
+   */
+  autoPlan: z.boolean().optional(),
+  /**
    * Selection order — lower runs first. Defaults to 0. This is the loop's own
    * scheduling knob and is a plain integer, not the tracker's named priority
    * (Jira Highest…Lowest, ADO 1–4); map by hand when pairing.
@@ -140,6 +157,8 @@ export interface Task {
   readonly type?: string
   /** The tracking epic this task is a slice of, when it is one. */
   readonly epic?: string
+  /** Auto-approve this task's plan when it parks (set by `approve --auto-plan`). */
+  readonly autoPlan?: boolean
   readonly priority: number
   readonly estimate?: number
   readonly assignee?: string
@@ -285,6 +304,7 @@ export const parseTask = (filename: string, content: string, path: string): Task
     title: fm.title,
     type: fm.type,
     epic: fm.epic,
+    autoPlan: fm.autoPlan,
     priority: fm.priority,
     estimate: fm.estimate,
     assignee: fm.assignee,
@@ -303,6 +323,7 @@ export interface TaskInput {
   readonly title: string
   readonly type?: string
   readonly epic?: string
+  readonly autoPlan?: boolean
   readonly priority?: number
   readonly estimate?: number
   readonly assignee?: string
@@ -324,6 +345,7 @@ export const taskToInput = (task: Task): TaskInput => ({
   title: task.title,
   type: task.type,
   epic: task.epic,
+  autoPlan: task.autoPlan,
   priority: task.priority,
   estimate: task.estimate,
   assignee: task.assignee,
@@ -389,6 +411,7 @@ export const serializeTask = (input: TaskInput): string => {
     title: input.title,
     type: input.type,
     epic: input.epic,
+    autoPlan: input.autoPlan,
     priority: input.priority,
     estimate: input.estimate,
     assignee: input.assignee,
@@ -400,6 +423,9 @@ export const serializeTask = (input: TaskInput): string => {
   const out: Record<string, unknown> = { title: fm.title }
   if (fm.type !== undefined) out.type = fm.type
   if (fm.epic !== undefined) out.epic = fm.epic
+  // Emitted only when TRUE: `autoPlan: false` and "no flag" mean the same
+  // thing, and serializing the false would put a dead key on every task.
+  if (fm.autoPlan === true) out.autoPlan = true
   out.priority = fm.priority
   if (fm.estimate !== undefined) out.estimate = fm.estimate
   if (fm.assignee !== undefined) out.assignee = fm.assignee

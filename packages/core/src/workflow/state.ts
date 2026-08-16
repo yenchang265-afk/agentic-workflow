@@ -399,6 +399,10 @@ export interface Config {
   readonly worktreesDir: string | false
   /** Shell command run in a fresh worktree after creation. */
   readonly worktreeSetup?: string
+  /** Shell command fired after a terminal loop event (park/done/stop/error) — SHELL-BEARING, user scope only. See config.ts. */
+  readonly notifyCommand?: string
+  /** Which terminal events fire `notifyCommand`; absent ⇒ all. */
+  readonly notifyEvents?: readonly ("park" | "done" | "stop" | "error")[]
   /** Branch-name prefix the engineering loop cuts its work branch with (`<prefix><id>`); `false` ⇒ build on the branch already checked out. */
   readonly taskBranch: string | false
   /** Extra REVIEW lenses; each runs one more focused review pass. */

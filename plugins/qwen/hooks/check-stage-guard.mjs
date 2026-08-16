@@ -736,6 +736,31 @@ var noteEvidence = (runsDirPath, evidenceFile, stage, entry) => {
   }
 };
 
+// plugins/claude/hooks/src/deny.mjs
+import fs3 from "node:fs";
+import path5 from "node:path";
+var DENY_LOG_FILE = ".deny-log.jsonl";
+var DENY_LOG_MAX_BYTES = 1024 * 1024;
+var noteDeny = (runsDirPath, host, marker, command) => {
+  try {
+    const file = path5.join(runsDirPath, DENY_LOG_FILE);
+    try {
+      if (fs3.statSync(file).size > DENY_LOG_MAX_BYTES) return;
+    } catch {
+    }
+    const entry = {
+      ts: (/* @__PURE__ */ new Date()).toISOString(),
+      host: String(host ?? ""),
+      kind: typeof marker?.kind === "string" ? marker.kind : "",
+      stage: typeof marker?.stage === "string" ? marker.stage : "",
+      command: String(command ?? "")
+    };
+    if (!entry.command.trim()) return;
+    fs3.appendFileSync(file, JSON.stringify(entry) + "\n");
+  } catch {
+  }
+};
+
 // plugins/claude/hooks/src/check-stage-guard.entry.mjs
 var main = async () => {
   let input;
@@ -820,6 +845,7 @@ var main = async () => {
   if (isBash && (markerList || marker.stage === "verify" || marker.stage === "review")) {
     const list = markerList ?? (marker.stage === "verify" ? VERIFY_ALLOW : REVIEW_ALLOW);
     if (!commandAllowed(effectiveCommand, list, markerPrefixes)) {
+      noteDeny(runsDir(cwd), host, marker, rawCommand);
       return block2(
         `agentic-workflow: the ${marker.stage.toUpperCase()} stage is read-only \u2014 the command "${rawCommand}" is not on its allowlist. Only inspection/test commands are permitted; if a test runner is genuinely needed, record an ERROR verdict naming it.`
       );

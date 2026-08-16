@@ -105,10 +105,19 @@ The loop (`/agentic-workflow:engineering`):
 - `/agentic-workflow:engineering plan <id>` — run the PLAN stage on one approved `queued/`
   task now: it writes the plan onto the task file, parks it in
   `plan-review/`, and exits. Building is not reachable from `plan` —
-  `claim`/`watch` drive builds
-- `/agentic-workflow:engineering claim` — one-shot pull of the next item, lowest
-  priority number first: build-ready `in-progress/` work, then an approved
-  `queued/` task to plan when no build work is left
+  `claim <id>` builds one now; `claim`/`watch` drive builds by priority
+- `/agentic-workflow:engineering approve <id> --auto-plan` — task-gate opt-in
+  that thins the PLAN gate for that one task: when its plan parks, it is
+  approved automatically and the BUILD drive follows on the same session
+  (`replan` clears it; a later plain `approve` on the draft clears it too;
+  the ship gate is never automated)
+- `/agentic-workflow:engineering claim [id]` — one-shot pull. Bare, it claims the
+  next item, lowest priority number first: build-ready `in-progress/` work,
+  then an approved `queued/` task to plan when no build work is left. With a
+  task id (short-hash handles resolve), it runs exactly that task now — a
+  build-ready task starts at BUILD, an approved `queued/` task runs its PLAN
+  pass and parks for the gate; any other folder is refused with the verb to
+  use instead
 - `/agentic-workflow:engineering watch [trigger]` — turn this session into a standing worker
   **scoped to the engineering kind**; claims in the same order as `claim`. Bare
   `watch` uses `workflows.engineering.trigger` (default poll); the argument is a
@@ -124,9 +133,14 @@ The loop (`/agentic-workflow:engineering`):
   running loop (see `recover`); `unwatch` only clears the watch flag and leaves
   an in-flight loop to finish
 - `/agentic-workflow:engineering doctor [fix]` — audit the backlog for stray folders/files,
-  duplicate ids, held claim markers, and stray plan-request markers; `fix`
-  applies the unambiguous repairs (rescue strays to `draft/`, drop emptied
-  folders, release stale claim markers, drop stray plan requests)
+  duplicate ids, held claim markers, and stray plan-request markers, and
+  report the allowlist deny log (`<tasksDir>/runs/.deny-log.jsonl`): every
+  bash command a check stage refused, aggregated with the config change that
+  would admit it (`bashAllowlistPrefix` when the wrapped command is already
+  allowed, else a narrow `bashAllowlistExtra` glob); `fix` applies the
+  unambiguous repairs (rescue strays to `draft/`, drop emptied folders,
+  release stale claim markers, drop stray plan requests, clear the reported
+  deny log)
 - `/agentic-workflow:engineering recover <id>` — resume an in-progress task whose run stopped
   early — a crash/restart, or a user **interrupt (ESC)** — from its state
   snapshot (or its persisted plan), at the exact stage it reached

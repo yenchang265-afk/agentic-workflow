@@ -1,13 +1,13 @@
 ---
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim | recover <id> | kinds | doctor [fix] | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | recover <id> | kinds | doctor [fix] | stop | status
 ---
 
 You are about to work the **engineering agentic loop** (typed as
 `/agentic-workflow:engineering`) — one command for task authoring, the human
 gates, and execution over the task queues. The loop plans a queued task on
 demand via `plan <id>` (and parks the plan for the human gate); `claim` builds
-plan-approved tasks only. Act on the argument below. (The PR sitter has its own
+plan-approved tasks only — bare, the next by priority; `claim <id>`, that one. Act on the argument below. (The PR sitter has its own
 command: `/agentic-workflow:pr-sitter`.)
 
 **Argument:** `{{args}}`
@@ -33,7 +33,7 @@ on and who does the work; it is deliberately not a procedure.
 - **`abandon <id> [reason]`** — cancel a task into `abandoned/` (reversible; the file is kept). **The hook's, before your turn.**
 - **`remove <id>`** — hard-delete a task from the backlog. **The hook's, before your turn.** Destructive.
 - **`plan <id>`** — run PLAN on one approved task and park the plan for the gate. **Yours.**
-- **`claim`** — drive the next task: build-ready work through BUILD → VERIFY → REVIEW, else one to plan. **Yours.**
+- **`claim [id]`** — drive the next task, or with an id that one: build-ready work through BUILD → VERIFY → REVIEW, else one to plan. **Yours.**
 - **`recover <id>`** — resume a run that stopped early. **Yours.**
 - **`stop`** (alias: `abort`) — abort the active loop. **Yours.**
 - **`status`** (or bare) — the active loop plus the backlog roll-up. **Yours.**

@@ -37,6 +37,9 @@ releases a parked plan into the build queue (the plan gate), or ships a
 finished review after you've read the diff — a task lives in exactly one
 folder, so the move is never ambiguous, and id-less `approve` advances the
 one task waiting at a loop gate (falling back to a lone draft when none is).
+`approve <id> --auto-plan` thins the plan gate for that one task: when its
+plan parks, it is approved automatically and BUILD follows — `replan` or a
+fresh approve clears it, and the ship gate is never automated.
 **`replan [id] [reason]`**
 is the sole rejection verb: a parked plan (or a cap-tripped task, by id) goes
 back to `queued/` for re-planning. Planning happens **right before execution** —
@@ -56,6 +59,10 @@ findings with `file:line` — plus a bounded ledger of what earlier iterations
 already tried; `workflows.<kind>.stageContext` can cap what else a stage's prompt
 carries, which matters once you point a stage at a small model
 ([docs/configuration.md](docs/configuration.md)).
+
+Set `notifyCommand` (user config) to get a push — `notify-send`, a chat
+webhook — whenever a plan parks, a run reaches the ship gate, or a loop
+stops, instead of a toast in scrollback nobody is watching.
 
 Execution is isolated on a `feature/<id>` git branch, checked out in its own
 git worktree by default (`.workflow-worktrees`, so your tree is never touched
@@ -214,11 +221,12 @@ task files and `.agentic-workflow.json`) by hand.
   task the id resolved to — `--force` is the confirmation. Recoverable from git
   only if you set `ignoreBacklog: false`; the default keeps `docs/tasks/` out of
   git entirely, so prefer `abandon` unless you want the file gone
-- `/agentic-workflow:engineering plan <id>` · `claim` · `watch [trigger]` (OpenCode) ·
+- `/agentic-workflow:engineering plan <id>` · `claim [id]` · `watch [trigger]` (OpenCode) ·
   `unwatch` · `recover <id>` · `stop` · `status` · `doctor [fix]` · `kinds` —
   `plan` runs PLAN on one queued task and parks it, without waiting for a tick;
   `claim` pulls the next item — build-ready `in-progress/` work first, then an
-  approved `queued/` task to plan; `watch` is a standing worker scoped to the
+  approved `queued/` task to plan — or, given a task id, runs exactly that
+  task now (BUILD if build-ready, else its PLAN pass); `watch` is a standing worker scoped to the
   engineering kind, scheduled by `workflows.<kind>.trigger` unless the argument
   overrides it (`poll [interval]`, a bare interval like `5m`, `cron <schedule>`,
   or `idle`)

@@ -77,8 +77,9 @@ combined view — the intended split being:
   `ado.project`, `ado.repository`, `tasksDir`, `workflows`, worktree settings.
 
 **Shell-bearing keys are the exception, and are honored from the USER layer
-only**: `worktreeSetup`, `workflows.<kind>.scannerCommand` and
-`workflows.<kind>.stageChecks` are strings the loop hands to a shell verbatim.
+only**: `worktreeSetup`, `notifyCommand`, `workflows.<kind>.scannerCommand`
+and `workflows.<kind>.stageChecks` are strings the loop hands to a shell
+verbatim.
 `.agentic-workflow.json` rides along with any cloned repo, so honoring them
 there would let merely watching a repository run arbitrary shell on the first
 claim — npm-postinstall-class risk, silently. Setting one in the repo layer
@@ -140,6 +141,8 @@ hand-edited afterward.
 | `projectManagement` | unset | The team's task tracker (Jira / Azure DevOps) and how local tasks pair to it. Drives task-authoring defaults and the pairing view in `/agentic-workflow:engineering status`. See below. |
 | `worktreesDir` | `".workflow-worktrees"` | See hardening below. Set to `false` to opt out. |
 | `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). **Shell-bearing — user scope only**, see below. |
+| `notifyCommand` | unset | Shell command fired after a terminal loop event — a plan parking for the plan gate, a run reaching the ship gate, a stop, an error — so gates don't go stale in scrollback nobody is watching. Runs as `sh -c <command>` with `AW_EVENT` (`park`\|`done`\|`stop`\|`error`), `AW_KIND`, `AW_TASK`, `AW_MESSAGE` in the environment; bounded (10s) and best-effort — a slow or failing notifier warns and never changes the outcome. E.g. `"notify-send \"agentic-workflow\" \"$AW_EVENT $AW_TASK: $AW_MESSAGE\""` or a `curl` to a chat webhook. **Shell-bearing — user scope only**, see below. |
+| `notifyEvents` | unset (= all) | Which terminal events fire `notifyCommand` (subset of `["park","done","stop","error"]`). Not shell-bearing, so a repo may narrow — never widen — what its contributors get pinged about. |
 | `taskBranch` | `"feature/"` | Branch-name prefix the engineering loop cuts its work branch with (`<prefix><id>`). Set to `false` to build on the branch you already have checked out — see hardening below. |
 | `reviewLenses` | `[]` | See hardening below. Max 5 lenses. |
 
@@ -556,7 +559,10 @@ it. The warnings are advisory: they annotate a save, never block it. See
   declares an allowlist** (check stages, and allowlisted work stages like
   pr-sitter's publish), after the manifest's own `bashAllowlist`. The
   per-project/per-user escape hatch for an environment the shipped manifests
-  cannot know:
+  cannot know. You rarely have to reverse-engineer the glob yourself:
+  `/agentic-workflow:engineering doctor` reports every denied command from the
+  deny log with the exact `bashAllowlistExtra`/`bashAllowlistPrefix` change
+  that would admit it (see design 29):
 
   ```json
   {

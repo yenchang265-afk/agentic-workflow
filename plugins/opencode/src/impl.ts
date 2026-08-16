@@ -24,6 +24,7 @@ import { splitVerb } from "./verb.ts"
 import { listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
 import { listSnapshotIds } from "@agentic-workflow/core/workflow/persist"
 import { anyWorkflowActive, anyWorktreeWorkflowActive, findSessionDriving, getWorkflow, hasWorkflow, planStageTaskId } from "@agentic-workflow/core/workflow/state"
+import { appendDenyEntry } from "@agentic-workflow/core/workflow/deny-log"
 import { auditBacklog, formatAnomalies } from "@agentic-workflow/core/task/audit"
 import { classifyBash, classifyEdit } from "@agentic-workflow/core/task/guard"
 import { pinBash, pinEditPath } from "@agentic-workflow/core/workflow/worktree-guard"
@@ -1092,6 +1093,41 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
     // source and why ESC/`stop` clear the session's windows outright.
     "tool.execute.after": async (input) => {
       if (isQuestionTool(input.tool)) driver.noteQuestionToolSettled(input.sessionID, input.callID)
+    },
+
+    // Bash-denial telemetry for the backlog doctor. OpenCode evaluates a stage
+    // agent's permission map itself, so the plugin never sees the DeniedError a
+    // starved stage drowns in — this hook is the one seam the host offers onto
+    // that decision. Observe-only: `output.status` is never touched, only read,
+    // and only a `deny` on a bash permission of a session a live loop drives is
+    // recorded (an ad-hoc session's denials are the user's own business).
+    // Best-effort by construction — whether a hard `"*": deny` consults this
+    // hook is a host detail that may vary by version, so a quiet log costs
+    // nothing and a populated one saves the transcript archaeology; the whole
+    // body is one try/catch because a rejecting hook kills the turn silently
+    // (the total-hook rule above).
+    "permission.ask": async (input, output) => {
+      try {
+        if (output.status !== "deny" || String(input.type) !== "bash") return
+        let loop = getWorkflow(input.sessionID)
+        if (!loop && anyWorkflowActive()) {
+          const found = await driver.findDrivingWorkflow(client, input.sessionID).catch(() => undefined)
+          loop = found?.state
+        }
+        if (!loop) return
+        const meta = (input.metadata ?? {}) as Record<string, unknown>
+        const command = typeof meta.command === "string" && meta.command.trim() ? meta.command : input.title
+        if (!command.trim()) return
+        appendDenyEntry(directory, (await getConfig()).tasksDir, {
+          ts: new Date().toISOString(),
+          host: "opencode",
+          kind: loop.kind ?? "engineering",
+          stage: loop.stage,
+          command,
+        })
+      } catch {
+        /* telemetry only — never fail the permission flow */
+      }
     },
 
     tool: {
