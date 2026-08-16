@@ -3089,7 +3089,7 @@ const planParkNextStep = (id: string): string =>
  *
  * The `data.gate`-less arm is the loud one, and it has to be: `data.gate`/`data.id`
  * live in CORE, which resolves to `packages/core/dist` — gitignored and rebuilt
- * only by `npm install`, while the installed plugin points at the working tree. So
+ * only by `pnpm install`, while the installed plugin points at the working tree. So
  * pulling a new plugin against an old core dist lands exactly here, with `r.ok`
  * true and no gate on it, and the silent result is BOTH halves of a real bug: no
  * `NEXT STEP` reaches the model, and nothing is armed for `askUnanswered` to
@@ -3100,7 +3100,7 @@ export const armTaskGateAsk = (sessionID: string, data: Record<string, unknown> 
   // otherwise — an old core dist is exactly a runtime that predates that
   // contract, and it is the case this whole arm exists for. Dereferencing it
   // blind threw out of `handleApprove`, which reported `Approve failed` for a
-  // move that had already succeeded, on every retry, with the `npm install`
+  // move that had already succeeded, on every retry, with the `pnpm install`
   // warning below never reached. Same guard, same reason, as
   // `classifyReplanChain`'s.
   const id = data ? taskGateId(data) : null
@@ -3111,7 +3111,7 @@ export const armTaskGateAsk = (sessionID: string, data: Record<string, unknown> 
       void log(
         "warn",
         "gate succeeded but reported no `gate`/`id` — the @agentic-workflow/core dist predates the gate contract, so the " +
-          "'plan it now?' ask was NOT armed and workflow_plan will not be held for it. Run `npm install` at the agentic-workflow " +
+          "'plan it now?' ask was NOT armed and workflow_plan will not be held for it. Run `pnpm install` at the agentic-workflow " +
           "repo root and restart opencode.",
       )
     }
@@ -3352,7 +3352,7 @@ const CHAIN_SKIPS = {
   staleDist: {
     why:
       "core reported no `requeued`/`id` gate data — the @agentic-workflow/core dist predates the gate contract. " +
-      "Run `npm install` at the agentic-workflow repo root and restart opencode.",
+      "Run `pnpm install` at the agentic-workflow repo root and restart opencode.",
     level: "warn",
     nextStep: true,
   },

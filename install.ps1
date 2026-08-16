@@ -198,7 +198,7 @@ function Install-OpenCode {
 
     # The plugin itself: a local plugin file that re-exports this repo's entry
     # point. OpenCode auto-loads any file dropped in plugins/, no opencode.json
-    # edit needed. Requires `npm install` to have been run in $RepoDir.
+    # edit needed. Requires `pnpm install` to have been run in $RepoDir.
     $pluginFile = Join-Path $ConfigDir 'plugins\agentic-workflow.ts'
     $importPath = ($RepoDir -replace '\\', '/') + '/plugins/opencode/src/index.ts'
     Set-Content -LiteralPath $pluginFile -Value "export * from `"$importPath`"" -NoNewline:$false -Encoding utf8
@@ -206,7 +206,7 @@ function Install-OpenCode {
 
     if (-not (Test-Path -LiteralPath (Join-Path $RepoDir 'node_modules')) -or -not (Test-Path -LiteralPath (Join-Path $RepoDir 'packages\core\dist'))) {
         Write-Host ""
-        Write-Warning "dependencies not built — run 'npm install' in $RepoDir (it also builds the @agentic-workflow/core workspace the plugin imports)"
+        Write-Warning "dependencies not built — run 'pnpm install' in $RepoDir (it also builds the @agentic-workflow/core workspace the plugin imports)"
     }
 
     Write-Host ""
@@ -240,10 +240,15 @@ function Install-Qwen {
     # The MCP server is shared with the Claude host; build it the same way.
     Push-Location $RepoDir
     try {
-        & npm install
-        if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit code $LASTEXITCODE" }
-        & npm run build -w agentic-workflow-mcp
-        if ($LASTEXITCODE -ne 0) { throw "npm run build failed with exit code $LASTEXITCODE" }
+        # -ErrorAction SilentlyContinue: $ErrorActionPreference = 'Stop' above would
+        # otherwise turn a missing command into a terminating error before the check.
+        if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
+            throw "pnpm is required to build the MCP server - install it with 'npm i -g pnpm' (or see https://pnpm.io/installation)"
+        }
+        & pnpm install
+        if ($LASTEXITCODE -ne 0) { throw "pnpm install failed with exit code $LASTEXITCODE" }
+        & pnpm --filter agentic-workflow-mcp run build
+        if ($LASTEXITCODE -ne 0) { throw "pnpm build failed with exit code $LASTEXITCODE" }
     } finally {
         Pop-Location
     }

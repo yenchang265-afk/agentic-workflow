@@ -11,6 +11,16 @@
 
 set -euo pipefail
 
+# The repo pins pnpm as its package manager and refuses npm at preinstall, so
+# every install path that builds a workspace needs pnpm present. Fail loudly
+# rather than half-installing against a package manager the root rejects.
+require_pnpm() {
+  if ! command -v pnpm >/dev/null 2>&1; then
+    echo "error: pnpm is required — install it with 'npm i -g pnpm' (or see https://pnpm.io/installation)" >&2
+    exit 1
+  fi
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -186,14 +196,14 @@ install_opencode() {
 
   # The plugin itself: a local plugin file that re-exports this repo's entry
   # point. OpenCode auto-loads any file dropped in plugins/, no opencode.json
-  # edit needed. Requires `npm install` to have been run in $REPO_DIR.
+  # edit needed. Requires `pnpm install` to have been run in $REPO_DIR.
   PLUGIN_FILE="$CONFIG_DIR/plugins/agentic-workflow.ts"
   printf 'export * from "%s/plugins/opencode/src/index.ts"\n' "$REPO_DIR" > "$PLUGIN_FILE"
   echo "installed: $PLUGIN_FILE"
 
   if [ ! -d "$REPO_DIR/node_modules" ] || [ ! -d "$REPO_DIR/packages/core/dist" ]; then
     echo
-    echo "warning: dependencies not built — run 'npm install' in $REPO_DIR" >&2
+    echo "warning: dependencies not built — run 'pnpm install' in $REPO_DIR" >&2
     echo "         (it also builds the @agentic-workflow/core workspace the plugin imports)" >&2
   fi
 
@@ -225,7 +235,8 @@ install_qwen() {
   fi
 
   # The MCP server is shared with the Claude host; build it the same way.
-  ( cd "$REPO_DIR" && npm install && npm run build -w agentic-workflow-mcp )
+  require_pnpm
+  ( cd "$REPO_DIR" && pnpm install && pnpm --filter agentic-workflow-mcp run build )
 
   mkdir -p "$QWEN_CONFIG_DIR/commands/agentic-workflow" "$QWEN_CONFIG_DIR/skills" "$QWEN_CONFIG_DIR/references"
 

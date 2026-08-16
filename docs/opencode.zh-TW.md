@@ -158,7 +158,7 @@ code-review-and-quality，以及另外 20 多個），迴圈的階段 agent 和
 ```bash
 git clone <this-repo>
 cd agentic-workflow
-npm install
+pnpm install
 ./install.sh opencode
 ```
 

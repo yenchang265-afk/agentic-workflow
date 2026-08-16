@@ -365,10 +365,10 @@ footer .fine{color:var(--muted-txt);font-size:12.5px;margin-top:26px;font-family
 ./bootstrap.sh --check-only    <span class="c"># report dependency status, change nothing</span></pre></div>
       </div>
       <div class="tabpanel" id="pan-b" role="tabpanel" aria-labelledby="tab-b" hidden>
-        <p>If the toolchain is already present, install the plugins directly. <code>npm install</code> uses npm workspaces and also builds <code>@agentic-workflow/core</code>; <code>install.sh</code> then symlinks the plugin(s) and runs the config wizard.</p>
+        <p>If the toolchain is already present, install the plugins directly. <code>pnpm install</code> uses pnpm workspaces and also builds <code>@agentic-workflow/core</code>; <code>install.sh</code> then symlinks the plugin(s) and runs the config wizard.</p>
         <div class="code"><div class="cbar"><span>shell</span><button class="copy">Copy</button></div><pre>git clone &lt;this-repo&gt;
 cd agentic-workflow
-npm install                    <span class="c"># workspaces + builds core dist/</span>
+pnpm install                   <span class="c"># workspaces + builds core dist/</span>
 ./install.sh                   <span class="c"># every plugin; or: opencode | claude | qwen</span></pre></div>
       </div>
 
@@ -744,9 +744,9 @@ npm install                    <span class="c"># workspaces + builds core dist/<
 
       <h3>Launch</h3>
       <p>One command builds core + the SPA and serves it. Point <code>--dir</code> at the repo the loop drives (the same directory that holds <code>.agentic-workflow.json</code>).</p>
-      <div class="code"><div class="cbar"><span>shell</span><button class="copy">Copy</button></div><pre>npm run hub -- --dir /path/to/repo      <span class="c"># → http://127.0.0.1:4317</span>
-npm run hub -- --dir /a --dir /b        <span class="c"># watch several repos (repeat --dir; '*' wildcards ok)</span>
-npm run hub -- --dir /path --port 4400  <span class="c"># override the port</span></pre></div>
+      <div class="code"><div class="cbar"><span>shell</span><button class="copy">Copy</button></div><pre>pnpm hub --dir /path/to/repo      <span class="c"># → http://127.0.0.1:4317</span>
+pnpm hub --dir /a --dir /b        <span class="c"># watch several repos (repeat --dir; '*' wildcards ok)</span>
+pnpm hub --dir /path --port 4400  <span class="c"># override the port</span></pre></div>
       <p style="font-size:14px;color:var(--muted-txt)">With no <code>--dir</code>, the hub reads the <code>hub</code> section of the user-scope <code>~/.config/agentic-workflow/agentic-workflow.json</code> (honoring <code>$XDG_CONFIG_HOME</code>, with the legacy <code>~/.agentic-workflow.json</code> still read as a fallback) — <code>{"hub":{"repos":[…],"port":…}}</code> — instead; if neither is present it exits with usage. When more than one repo is watched a repo picker appears in the header and every view is scoped to the selected one.</p>
 
       <div class="note warn"><b>Local by design — do not expose it.</b> The server answers only requests whose <code>Host</code> is loopback and binds <code>127.0.0.1</code>; there is no login. Mutating routes (saving a kind) additionally require an <code>X-Hub-Client</code> header, so a stray browser tab cannot POST to it. Keep it on your machine — don't put it behind a public proxy.</p>

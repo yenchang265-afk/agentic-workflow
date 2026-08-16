@@ -902,13 +902,13 @@ test("classifyReplanChain: id to chain, stale-dist skip, or null on a refusal", 
 
   // A stale @agentic-workflow/core dist emits ok with no gate data — the shape
   // the real core in this tree can never produce, which is why this is a unit
-  // test. It must warn toward `npm install` and still offer the next step.
+  // test. It must warn toward `pnpm install` and still offer the next step.
   const stale = { ok: true as const, message: "m", path: "p", data: undefined as unknown as Record<string, unknown> }
   const skip = classifyReplanChain(stale)
   assert.ok(skip && "why" in skip, "stale dist classifies as a skip")
   assert.equal(skip.level, "warn")
   assert.equal(skip.nextStep, true)
-  assert.match(skip.why, /npm install/)
+  assert.match(skip.why, /pnpm install/)
 
   assert.equal(classifyReplanChain({ ok: false, message: "no" }), null)
 })
@@ -1423,7 +1423,7 @@ test("ESC on an open question un-wedges the session instead of stranding its dri
 
 /**
  * `data.gate`/`data.id` come from CORE, which resolves to `packages/core/dist` —
- * gitignored, rebuilt only by `npm install`, while the installed plugin points at
+ * gitignored, rebuilt only by `pnpm install`, while the installed plugin points at
  * the working tree. A new plugin against an old core dist therefore lands here
  * with `r.ok` true and no gate on it, and used to do so in total silence: no
  * `NEXT STEP` for the model to follow AND nothing armed for `askUnanswered` to
@@ -1439,7 +1439,7 @@ test("a gate result with no gate says so, instead of dropping the ask silently",
   // data that says WHICH gate did not.
   assert.equal(armTaskGateAsk(sessionID, { approved: true }, log), "", "there is no id to ask about")
   assert.equal(warnings.length, 1, `expected exactly one warning, got ${JSON.stringify(warnings)}`)
-  assert.match(warnings[0]!, /npm install/, "the warning has to name the fix, or it is just noise")
+  assert.match(warnings[0]!, /pnpm install/, "the warning has to name the fix, or it is just noise")
 
   // The plan and ship gates legitimately do not ask — warning on those would
   // train the operator to ignore the one that matters.
@@ -1453,7 +1453,7 @@ test("a gate result with no gate says so, instead of dropping the ask silently",
   // retry, with this warning never reached.
   assert.equal(armTaskGateAsk(sessionID, undefined, log), "")
   assert.equal(warnings.length, 2, "an absent `data` is the same defect as an absent `gate`")
-  assert.match(warnings[1]!, /npm install/)
+  assert.match(warnings[1]!, /pnpm install/)
 })
 
 /**

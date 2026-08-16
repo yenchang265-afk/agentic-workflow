@@ -208,7 +208,7 @@ const buildChecklist = async (deps: HubDeps, manifest: WorkflowManifest): Promis
     items.push({ done: agentExists.get(agent) === true, label: `agent persona prompts/agents/${agent}/ (body.md + opencode.yaml + claude.yaml)` })
   }
   const missingAgent = agents.some((a) => agentExists.get(a) !== true)
-  items.push({ done: !missingAgent, label: "run `npm run gen:prompts` after authoring the personas", action: "gen-prompts" })
+  items.push({ done: !missingAgent, label: "run `pnpm gen:prompts` after authoring the personas", action: "gen-prompts" })
   for (const command of [...new Set(manifest.stages.map((s) => s.command))]) {
     const file = path.join(repo, "plugins", "opencode", "commands", `${command}.md`)
     items.push({ done: await exists(file), label: `opencode command wrapper plugins/opencode/commands/${command}.md` })

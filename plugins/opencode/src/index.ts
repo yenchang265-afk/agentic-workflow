@@ -6,8 +6,8 @@ import { loadFailureHooks } from "./load-failure.ts"
  *
  * The real plugin lives in `impl.ts`, which transitively imports
  * `@agentic-workflow/core`'s built `dist/`. When that build is stale (e.g. a
- * refactor added a core module and `npm install` / `npm run build -w
- * @agentic-workflow/core` never re-ran), a static import chain would throw
+ * refactor added a core module and `pnpm install` / `pnpm --filter
+ * @agentic-workflow/core run build` never re-ran), a static import chain would throw
  * ERR_MODULE_NOT_FOUND during opencode's plugin scan and the plugin would
  * vanish SILENTLY — while the `/agentic-workflow:*` command markdowns (registered
  * independently) keep rendering, so a gate verb like `approve <id>` becomes a

@@ -46,7 +46,7 @@ claude --plugin-dir /abs/path/to/plugins/claude
 /plugin install agentic-workflow
 ```
 
-`install.sh` 會在 `mcp-server/` 中執行 `npm install` + `npm run build`
+`install.sh` 會執行 `pnpm install` + `pnpm --filter agentic-workflow-mcp run build`
 （`.mcp.json` 會執行建置好的 `mcp-server/dist/server.js`），並為與平台
 無關的 skills 和參考檢查清單建立相對符號連結。
 

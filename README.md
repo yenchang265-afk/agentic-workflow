@@ -104,7 +104,9 @@ config keys: [docs/sitters.md](docs/sitters.md); security posture:
 ## Install
 
 The steps below assume the system prerequisites are already present (Node ≥
-22.13, git, `gh`, `curl`, and — for browser work — Chrome). Azure DevOps needs
+22.13, **pnpm** — this repo is a pnpm workspace and the installers refuse to run
+without it (`npm i -g pnpm`, or see https://pnpm.io/installation) — git, `gh`,
+`curl`, and — for browser work — Chrome). Azure DevOps needs
 Node with `npx` (to launch the Azure DevOps MCP server) plus a PAT in
 `AZURE_DEVOPS_EXT_PAT`. For a fresh machine, `./bootstrap.sh`
 verifies/installs those, registers the `chrome-devtools` MCP server, and then
@@ -119,7 +121,7 @@ Manual path (deps already installed):
 ```bash
 git clone <this-repo>
 cd agentic-workflow
-npm install             # npm workspaces — also builds @agentic-workflow/core (prepare)
+pnpm install            # pnpm workspaces — also builds @agentic-workflow/core (prepare)
 ./install.sh            # every plugin; or: ./install.sh opencode | claude | qwen
 ```
 
@@ -129,7 +131,7 @@ targets and flags:
 ```powershell
 git clone <this-repo>
 cd agentic-workflow
-npm install
+pnpm install
 .\install.ps1            # every plugin; or: .\install.ps1 opencode | claude | qwen
 ```
 
@@ -139,7 +141,7 @@ automatically falls back to copies otherwise (pass `-Copy` to do that on
 purpose and skip the warning; re-run after `git pull` to refresh a copy
 install).
 
-- `npm install` at the repo root installs all workspaces (the OpenCode plugin,
+- `pnpm install` at the repo root installs all workspaces (the OpenCode plugin,
   `packages/core`, `packages/ado-mcp`, `packages/hub`, `plugins/claude/mcp-server`)
   and builds the core package via the `prepare` script — every plugin consumes
   core's built `dist/`.
@@ -269,7 +271,7 @@ to the bundled skills library via [AGENTS.md](AGENTS.md).
 - [docs/design/](docs/design/) — threat model, hardening design records
   (including [07 — multi-loop scheduler](docs/design/improvements/07-multi-workflow-scheduler.md))
 - [packages/hub/README.md](packages/hub/README.md) — the **admin hub (beta)**
-  (`npm run hub -- --dir /path/to/repo` → http://127.0.0.1:4317): loop
+  (`pnpm hub --dir /path/to/repo` → http://127.0.0.1:4317): loop
   monitor (backlog board, live gate notifications, run history, per-stage
   token usage), a Plan button on queued cards that writes a plan-request
   ordering hint for the next loop tick (never a claim), and visual loop
@@ -315,7 +317,7 @@ and link to it; don't copy.
 ## Develop
 
 ```bash
-npm install && npm run typecheck:all && npm run test:all
+pnpm install && pnpm run typecheck:all && pnpm run test:all
 ```
 
 `typecheck:all` / `test:all` cover every workspace: the core package
@@ -323,9 +325,26 @@ npm install && npm run typecheck:all && npm run test:all
 DevOps MCP client (`packages/ado-mcp`), the admin hub (`packages/hub`), the
 OpenCode plugin (`plugins/opencode`), and the Claude Code MCP server
 (`plugins/claude/mcp-server`). To run just the OpenCode plugin's
-suite, scope to its workspace — `npm run typecheck -w agentic-workflow` /
-`npm test -w agentic-workflow` (or `npm run typecheck` from inside
+suite, scope to its workspace — `pnpm --filter agentic-workflow run typecheck` /
+`pnpm --filter agentic-workflow test` (or `pnpm run typecheck` from inside
 `plugins/opencode/`); the root package defines only the `:all` scripts.
+
+The repo pins pnpm (`packageManager` in the root `package.json`) and a
+`preinstall` guard rejects `npm install` — a stray npm run would otherwise
+succeed, build a hoisted `node_modules`, and leave a second lockfile disagreeing
+with `pnpm-lock.yaml`. Coming from an older checkout, delete the npm-era
+`node_modules` before the first `pnpm install`; mixing the two layouts resolves
+unpredictably.
+
+On Linux and macOS pnpm's default store shares a filesystem with your checkout,
+so packages are hardlinked (or CoW-cloned on APFS) and nothing needs tuning. If
+your checkout is on a *different* filesystem than the store — WSL under `/mnt/c`,
+some Docker bind mounts — pnpm silently falls back to copying every file. Point
+`PNPM_STORE_DIR` at a path on the same volume to get the links back:
+
+```bash
+export PNPM_STORE_DIR=/mnt/c/Users/<you>/.pnpm-store   # WSL example
+```
 
 ## License
 

@@ -59,7 +59,7 @@ flowchart TB
     engine -->|"fire stage / park / done / stop"| hosts
 ```
 
-- **核心套件**——`@agentic-workflow/core`（npm workspace）承載每個 host 共用
+- **核心套件**——`@agentic-workflow/core`（pnpm workspace）承載每個 host 共用
   的一切：純粹的引擎與狀態、清單層、工作來源 + 排程器、任務儲存、git
   輔助工具 + worktree 隔離、快照、裁定處理、指標，以及設定（透過把可選
   的使用者層級 `~/.config/agentic-workflow/agentic-workflow.json`（遵循
@@ -191,7 +191,7 @@ Qwen Code 宿主是**實驗性**的——其介面與行為仍可能變動。相
 
 ## 管理面板——測試版（`packages/hub/`）
 
-第三個、與 host 無關的介面：一個本機 web 應用程式（`npm run hub`），
+第三個、與 host 無關的介面：一個本機 web 應用程式（`pnpm hub`），
 它**觀察**兩個 host 都會寫入的同一份檔案系統底層——狀態資料夾、
 執行紀錄、快照、階段標記、watch 租約——並**在其上執行人工把關動作**：
 approve、replan、ship。

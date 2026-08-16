@@ -19,7 +19,7 @@
     "test": "node --import tsx --test src/*.test.ts"
   },
   "dependencies": {
-    "@agentic-workflow/core": "*",
+    "@agentic-workflow/core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.0"
   },
   "devDependencies": {

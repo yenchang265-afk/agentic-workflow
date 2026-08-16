@@ -112,7 +112,7 @@ test("load-failure message carries the first error line and the rebuild hint", (
   const msg = loadFailureMessage(new Error("Cannot find module '…/dist/workflow/gate.js'\nlong stack…"))
   assert.ok(msg.includes("Cannot find module"), msg)
   assert.ok(!msg.includes("long stack"), "only the first error line belongs in the toast")
-  assert.ok(msg.includes("npm install"), "the message must tell the human how to rebuild")
+  assert.ok(msg.includes("pnpm install"), "the message must tell the human how to rebuild")
 })
 
 test("fallback hooks surface the load error on agentic-workflow commands only", async () => {
