@@ -10,7 +10,7 @@
 agentic-workflow 框架的本機管理面板：**工作流程監視器**和**視覺化工作流程建立器**，以一個小型 web 應用程式的形式提供服務。
 
 ```bash
-npm run hub -- --dir /path/to/repo    # from the repo root — builds core + hub, serves http://127.0.0.1:4317
+pnpm hub --dir /path/to/repo    # from the repo root — builds core + hub, serves http://127.0.0.1:4317
 node dist/server/main.js --dir /path/to/repo --port 4317        # direct, after building
 node dist/server/main.js --dir /path/a --dir /path/b            # watch several repos
 node dist/server/main.js --dir "/mnt/c/Users/me/projects/*"     # every loop repo under a parent
@@ -283,9 +283,9 @@ slug 篩檢；工作流程類型的寫入被限制在 `packages/core/workflows/<
 ## Development
 
 ```bash
-npm run dev -w @agentic-workflow/hub        # esbuild --watch for the SPA (run the server via tsx separately)
-npm run typecheck -w @agentic-workflow/hub  # server + web tsconfigs
-npm run test -w @agentic-workflow/hub       # node --test via tsx
+pnpm --filter @agentic-workflow/hub run dev        # esbuild --watch for the SPA (run the server via tsx separately)
+pnpm --filter @agentic-workflow/hub run typecheck  # server + web tsconfigs
+pnpm --filter @agentic-workflow/hub test       # node --test via tsx
 ```
 
 web bundle（`dist/web/`）是在本機建置的，從不會被提交進版本控制。
@@ -295,6 +295,6 @@ web bundle（`dist/web/`）是在本機建置的，從不會被提交進版本�
 瀏覽器中打開管理面板，並把兩個分頁都點過一遍。
 
 伺服器 bundle 也需要建置（`dist/server/`），這裡有一個**經典陷阱：
-過期的 `dist`**：`npm run hub` 會重新建置，但如果在編輯 `src/` 之後
+過期的 `dist`**：`pnpm hub` 會重新建置，但如果在編輯 `src/` 之後
 直接執行 `node dist/server/main.js`，跑的會是舊的程式碼——一個新的
 路由會回傳 404，看起來像是路由 bug。請先重新建置。

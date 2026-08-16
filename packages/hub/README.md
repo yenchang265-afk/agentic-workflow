@@ -10,7 +10,7 @@ A local admin hub for the agentic-workflow framework: **loop monitor** and
 **visual loop creator**, served as one small web app.
 
 ```bash
-npm run hub -- --dir /path/to/repo    # from the repo root — builds core + hub, serves http://127.0.0.1:4317
+pnpm hub --dir /path/to/repo    # from the repo root — builds core + hub, serves http://127.0.0.1:4317
 node dist/server/main.js --dir /path/to/repo --port 4317        # direct, after building
 node dist/server/main.js --dir /path/a --dir /path/b            # watch several repos
 node dist/server/main.js --dir "/mnt/c/Users/me/projects/*"     # every loop repo under a parent
@@ -331,7 +331,7 @@ The hub's writes, none of which drive a loop:
 |---|---|---|
 | Save a workflow kind (creator) | `packages/core/workflows/<kind>/` | slug + prefix check; 409 without `overwrite` |
 | Scaffold an asset stub (creator) | `prompts/agents/<name>/`, `plugins/opencode/commands/<name>.md`, or `skills/<name>/` — one-shot TODO stubs | `X-Hub-Client`; slug + prefix check; 409 if the target exists (never overwrites); agent-referenced skills must already exist |
-| Run the persona generator (creator checklist) | regenerates the checked-in `plugins/opencode/agents/*` + `plugins/claude/agents/*` files and normalizes opencode command `agent:` frontmatter — exactly what `npm run gen:prompts` does in a terminal | `X-Hub-Client`; a confirm naming the effect; failure is reported with the generator's output, never half-applied routes |
+| Run the persona generator (creator checklist) | regenerates the checked-in `plugins/opencode/agents/*` + `plugins/claude/agents/*` files and normalizes opencode command `agent:` frontmatter — exactly what `pnpm gen:prompts` does in a terminal | `X-Hub-Client`; a confirm naming the effect; failure is reported with the generator's output, never half-applied routes |
 | A human gate move (approve / replan / ship) | the task file under `tasksDir`, plus a git commit — and for **ship**, whatever the dialog's publish choice says (a draft PR, a push, or nothing off your machine) | `X-Hub-Client`; `expectStatus` (a stale board 409s rather than gate the wrong task); refused while a loop is driving the task; a confirm naming the effect |
 | Edit a planless task (drawer) | the task file under `tasksDir` (rewritten in place — same id, filename, folder), plus a git commit; from **`queued/`** also the retask move back to `draft/` | `X-Hub-Client`; planless-only (a plan that appeared 409s); `expectStatus` **and** a content hash (a stale board or drifted prose 409s); frontmatter the schema can't preserve 409s rather than being stripped; the audit tail is rejoined server-side and re-verified; refused while a loop is driving the task or a claim is held; a body that scans as a secret is refused; a confirm naming the effect |
 | Save config | one layer of `.agentic-workflow.json` | `X-Hub-Client`; layer-explicit (never the merged view); raw-JSON writes, so unknown keys survive; `ado.pat` redacted out and refused into a non-gitignored repo file; rejected unless the merged config validates |
@@ -385,9 +385,9 @@ Known beta caveats:
 ## Development
 
 ```bash
-npm run dev -w @agentic-workflow/hub        # esbuild --watch for the SPA (run the server via tsx separately)
-npm run typecheck -w @agentic-workflow/hub  # server + web tsconfigs
-npm run test -w @agentic-workflow/hub       # node --test via tsx
+pnpm --filter @agentic-workflow/hub run dev        # esbuild --watch for the SPA (run the server via tsx separately)
+pnpm --filter @agentic-workflow/hub run typecheck  # server + web tsconfigs
+pnpm --filter @agentic-workflow/hub test       # node --test via tsx
 ```
 
 The web bundle (`dist/web/`) is built locally, never checked in. Manual QA
@@ -397,6 +397,6 @@ dialogs on gate buttons, and a gate move attempted while a watcher is live —
 open the hub in a real browser and click through both tabs.
 
 The server bundle is built too (`dist/server/`), and a **stale `dist` is the
-classic trap here**: `npm run hub` rebuilds, but running
+classic trap here**: `pnpm hub` rebuilds, but running
 `node dist/server/main.js` directly after editing `src/` serves the old code —
 a new route 404s and looks like a routing bug. Rebuild first.

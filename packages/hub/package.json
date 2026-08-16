@@ -16,7 +16,7 @@
     "test": "node --import tsx --test src/server/*.test.ts src/server/metrics/*.test.ts src/server/routes/*.test.ts src/server/tokens/*.test.ts src/web/*.test.ts src/web/review/*.test.ts src/web/creator/*.test.ts src/web/markdown/*.test.ts src/web/metrics/*.test.ts src/web/monitor/*.test.ts src/web/ui/*.test.ts"
   },
   "dependencies": {
-    "@agentic-workflow/core": "*",
+    "@agentic-workflow/core": "workspace:*",
     "zod": "^4.1.8"
   },
   "devDependencies": {

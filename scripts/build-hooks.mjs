@@ -9,7 +9,7 @@
  * DIST, not src — so a core edit that is not rebuilt is silently bundled at its
  * OLD behavior and the shipped hook contradicts the source it was generated
  * from (a security fix in core/task/audit.ts once made it into the repo but not
- * into the hook). `npm run build:hooks` therefore builds core first; run this
+ * into the hook). `pnpm build:hooks` therefore builds core first; run this
  * script directly only when you know dist is current.
  *
  * One source set, two outputs: plugins/claude/hooks/ (alongside its hand-written

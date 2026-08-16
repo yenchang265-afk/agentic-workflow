@@ -5,34 +5,24 @@
   "license": "MIT",
   "type": "module",
   "private": true,
+  "packageManager": "pnpm@11.22.0",
   "engines": {
     "node": ">=22.13.0"
   },
-  "workspaces": [
-    "packages/core",
-    "packages/ado-mcp",
-    "packages/hub",
-    "plugins/opencode",
-    "plugins/claude/mcp-server"
-  ],
   "scripts": {
-    "prepare": "npm run build -w @agentic-workflow/core && npm run build -w @agentic-workflow/ado-mcp && npm run build -w agentic-workflow-mcp",
-    "hub": "npm run build -w @agentic-workflow/core && npm run build -w @agentic-workflow/hub && npm run start -w @agentic-workflow/hub --",
+    "preinstall": "npx only-allow pnpm",
+    "prepare": "pnpm --filter @agentic-workflow/core --filter @agentic-workflow/ado-mcp --filter agentic-workflow-mcp run build",
+    "hub": "pnpm --filter @agentic-workflow/core run build && pnpm --filter @agentic-workflow/hub run build && pnpm --filter @agentic-workflow/hub run start",
     "gen:prompts": "node scripts/gen-prompts.mjs",
-    "build:hooks": "npm run build -w @agentic-workflow/core && node scripts/build-hooks.mjs",
+    "build:hooks": "pnpm --filter @agentic-workflow/core run build && node scripts/build-hooks.mjs",
     "test:hooks": "node --test plugins/claude/hooks/*.test.mjs",
     "test:scripts": "node --test scripts/*.test.mjs",
-    "typecheck:all": "npm run typecheck -ws --if-present",
-    "test:all": "npm run test -ws --if-present && npm run test:hooks && npm run test:scripts"
+    "typecheck:all": "pnpm -r run typecheck",
+    "test:all": "pnpm -r --workspace-concurrency=1 run test && pnpm run test:hooks && pnpm run test:scripts"
   },
   "devDependencies": {
+    "@agentic-workflow/core": "workspace:*",
+    "@opencode-ai/sdk": "latest",
     "esbuild": "^0.28.1"
-  },
-  "overrides": {
-    "@hono/node-server": "^2.0.5"
-  },
-  "allowScripts": {
-    "msgpackr-extract": false,
-    "esbuild": true
   }
 }

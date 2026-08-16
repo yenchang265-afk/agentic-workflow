@@ -14,7 +14,7 @@ import { test } from "node:test"
  * carry only bare forms, and the GENERATED frontmatter must carry both.
  *
  * Reading the committed frontmatter (rather than calling the generator) also
- * catches a stale `npm run gen:prompts`.
+ * catches a stale `pnpm gen:prompts`.
  */
 
 const WORKFLOWS = path.join(import.meta.dirname, "..", "packages", "core", "workflows")
@@ -69,7 +69,7 @@ test("the generated OpenCode frontmatter carries both shapes for a worktree stag
         for (const want of [glob, CD_PREFIX + glob]) {
           assert.ok(
             granted.has(want),
-            `${kind}/${stage.name}: ${stage.agent}.md does not grant "${want}" — run \`npm run gen:prompts\``,
+            `${kind}/${stage.name}: ${stage.agent}.md does not grant "${want}" — run \`pnpm gen:prompts\``,
           )
         }
         checked++
@@ -215,7 +215,7 @@ test("the VERIFY allowlist accepts idiomatic Maven and Gradle invocations", asyn
   )
   for (const cmd of JVM_ACCEPTED) {
     assert.ok(commandAllowed(cmd, globs), `Claude/Qwen guard denies "${cmd}" — the manifest glob is goal-position-anchored`)
-    assert.ok(openCodeAllows(cmd, [...frontmatter]), `OpenCode denies "${cmd}" — run \`npm run gen:prompts\``)
+    assert.ok(openCodeAllows(cmd, [...frontmatter]), `OpenCode denies "${cmd}" — run \`pnpm gen:prompts\``)
     // In a worktree the stage is told to prefix the runner; OpenCode needs the twin.
     assert.ok(openCodeAllows(`cd /wt/x && ${cmd}`, [...frontmatter]), `OpenCode denies "${cmd}" inside a worktree`)
   }
@@ -273,7 +273,7 @@ test("the VERIFY allowlist accepts idiomatic workspace-scoped JS invocations", a
   )
   for (const cmd of JS_WORKSPACE_ACCEPTED) {
     assert.ok(commandAllowed(cmd, globs), `Claude/Qwen guard denies "${cmd}" — the manifest glob is subcommand-position-anchored`)
-    assert.ok(openCodeAllows(cmd, [...frontmatter]), `OpenCode denies "${cmd}" — run \`npm run gen:prompts\``)
+    assert.ok(openCodeAllows(cmd, [...frontmatter]), `OpenCode denies "${cmd}" — run \`pnpm gen:prompts\``)
     assert.ok(openCodeAllows(`cd /wt/x && ${cmd}`, [...frontmatter]), `OpenCode denies "${cmd}" inside a worktree`)
   }
 })

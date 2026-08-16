@@ -61,7 +61,7 @@ flowchart TB
     engine -->|"fire stage / park / done / stop"| hosts
 ```
 
-- **Core package** — `@agentic-workflow/core` (npm workspace) holds everything
+- **Core package** — `@agentic-workflow/core` (pnpm workspace) holds everything
   every host shares: the pure engine and state, the manifest layer, work
   sources + scheduler, the task store, git helpers + worktree isolation,
   snapshots, verdict handling, metrics, and config (resolved by layering an
@@ -205,7 +205,7 @@ Full install and command details:
 
 ## Admin hub — beta (`packages/hub/`)
 
-A third, host-independent surface: a localhost web app (`npm run hub`) that
+A third, host-independent surface: a localhost web app (`pnpm hub`) that
 **observes** the same filesystem substrate the hosts write — status folders,
 run logs, snapshots, the stage marker, the watch lease — and **performs the
 human gate moves on it**: approve, replan, ship.

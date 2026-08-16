@@ -12,21 +12,31 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Must precede setup-node: `cache: 'pnpm'` shells out to `pnpm store path`
+      # and fails if pnpm is not on PATH yet. Placing it first also gives pnpm to
+      # every later step, including the install round trips. The version comes
+      # from the root package.json `packageManager` field — never duplicate it here.
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           # Floor of engines.node — 22.13 is the first release with an unflagged
           # node:sqlite, which the hub's opencode.db token backfill imports.
           node-version: '22.13'
+          cache: 'pnpm'
 
+      # Never add --ignore-scripts here: the root `prepare` is what builds
+      # @agentic-workflow/core, and every later step consumes its dist/.
       - name: Install dependencies (builds @agentic-workflow/core via prepare)
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck (all workspaces)
-        run: npm run typecheck:all
+        run: pnpm run typecheck:all
 
       - name: Test (all workspaces + hooks + installer scripts)
-        run: npm run test:all
+        run: pnpm run test:all
 
       - name: Generated prompts are in sync with prompts/ sources
         run: |
@@ -43,11 +53,11 @@ jobs:
           git diff --exit-code -- plugins/claude/hooks plugins/qwen/hooks
 
       - name: Build the hub (typecheck alone never exercises the web bundle)
-        run: npm run build -w @agentic-workflow/hub
+        run: pnpm --filter @agentic-workflow/hub run build
 
       - name: Build and smoke-run the MCP server (both hosts)
         run: |
-          npm run build -w agentic-workflow-mcp
+          pnpm --filter agentic-workflow-mcp run build
           for host in claude qwen; do
             out=$(AGENTIC_WORKFLOW_HOST=$host node plugins/claude/mcp-server/dist/server.js < /dev/null 2>&1 | head -1)
             echo "$host: $out"

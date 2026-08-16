@@ -48,7 +48,7 @@ or add the repo as a marketplace and install:
 /plugin install agentic-workflow
 ```
 
-`install.sh` runs `npm install` + `npm run build` in `mcp-server/` (the `.mcp.json`
+`install.sh` runs `pnpm install` + `pnpm --filter agentic-workflow-mcp run build` (the `.mcp.json`
 runs the built `mcp-server/dist/server.js`) and creates relative symlinks for the
 platform-agnostic skills and the reference checklists.
 

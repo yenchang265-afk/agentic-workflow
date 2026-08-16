@@ -165,7 +165,7 @@ flowchart TD
 - `packages/core/` — the shared `@agentic-workflow/core` engine (manifest interpreter, scheduler, work sources) used by both the OpenCode plugin and the Claude MCP (Model Context Protocol) server
 - `packages/core/workflows/<kind>/` — declarative workflow-kind manifests (`workflow.json`) + stage prompt templates (one dir per kind: `engineering/`, `pr-sitter/`, `review-sitter/`, `dep-sitter/`, `main-sitter/`)
 - `packages/hub/` — the admin hub (beta): a localhost web app
-  (`npm run hub -- --dir <repo>`) with a loop monitor and a visual loop
+  (`pnpm hub --dir <repo>`) with a loop monitor and a visual loop
   creator. The monitor carries the human gate moves (approve/replan/ship), an
   in-place task editor, a plan-review view with per-line replan comments, a
   Plan button on queued cards (writes a plan-request ordering hint, never a
@@ -589,11 +589,11 @@ blocks the turn, so a different tool call proves the window is down
 
 One more silent seam, and it is the one that cost the most: **`armTaskGateAsk`
 returning `""`**. `data.gate`/`data.id` live in core, which resolves to
-`packages/core/dist` — gitignored, rebuilt only by `npm install`, while the
+`packages/core/dist` — gitignored, rebuilt only by `pnpm install`, while the
 installed plugin points at the working tree. A new plugin against an old core
 dist lands there with `r.ok` true and no gate on it, and the result is BOTH halves
 of the bug at once: no `NEXT STEP` for the model to follow, and nothing armed for
-`askUnanswered` to enforce. It warns now, naming `npm install`.
+`askUnanswered` to enforce. It warns now, naming `pnpm install`.
 
 And **never `await` the drive inside the `event` hook.** `onIdle` is the entry to
 the whole build → verify → review chain, so awaiting it parks that handler for

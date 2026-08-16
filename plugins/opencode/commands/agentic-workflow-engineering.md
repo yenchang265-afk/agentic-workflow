@@ -103,7 +103,7 @@ Dispatch:
      reading this means placement succeeded. Still resolve `<id>` in
      `docs/tasks/draft/` **only**; if it isn't there, the plugin did not run
      (not loaded, or its `@agentic-workflow/core` build is stale) — report that,
-     with the fix (`npm install` at the agentic-workflow repo root, then
+     with the fix (`pnpm install` at the agentic-workflow repo root, then
      restart opencode), and stop. The `[note]` is also written onto that audit
      note, so why the goal was wrong survives in the task file, not just in
      this turn's context. A superseded `## Implementation Plan` a prior
@@ -169,7 +169,7 @@ Dispatch:
   REPLACES this text — so if you are reading this, the plugin did not run
   (not loaded, or its `@agentic-workflow/core` build is stale). Glob
   `docs/tasks/*/<id>*`: the task will still sit in its old folder. Report
-  that the gate did NOT happen, with the fix (`npm install` at the
+  that the gate did NOT happen, with the fix (`pnpm install` at the
   agentic-workflow repo root, then restart opencode) — never claim it did.
 <!-- /aw:verb approve -->
 <!-- aw:verb replan -->
@@ -183,7 +183,7 @@ Dispatch:
   outcome normally REPLACES this text — so if you are reading this, the plugin
   did not run (not loaded, or its `@agentic-workflow/core` build is stale).
   Glob `docs/tasks/*/<id>*`: the task will still sit in its old folder. Report
-  that the gate did NOT happen, with the fix (`npm install` at the
+  that the gate did NOT happen, with the fix (`pnpm install` at the
   agentic-workflow repo root, then restart opencode) — never claim it did.
 <!-- /aw:verb replan -->
 <!-- aw:verb abandon -->
@@ -199,7 +199,7 @@ Dispatch:
   REPLACES this text — so if you are reading this, the plugin did not run
   (not loaded, or its `@agentic-workflow/core` build is stale). Glob
   `docs/tasks/*/<id>*`: the task will still sit in its old folder. Report
-  that nothing was abandoned, with the fix (`npm install` at the
+  that nothing was abandoned, with the fix (`pnpm install` at the
   agentic-workflow repo root, then restart opencode) — never claim it was.
 <!-- /aw:verb abandon -->
 <!-- aw:verb remove -->
@@ -219,7 +219,7 @@ Dispatch:
   - Fully deterministic plugin work whose outcome normally REPLACES this
     text — so if you are reading this, the plugin did not run (not loaded, or
     its `@agentic-workflow/core` build is stale). Nothing was deleted or
-    dry-run. Report that, with the fix (`npm install` at the agentic-workflow
+    dry-run. Report that, with the fix (`pnpm install` at the agentic-workflow
     repo root, then restart opencode) — never claim the remove or its dry run
     happened.
 <!-- /aw:verb remove -->

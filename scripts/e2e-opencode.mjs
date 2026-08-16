@@ -132,8 +132,8 @@ const ensureBuilt = () => {
   const hasNodeModules = existsSync(path.join(REPO_DIR, "node_modules"))
   const hasCoreDist = existsSync(path.join(REPO_DIR, "packages/core/dist"))
   if (hasNodeModules && hasCoreDist) return
-  log("node_modules/ or packages/core/dist/ missing — running npm install (builds workspaces via prepare)")
-  sh("npm", ["install"], { stdio: "inherit" })
+  log("node_modules/ or packages/core/dist/ missing — running pnpm install (builds workspaces via prepare)")
+  sh("pnpm", ["install"], { stdio: "inherit" })
 }
 
 const setupScratchConfig = () => {
@@ -163,7 +163,7 @@ const assertPluginLoaded = async (client) => {
   if (missing.length) {
     throw new Error(
       `agentic-workflow plugin did not load from the scratch config — missing agents: ${missing.join(", ")}. ` +
-        `Check npm install / ./install.sh ran cleanly.`,
+        `Check pnpm install / ./install.sh ran cleanly.`,
     )
   }
   // The per-kind commands are registered via a frontmatter `name:` override

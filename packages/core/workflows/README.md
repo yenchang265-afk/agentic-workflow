@@ -389,12 +389,12 @@ backlog first, then the opted-in kinds in config order.
 ## Checklist for a new kind
 
 1. `workflows/<kind>/workflow.json` + `stages/*.md` (this page + the zod schema are
-   the contract; `npm test -w @agentic-workflow/core` exercises manifest
+   the contract; `pnpm --filter @agentic-workflow/core test` exercises manifest
    validation).
 2. Stage **agents** for all three plugins: author the source under
    `prompts/agents/workflow-<kind>-*/` (`body.md` + `opencode.yaml` — frontmatter
    bash permissions mirror the manifest allowlists — + `claude.yaml` + `qwen.yaml`)
-   and run `npm run gen:prompts`; it renders into `plugins/opencode/agents/`,
+   and run `pnpm gen:prompts`; it renders into `plugins/opencode/agents/`,
    `plugins/claude/agents/`, and `plugins/qwen/agents/` (never edit those outputs
    — CI drift-checks them; the PreToolUse guard enforces the manifest allowlist
    via the stage marker). See [`prompts/README.md`](../../../prompts/README.md)

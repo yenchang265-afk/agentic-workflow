@@ -177,7 +177,7 @@ tool.
 ```bash
 git clone <this-repo>
 cd agentic-workflow
-npm install
+pnpm install
 ./install.sh opencode
 ```
 

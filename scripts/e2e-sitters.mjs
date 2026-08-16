@@ -207,8 +207,8 @@ const writeShim = () => {
 
 const ensureBuilt = () => {
   if (existsSync(path.join(REPO_DIR, "node_modules")) && existsSync(path.join(REPO_DIR, "packages/core/dist"))) return
-  log("node_modules/ or packages/core/dist/ missing — running npm install (builds workspaces via prepare)")
-  execFileSync("npm", ["install"], { cwd: REPO_DIR, stdio: "inherit" })
+  log("node_modules/ or packages/core/dist/ missing — running pnpm install (builds workspaces via prepare)")
+  execFileSync("pnpm", ["install"], { cwd: REPO_DIR, stdio: "inherit" })
 }
 
 const setupScratchConfig = () => {

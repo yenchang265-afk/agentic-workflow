@@ -1,0 +1,23 @@
+packages:
+  - packages/core
+  - packages/ado-mcp
+  - packages/hub
+  - plugins/opencode
+  - plugins/claude/mcp-server
+
+# Was the npm-only root `overrides`. @modelcontextprotocol/sdk accepts
+# "^1.19.9 || ^2.0.5" for the server shim; this pins it to the v2 branch.
+overrides:
+  "@hono/node-server": "^2.0.5"
+
+# Was the non-standard root `allowScripts`, and maps onto it one for one. pnpm
+# blocks dependency lifecycle scripts by default — without esbuild listed here its
+# platform binary never installs and every bundling step (scripts/build-hooks.mjs,
+# packages/hub/scripts/build-web.mjs) breaks at run time rather than install time.
+allowBuilds:
+  esbuild: true
+  msgpackr-extract: false
+
+# Fail the install if any OTHER dependency wants to run a build script, instead of
+# skipping it silently. That is what keeps the map above an explicit decision.
+strictDepBuilds: true

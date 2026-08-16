@@ -13,7 +13,7 @@ import { overrideCommandPrompt, refusalPrompt } from "./command-prompt.ts"
  * plugin factories.
  */
 
-const REBUILD_HINT = "Rebuild it: run `npm install` at the agentic-workflow repo root (or `npm run build -w @agentic-workflow/core`), then restart opencode."
+const REBUILD_HINT = "Rebuild it: run `pnpm install` at the agentic-workflow repo root (or `pnpm --filter @agentic-workflow/core run build`), then restart opencode."
 
 /** The user-facing load-failure message: first error line + rebuild hint. Pure. */
 export const loadFailureMessage = (err: unknown): string => {

@@ -94,7 +94,9 @@ OpenCode 上還有 `watch [trigger]` / `unwatch`）。**四個 sitter 全都是
 
 ## 安裝
 
-以下步驟假設系統先決條件已就緒（Node ≥ 22.13、git、`gh`、`curl`，如需瀏覽器
+以下步驟假設系統先決條件已就緒（Node ≥ 22.13、**pnpm** —— 本儲存庫是 pnpm
+workspace，安裝腳本在缺少它時會直接失敗（`npm i -g pnpm`，或見
+https://pnpm.io/installation）——、git、`gh`、`curl`，如需瀏覽器
 相關作業還需要 Chrome）。Azure DevOps 需要附帶 `npx` 的 Node（用來啟動 Azure
 DevOps MCP 伺服器），外加 `AZURE_DEVOPS_EXT_PAT` 中的一個 PAT。對於全新的機器，`./bootstrap.sh` 會為你驗證/安裝這些相依項，
 註冊 `chrome-devtools` MCP 伺服器，然後為你執行 `./install.sh`：
@@ -108,7 +110,7 @@ DevOps MCP 伺服器），外加 `AZURE_DEVOPS_EXT_PAT` 中的一個 PAT。對�
 ```bash
 git clone <this-repo>
 cd agentic-workflow
-npm install             # npm workspaces —— 同時建置 @agentic-workflow/core（prepare）
+pnpm install            # pnpm workspaces —— 同時建置 @agentic-workflow/core（prepare）
 ./install.sh            # 全部外掛都裝；或者：./install.sh opencode | claude | qwen
 ```
 
@@ -117,7 +119,7 @@ npm install             # npm workspaces —— 同時建置 @agentic-workflow/c
 ```powershell
 git clone <this-repo>
 cd agentic-workflow
-npm install
+pnpm install
 .\install.ps1            # 全部外掛都裝；或者：.\install.ps1 opencode | claude | qwen
 ```
 
@@ -126,7 +128,7 @@ npm install
 複製（傳入 `-Copy` 可主動選擇這個模式並略過警告；複製模式下 `git pull` 後需
 重新執行才能更新）。
 
-- 在儲存庫根目錄執行 `npm install` 會安裝所有 workspace（OpenCode 外掛、
+- 在儲存庫根目錄執行 `pnpm install` 會安裝所有 workspace（OpenCode 外掛、
   `packages/core`、`packages/ado-mcp`、`packages/hub`、`plugins/claude/mcp-server`），
   並透過 `prepare` 腳本建置核心套件——每個外掛都消費核心套件建置出的 `dist/`。
 - `./install.sh opencode`（`.\install.ps1 opencode`）會把 agents/commands/skills/references 符號連結進
@@ -240,7 +242,7 @@ npm install
 - [docs/design/](docs/design/) —— 威脅模型、強化設計紀錄
   （包括 [07 — 多迴圈排程器](docs/design/improvements/07-multi-workflow-scheduler.md)）
 - [packages/hub/README.md](packages/hub/README.md) —— **管理面板（admin
-  hub，測試版）**（`npm run hub -- --dir /path/to/repo` → http://127.0.0.1:4317）：
+  hub，測試版）**（`pnpm hub --dir /path/to/repo` → http://127.0.0.1:4317）：
   工作流程監視器（待辦看板、即時把關點通知、執行歷史、按階段的 token 用量）和
   視覺化工作流程建立器；可以監看一個或多個儲存庫（`--dir` 可重複且支援 `*`
   萬用字元，或者在使用者層級 `~/.config/agentic-workflow/agentic-workflow.json` 中設定 `hub.repos` —— 不設定
@@ -273,16 +275,32 @@ npm install
 ## 開發
 
 ```bash
-npm install && npm run typecheck:all && npm run test:all
+pnpm install && pnpm run typecheck:all && pnpm run test:all
 ```
 
 `typecheck:all` / `test:all` 涵蓋每一個 workspace：核心套件
 （`packages/core` —— 引擎、清單、排程器、來源、儲存）、管理面板
 （`packages/hub`）、OpenCode 外掛（`plugins/opencode`），以及 Claude
 Code MCP 伺服器（`plugins/claude/mcp-server`）。若只想執行 OpenCode 外掛的
-測試套件，可限定到它的 workspace —— `npm run typecheck -w agentic-workflow` /
-`npm test -w agentic-workflow`（或者在 `plugins/opencode/` 內執行
-`npm run typecheck`）；根 package 只定義 `:all` 腳本。
+測試套件，可限定到它的 workspace —— `pnpm --filter agentic-workflow run typecheck` /
+`pnpm --filter agentic-workflow test`（或者在 `plugins/opencode/` 內執行
+`pnpm run typecheck`）；根 package 只定義 `:all` 腳本。
+
+本儲存庫以 `packageManager`（根 `package.json`）鎖定 pnpm，並用 `preinstall`
+守衛拒絕 `npm install` —— 否則誤用 npm 會成功執行、建出 hoisted 的
+`node_modules`，並留下與 `pnpm-lock.yaml` 互相矛盾的第二份 lockfile。從舊的
+checkout 過來時，請先刪除 npm 時代的 `node_modules` 再執行第一次
+`pnpm install`；兩種佈局混用時解析結果無法預期。
+
+在 Linux 與 macOS 上，pnpm 預設 store 與你的 checkout 位於同一個檔案系統，
+套件會以 hardlink（在 APFS 上為 CoW clone）連結，無需任何調整。若 checkout
+與 store *不在*同一個檔案系統 —— WSL 的 `/mnt/c`、某些 Docker bind mount ——
+pnpm 會靜默退回逐檔複製。將 `PNPM_STORE_DIR` 指向同一個磁碟區上的路徑即可
+恢復連結：
+
+```bash
+export PNPM_STORE_DIR=/mnt/c/Users/<you>/.pnpm-store   # WSL 範例
+```
 
 ## 授權條款
 

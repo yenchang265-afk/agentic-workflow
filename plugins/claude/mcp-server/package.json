@@ -13,8 +13,8 @@
     "test": "node --import tsx --test src/*.test.ts"
   },
   "dependencies": {
-    "@agentic-workflow/ado-mcp": "*",
-    "@agentic-workflow/core": "*",
+    "@agentic-workflow/ado-mcp": "workspace:*",
+    "@agentic-workflow/core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "yaml": "^2.9.0",
     "zod": "^4.1.8"

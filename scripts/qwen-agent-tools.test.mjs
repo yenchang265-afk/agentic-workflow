@@ -59,7 +59,7 @@ test("every generated Qwen agent enumerates only tools qwen-code has", () => {
     }
     checked++
   }
-  assert.deepEqual(offences, [], `edit prompts/agents/<name>/qwen.yaml and re-run \`npm run gen:prompts\`:\n${offences.join("\n")}`)
+  assert.deepEqual(offences, [], `edit prompts/agents/<name>/qwen.yaml and re-run \`pnpm gen:prompts\`:\n${offences.join("\n")}`)
   assert.ok(checked > 0, "no generated Qwen agent found — wrong path?")
 })
 

@@ -68,7 +68,7 @@ test("every generated OpenCode agent denies the question tool, both ways", () =>
     if (!/^ +question: false$/m.test(fm)) offences.push(`${file}: no "question: false" under tools:`)
     checked++
   }
-  assert.deepEqual(offences, [], `edit prompts/agents/<name>/opencode.yaml and re-run \`npm run gen:prompts\`:\n${offences.join("\n")}`)
+  assert.deepEqual(offences, [], `edit prompts/agents/<name>/opencode.yaml and re-run \`pnpm gen:prompts\`:\n${offences.join("\n")}`)
   assert.ok(checked > 0, "no generated OpenCode agent found — wrong path?")
 })
 

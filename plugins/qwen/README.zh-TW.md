@@ -14,11 +14,11 @@
 
 | 路徑 | 來源或產生物 |
 |---|---|
-| `agents/` | 由 `npm run gen:prompts` 從 `prompts/agents/*/{body.md,qwen.yaml}` **產生** |
+| `agents/` | 由 `pnpm gen:prompts` 從 `prompts/agents/*/{body.md,qwen.yaml}` **產生** |
 | `commands/` | 手寫——Qwen 載入為 `/agentic-workflow:<name>` 的 router |
 | `verbs/` | 從 `prompts/verbs/` **產生**——hook 注入的各 verb 程序 |
 | `skills/workflow-orchestration/` | 從 `prompts/skills/` **產生**——驅動協定 |
-| `hooks/` | 由 `npm run build:hooks` 從 `plugins/claude/hooks/src/` **產生** |
+| `hooks/` | 由 `pnpm build:hooks` 從 `plugins/claude/hooks/src/` **產生** |
 | `hooks/hooks.json` | 手寫——安裝腳本併入 `settings.json` 的片段 |
 
 永遠不要編輯產生出來的檔案；請改它的來源並重跑產生器。CI 會在漂移時失敗。

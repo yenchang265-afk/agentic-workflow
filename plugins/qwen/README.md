@@ -15,11 +15,11 @@ what is in this directory.
 
 | Path | Source or generated |
 |---|---|
-| `agents/` | **generated** from `prompts/agents/*/{body.md,qwen.yaml}` by `npm run gen:prompts` |
+| `agents/` | **generated** from `prompts/agents/*/{body.md,qwen.yaml}` by `pnpm gen:prompts` |
 | `commands/` | hand-authored — the routers Qwen loads as `/agentic-workflow:<name>` |
 | `verbs/` | **generated** from `prompts/verbs/` — the per-verb procedures the hook injects |
 | `skills/workflow-orchestration/` | **generated** from `prompts/skills/` — the driving protocol |
-| `hooks/` | **generated** by `npm run build:hooks` from `plugins/claude/hooks/src/` |
+| `hooks/` | **generated** by `pnpm build:hooks` from `plugins/claude/hooks/src/` |
 | `hooks/hooks.json` | hand-authored — the fragment the installer merges into `settings.json` |
 
 Never edit a generated file; edit its source and re-run the generator. CI fails

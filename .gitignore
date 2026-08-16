@@ -22,7 +22,7 @@ docs/tasks/runs/events*.jsonl
 docs/tasks/*/.claims/
 docs/tasks/*/.requests/
 
-# Build output (built by npm workspace `build` scripts / plugins/claude/install.sh)
+# Build output (built by pnpm workspace `build` scripts / plugins/claude/install.sh)
 packages/core/dist/
 plugins/claude/mcp-server/dist/
 

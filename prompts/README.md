@@ -21,7 +21,7 @@ prompts/verbs/<command>.md        → plugins/{claude,qwen}/verbs/
 prompts/skills/<name>/SKILL.md    → plugins/{claude,qwen}/skills/
 ```
 
-`npm run gen:prompts` (scripts/gen-prompts.mjs) renders them into the
+`pnpm gen:prompts` (scripts/gen-prompts.mjs) renders them into the
 checked-in outputs both hosts actually load:
 
 - `plugins/opencode/agents/<name>.md`

@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 # Windows port of install.sh (same directory). Prepare the agentic-workflow
 # Claude Code plugin for use:
-#   1. build the MCP server (npm install + tsc -> mcp-server/dist)
+#   1. build the MCP server (pnpm install + tsc -> mcp-server/dist)
 #   2. symlink the platform-agnostic skills + references from the repo top
 #      level into the plugin (the two loop-specific skills are authored here
 #      directly)
@@ -24,10 +24,15 @@ $RepoDir = (Resolve-Path (Join-Path $PluginDir '..\..')).Path
 Write-Host "Building the agentic-workflow MCP server..."
 Push-Location $RepoDir
 try {
-    & npm install
-    if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit code $LASTEXITCODE" }
-    & npm run build -w agentic-workflow-mcp
-    if ($LASTEXITCODE -ne 0) { throw "npm run build failed with exit code $LASTEXITCODE" }
+    # -ErrorAction SilentlyContinue: $ErrorActionPreference = 'Stop' above would
+    # otherwise turn a missing command into a terminating error before the check.
+    if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
+        throw "pnpm is required to build the MCP server - install it with 'npm i -g pnpm' (or see https://pnpm.io/installation)"
+    }
+    & pnpm install
+    if ($LASTEXITCODE -ne 0) { throw "pnpm install failed with exit code $LASTEXITCODE" }
+    & pnpm --filter agentic-workflow-mcp run build
+    if ($LASTEXITCODE -ne 0) { throw "pnpm build failed with exit code $LASTEXITCODE" }
 } finally {
     Pop-Location
 }

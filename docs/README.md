@@ -26,7 +26,7 @@ should link.
 | [design/improvements/](design/improvements/README.md) | Implementation design records for shipped hardening work (worktrees, state persistence, verdict quality, …) |
 | [migration.md](migration.md) | Upgrading from earlier layouts (the old `/agent-loop` command, `in-planning/`, the blocking PLAN gate) |
 | [templates/AGENTS.md](templates/AGENTS.md) | Starter `AGENTS.md`/`CLAUDE.md` to copy into a project driven by agentic-workflow |
-| [`../prompts/README.md`](../prompts/README.md) | How the single-source agent-prompt pipeline works (`prompts/agents/` → `npm run gen:prompts` → all three plugins) |
+| [`../prompts/README.md`](../prompts/README.md) | How the single-source agent-prompt pipeline works (`prompts/agents/` → `pnpm gen:prompts` → all three plugins) |
 
 `manual.html` restates most of the above for convenience (quickstart, config
 reference, command cheat-sheet), so it is **canonical for nothing**: if it and
