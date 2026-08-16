@@ -42,7 +42,7 @@ var mergeConfigLayers = (base, override) => {
   }
   return out;
 };
-var SHELL_BEARING_KEYS = ["worktreeSetup"];
+var SHELL_BEARING_KEYS = ["worktreeSetup", "notifyCommand"];
 var bareModel = (model) => model.includes("/") ? model.slice(model.lastIndexOf("/") + 1) : model;
 var SPAWN_ALIASES = ["sonnet", "opus", "haiku", "fable"];
 var spawnAlias = (model) => {

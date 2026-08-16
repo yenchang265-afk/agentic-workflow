@@ -49,7 +49,10 @@ jobs:
         run: |
           npm run build -w agentic-workflow-mcp
           for host in claude qwen; do
-            out=$(AGENTIC_WORKFLOW_HOST=$host node plugins/claude/mcp-server/dist/server.js < /dev/null 2>&1 | head -1)
+            # Match anywhere in the output, not just line 1: startup reporting
+            # legitimately prints ahead of the ready line (a push build checks out
+            # feature/<id>, which the loop reads as a leftover worktree).
+            out=$(AGENTIC_WORKFLOW_HOST=$host node plugins/claude/mcp-server/dist/server.js < /dev/null 2>&1)
             echo "$host: $out"
             echo "$out" | grep -q "MCP server ready"
           done
