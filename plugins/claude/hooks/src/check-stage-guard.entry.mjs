@@ -149,6 +149,11 @@ const main = async () => {
   // an array of strings reads as none — fail-open to the previous behaviour, the
   // same direction every other marker input here takes.
   const markerPrefixes = Array.isArray(marker.bashPrefix) && marker.bashPrefix.every((p) => typeof p === "string") ? marker.bashPrefix : []
+  // The repo's `protectedBranches`, stamped for the same reason as the prefixes.
+  // Anything but an array of strings reads as none — which still leaves the
+  // permanent main/master/HEAD floor, so this input can only ADD protection.
+  const markerProtected =
+    Array.isArray(marker.protectedBranches) && marker.protectedBranches.every((b) => typeof b === "string") ? marker.protectedBranches : []
 
   // (3b) GitHub PR-mutation backstop — on whenever a loop stage is live (the
   // mirror of the ADO write backstop above). No loop stage — publish, fix, or any
@@ -168,7 +173,7 @@ const main = async () => {
   // only their own head fast-forward; a refspec (`x:main`), a force, or a delete
   // that the dotAll push allowlist glob can't exclude is blocked here. A human's
   // manual push outside a loop is untouched (gated on the marker, like 3b).
-  if (isBash && chainedGitPushViolation(String(ti.command ?? ""), markerPrefixes)) {
+  if (isBash && chainedGitPushViolation(String(ti.command ?? ""), markerPrefixes, markerProtected)) {
     return block(
       `agentic-workflow: the loop must never push a branch other than its own head, force-push, or delete — this git push is blocked. ` +
         `Push only your own feature/* (or <kind>/*) branch fast-forward with no ':dst' refspec, no --force, no --delete; ` +

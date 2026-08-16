@@ -356,6 +356,10 @@ export interface WorkflowKindConfig {
   readonly enabled?: boolean
   /** Per-kind override of the global `codePlatform`. */
   readonly codePlatform?: CodePlatform
+  /** Per-kind override of the global `prBase` — the branch this kind's PRs target. */
+  readonly prBase?: string
+  /** Extra branches no stage may push, added to the permanent main/master/HEAD floor. */
+  readonly protectedBranches?: readonly string[]
   /** How a watching host schedules claims for this kind (default: poll). */
   readonly trigger?: WorkflowTrigger
   /** Stage name → model that stage runs with (host-specific string); wins over the manifest stage's `model`. */
@@ -405,6 +409,20 @@ export interface Config {
   readonly codePlatform?: CodePlatform
   /** What a ship gate publishes by default; overridable per ship. Unset ⇒ `pr`. */
   readonly shipPublish?: ShipPublish
+  /**
+   * The branch this repo's PRs target; per-kind override via
+   * `workflows.<kind>.prBase`. Unset ⇒ ask the platform for its default branch
+   * (NOT a literal `main`). Not `ensureIsolation`'s `baseBranch`, which is what a
+   * run cuts FROM.
+   */
+  readonly prBase?: string
+  /**
+   * Extra branches no loop stage may `git push`, ADDED to the permanent
+   * main/master/HEAD floor the write backstop always enforces. Separate from
+   * `prBase`: where PRs target and what agents may not push are different
+   * policies that merely coincide by default.
+   */
+  readonly protectedBranches?: readonly string[]
   /** Azure DevOps coordinates; required when any effective platform is `ado`. */
   readonly ado?: AdoConfig
   /** Per-workflow-kind sections; engineering is on unless explicitly disabled, other kinds are opt-in. */

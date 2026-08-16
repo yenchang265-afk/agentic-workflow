@@ -86,3 +86,46 @@ test("a marker without bashPrefix is exactly the previous behaviour — fail ope
   // The unrewritten form is unaffected by any of this.
   assert.equal(run(cwd, "git push origin main").status, 2)
 })
+
+/**
+ * `protectedBranches` — the marker field that lets a team guard a non-default
+ * integration branch. Additive only: the main/master/HEAD floor is not
+ * configurable, because a config that could unprotect `main` is a config that
+ * can be wrong about the one branch that matters.
+ */
+test("a configured protected branch is blocked on top of the permanent floor", () => {
+  const cwd = makeRepo({ stage: "publish", taskId: "t", worktree: null, bashAllowlist: PUSH, protectedBranches: ["release/2.4"] })
+  const guarded = run(cwd, "git push origin release/2.4")
+  assert.equal(guarded.status, 2, "the configured integration branch is protected too")
+  assert.match(guarded.stderr, /never push a branch other than its own head/)
+  // The floor still stands beside it.
+  assert.equal(run(cwd, "git push origin main").status, 2)
+  // And an ordinary head branch is untouched — this only ever ADDS.
+  assert.equal(run(cwd, "git push origin feature/x").status, 0)
+})
+
+test("a marker without protectedBranches keeps exactly the permanent floor", () => {
+  const cwd = makeRepo({ stage: "publish", taskId: "t", worktree: null, bashAllowlist: PUSH })
+  assert.equal(run(cwd, "git push origin main").status, 2, "the floor is never configurable away")
+  assert.equal(run(cwd, "git push origin release/2.4").status, 0, "unconfigured means exactly the previous behaviour")
+})
+
+test("a malformed protectedBranches reads as none rather than unprotecting main", () => {
+  const cwd = makeRepo({ stage: "publish", taskId: "t", worktree: null, bashAllowlist: PUSH, protectedBranches: "release/2.4" })
+  assert.equal(run(cwd, "git push origin main").status, 2)
+  assert.equal(run(cwd, "git push origin release/2.4").status, 0)
+})
+
+test("a rewriting proxy cannot launder a push of a configured protected branch", () => {
+  const cwd = makeRepo({
+    stage: "publish",
+    taskId: "t",
+    worktree: null,
+    bashAllowlist: prefixed(PUSH, "rtk"),
+    bashPrefix: ["rtk"],
+    protectedBranches: ["release/2.4"],
+  })
+  const laundered = run(cwd, "rtk git push origin release/2.4")
+  assert.equal(laundered.status, 2, "the prefix strip and the configured list have to compose")
+  assert.match(laundered.stderr, /never push a branch other than its own head/)
+})

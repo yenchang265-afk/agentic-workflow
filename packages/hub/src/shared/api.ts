@@ -641,6 +641,13 @@ export interface GateRequest {
    * human meant to keep on their machine.
    */
   readonly publish?: ShipPublish
+  /**
+   * ship only: the branch the pull request should TARGET. Omitted means "use
+   * the base the run was cut from, then the repo's `prBase`, then the
+   * platform default" — the same reason `publish` is omitted rather than
+   * defaulted here. Validated server-side: this route has no zod on the wire.
+   */
+  readonly base?: string
 }
 
 /**

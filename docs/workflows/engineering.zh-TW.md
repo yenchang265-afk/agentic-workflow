@@ -147,7 +147,9 @@ engineering 迴圈從不會自行推送或
 依 `shipPublish` 發布（預設 `"pr"`：推送任務的 `feature/<id>` 分支，並依
 `codePlatform` 開啟或重複使用一個 **draft** PR——GitHub 或 Azure DevOps；
 `"push"` 只推送、不開 PR；`"local"` 則完全不對外發布——可用
-`--pr`／`--push`／`--local` 逐次覆寫）——這樣合併決定仍然是你的，
+`--pr`／`--push`／`--local` 逐次覆寫）。PR 會指向這次執行切出來的那個分支
+——完成註記會把它記在任務檔上；`prBase` 與逐次的 `--base=<分支>` 可以覆寫
+它——這樣合併決定仍然是你的，
 而「現在去推送並開一個 PR」這個步驟就不需要你親自動手了。
 
 ### 誰負責做什麼
@@ -156,7 +158,7 @@ engineering 迴圈從不會自行推送或
 |---------|-----------|----------|--------------|---------------|----------|
 | `/agentic-workflow:engineering new <idea>` | 外掛 → agent | `workflow-task-author` | 僅限任務檔案（bash ❌） | `interview-me`、`task-backlog-management` | `draft/` 中的無計畫草稿 |
 | `/agentic-workflow:engineering retask <id> [note]` | 外掛（安置任務）→ agent（重塑） | `workflow-task-author`（retask 模式） | 僅限任務檔案（bash ❌） | `interview-me`、`task-backlog-management` | **就地**在 `draft/` 中被重寫（相同 id）；`queued/` 的任務會先被移回 `draft/`，核准撤銷，並移除先前 `replan` 留下的舊計畫；`plan-review/` 之後拒絕（改用 `replan`） |
-| `/agentic-workflow:engineering approve [id]` | 僅外掛（agent 不寫入任何東西） | — | — | — | 由資料夾驅動的把關點：draft → `queued/`、plan-review → `in-progress/`、in-review → `completed/`（ship——依 `shipPublish` 發布，可用 `--pr`／`--push`／`--local` 逐次覆寫） |
+| `/agentic-workflow:engineering approve [id]` | 僅外掛（agent 不寫入任何東西） | — | — | — | 由資料夾驅動的把關點：draft → `queued/`、plan-review → `in-progress/`、in-review → `completed/`（ship——依 `shipPublish` 發布，可用 `--pr`／`--push`／`--local` 逐次覆寫；PR 會指向記錄下來的執行 base、或 `prBase`、或 `--base=<分支>`） |
 | `/agentic-workflow:engineering replan [id] [why]` | 僅外掛（agent 不寫入任何東西） | — | — | — | 任務重新排入 `queued/`，拒絕會被稽核 |
 | PLAN（在迴圈中，作用於 `queued/` 中的任務） | driver → agent | `workflow-plan-author` | 僅限任務檔案 | `planning-and-task-breakdown`（相關時 + `api-and-interface-design`、`deprecation-and-migration`、`documentation-and-adrs`） | 就地寫入 `## Implementation Plan` → 任務暫存進 `plan-review/` |
 | `/agentic-workflow:engineering plan\|claim\|watch\|recover\|stop\|status` | 外掛 driver（`plugins/opencode/src/workflow/driver.ts`） | 生成以下三個階段 agent | — | `workflow-orchestration` 協定 | 階段排序、認領、快照、執行紀錄 |

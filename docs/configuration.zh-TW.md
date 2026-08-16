@@ -121,6 +121,8 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 | `workflows` | `{}` | 各工作流程類型的區段——見下方。 |
 | `codePlatform` | `"github"` | 決定 PR 形狀的工作來源要跟哪個平台對話：`"github"`（`gh` CLI）或 `"ado"`（Azure DevOps——透過 Azure DevOps MCP 伺服器 + 一個 PAT）。可用 `workflows.<kind>.codePlatform` 依類型覆寫。見下方。 |
 | `shipPublish` | `"pr"` | 出貨閘門要發布什麼：`"pr"`（推送分支並開一個 draft PR）、`"push"`（只推送分支，不開 PR）或 `"local"`（什麼都不發布）。三種模式都一樣會把任務標記為完成，改變的只有「有什麼東西離開你的機器」。可以逐次出貨覆寫。見下方。 |
+| `prBase` | 未設定 | 這個 repo 的 pull request 要**指向**哪個分支，例如 `"release/2.4"`。未設定並**不**代表 `main`——它代表「去問平台它的預設分支是什麼」。會被「這次執行是從哪個分支切出來的」以及逐次出貨的 `--base=` 蓋過。可用 `workflows.<kind>.prBase` 依類型覆寫。見下方。 |
+| `protectedBranches` | `[]` | 迴圈的任何階段都不得 `git push` 的額外分支，**疊加**在永久的 `main`/`master`/`HEAD` 底線之上。只能疊加——底線無法用設定關掉。 |
 | `ado` | 未設定 | Azure DevOps 的座標（`organization`、`project`、可選的 `repository`、`selfLogin`、`mcp`）；當任何一個生效平台是 `"ado"` 時**必填**——沒有它設定會快速失敗。`"ado"` 下 `selfLogin` 是**必填**的（PAT 無法解析出 sitter 的身分）。 |
 | `projectManagement` | 未設定 | 團隊的任務追蹤系統（Jira / Azure DevOps）以及本機任務如何與它配對。驅動任務撰寫預設值和 `/agentic-workflow:engineering status` 中的配對視圖。見下方。 |
 | `worktreesDir` | `".workflow-worktrees"` | 見下方強化項。設成 `false` 可退出此行為。 |
@@ -689,6 +691,91 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 東西。（不帶 id 的 `approve` 也永遠不會挑到已完成的任務，它只看在閘門前等待的任務。）
 
 在 Claude Code 和 Qwen 上，`workflow_ship({id, publish: "pr"})` 直接做同一件事。
+
+## PR 目標分支（`prBase`）
+
+不是每個團隊都合併進 repo 的預設分支。如果你們在 `release/2.4` 上整合，出貨任
+務的 pull request 就該開到那裡——開到 `main` 會讓審查者看到一份沒有人核可過的
+diff。
+
+常見情況下閘門自己就能算出來。迴圈切出 `feature/<id>` 時，會把它是**從哪個分支
+切出來的**記在任務檔上，出貨閘門再把它讀回來。所以在 `release/2.4` 上工作完全
+不需要任何設定：
+
+```
+git checkout release/2.4
+/agentic-workflow:engineering new "…"    # → approve → plan → approve → claim
+/agentic-workflow:engineering approve <id>   # PR 指向 release/2.4
+```
+
+`prBase` 是給推論涵蓋不到的情況用的——任務分支可能從任何地方切出來的 repo，或
+是某個類型應該指向別的地方：
+
+```json
+{
+  "prBase": "release/2.4",
+  "workflows": { "dep-sitter": { "prBase": "main" } }
+}
+```
+
+跟 `shipPublish` 不同，這個**可以**依類型覆寫：`dep-sitter` 和 `main-sitter` 會
+開自己的 pull request，它們有正當理由跟主流程不一樣。
+
+### 哪個 base 會勝出
+
+由高到低：
+
+| 順位 | 來源 |
+| --- | --- |
+| 1 | 這次出貨的 `--base=<branch>`（或工具的 `base` 參數 / hub 欄位） |
+| 2 | 這次執行是從哪個分支切出來的——任務停泊時記在檔案上 |
+| 3 | `workflows.<kind>.prBase` |
+| 4 | `prBase` |
+| 5 | 平台的預設分支（`gh repo view` / ADO repo 的 `defaultBranch`） |
+| 6 | 目前分支（若與 head 不同）；否則 `main` |
+
+第 2 順位刻意排在設定之上：那正是 REVIEW 用來衡量 `git diff <base>...<branch>`
+的 ref，也就是你在 in-review 閘門核可的那份改動。要刻意改指向就用 `--base=`。
+
+在這個功能之前完成的任務沒有記錄 base，會直接落到第 5 順位——跟以前完全一樣。
+
+### 逐次出貨指定
+
+```
+/agentic-workflow:engineering approve <id> --base=release/2.4
+```
+
+要用 `=` 寫。空白分隔的 `--base release/2.4` 會被**拒絕**，因為每個 host 都把第
+一個非旗標的字當成任務 id——默默接受空白形式會變成出貨一個叫 `release/2.4` 的
+任務。
+
+| 位置 | 寫法 |
+| --- | --- |
+| 輸入動詞 | `approve <id> --base=release/2.4` |
+| Claude Code / Qwen 工具 | `workflow_ship({id, base})`、`workflow_approve({id, base})` |
+| OpenCode 工具 | `workflow_gate({id, base})` |
+| 管理 hub | Ship 對話框中的 **base branch** 欄位 |
+
+`origin` 上不存在的 base 會**拒絕開 PR**，而不是默默開到預設分支上。分支還是會
+被推送，所以修正只要一個指令——`approve <id> --base=<正確的>` 只會重跑發布那一
+步。帶 `refs/heads/` 前綴的值會被接受並正規化。
+
+## 受保護分支（`protectedBranches`）
+
+迴圈的任何階段都永遠不得 `git push` `main`、`master` 或 `HEAD`。如果團隊的整合
+分支是 `release/2.4`，把它加進來：
+
+```json
+{ "protectedBranches": ["release/2.4"] }
+```
+
+這**只能疊加**——內建的底線無法用設定關掉。一份能夠解除 `main` 保護的設定，就是
+一份可能在最要緊的那個分支上出錯的設定，而且在東西已經被推上去之前不會有任何徵
+兆。
+
+刻意跟 `prBase` 分開：pull request 指向哪裡、與代理人不得推送什麼，是兩種不同的
+政策。整合分支同時是迴圈**可以**推送自己成果的目標，是完全合理的設定，所以一個
+鍵不能同時代表兩件事。
 
 ## 程式碼平台（`codePlatform` / `ado`）
 

@@ -67,7 +67,9 @@ pushes or opens a PR — you review the diff and run
 (default `"pr"`: pushes the branch and opens or reuses a **draft** PR — GitHub
 or Azure DevOps, per `codePlatform`; `"push"` pushes with no PR; `"local"`
 ships nothing off your machine). Override per ship with `approve <id> --pr`
-(or `--push` / `--local`). Full execution model (watch mode, iteration caps,
+(or `--push` / `--local`). The PR targets the branch the run was cut from —
+work on `release/2.4` and that is where it opens — overridable with
+`prBase` or `approve <id> --base=<branch>`. Full execution model (watch mode, iteration caps,
 recovery): [docs/opencode.md](docs/opencode.md).
 
 ## The sitters

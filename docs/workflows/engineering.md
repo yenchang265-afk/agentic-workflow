@@ -155,7 +155,9 @@ human-invoked gate, but it now publishes per `shipPublish` (default `"pr"`:
 pushes the task's `feature/<id>` branch and opens or reuses a **draft** PR —
 GitHub or Azure DevOps per `codePlatform`; `"push"` pushes with no PR;
 `"local"` ships nothing off your machine — overridable per call with
-`--pr`/`--push`/`--local`) — so the merge decision stays yours while the "now
+`--pr`/`--push`/`--local`). The PR targets the branch the run was cut from,
+which the done note records on the task; `prBase` and a per-ship
+`--base=<branch>` override it — so the merge decision stays yours while the "now
 go push and open a PR" step doesn't.
 
 ### Who does what
@@ -164,7 +166,7 @@ go push and open a PR" step doesn't.
 |---------|-----------|----------|--------------|---------------|----------|
 | `/agentic-workflow:engineering new <idea>` | plugin → agent | `workflow-task-author` | task files only (bash ❌) | `interview-me`, `task-backlog-management` | planless draft in `draft/` |
 | `/agentic-workflow:engineering retask <id> [note]` | plugin (places the task) → agent (reshapes) | `workflow-task-author` (retask mode) | task files only (bash ❌) | `interview-me`, `task-backlog-management` | rewritten **in place** in `draft/` (same id); a `queued/` task is moved back to `draft/` first, withdrawing its approval and dropping any superseded plan an earlier `replan` left on it; refused from `plan-review/` on (use `replan`) |
-| `/agentic-workflow:engineering approve [id]` | plugin only (agent writes nothing) | — | — | — | the folder-driven gate: draft → `queued/`, plan-review → `in-progress/`, in-review → `completed/` (ship — publishes per `shipPublish`, overridable per call with `--pr`/`--push`/`--local`) |
+| `/agentic-workflow:engineering approve [id]` | plugin only (agent writes nothing) | — | — | — | the folder-driven gate: draft → `queued/`, plan-review → `in-progress/`, in-review → `completed/` (ship — publishes per `shipPublish`, overridable per call with `--pr`/`--push`/`--local`; the PR targets the recorded run base, or `prBase`, or `--base=<branch>`) |
 | `/agentic-workflow:engineering replan [id] [why]` | plugin (rejects, then chains the re-plan) | `workflow-plan-author` (the chained PLAN pass) | — | — | task re-queued marked plan-next, rejection audited, and a PLAN pass fires immediately (a busy session or claim race leaves it plan-next for the next `claim`/`watch`); the reason is threaded into that pass's prompt as a structured section and the revised plan re-parks in `plan-review/` |
 | PLAN (in the loop, on a `queued/` task) | driver → agent | `workflow-plan-author` | task files only | `planning-and-task-breakdown` (+ `api-and-interface-design`, `deprecation-and-migration`, `documentation-and-adrs` when relevant) | `## Implementation Plan` in place → task parked in `plan-review/` |
 | `/agentic-workflow:engineering plan\|claim\|watch\|recover\|stop\|status` | plugin driver (`plugins/opencode/src/workflow/driver.ts`) | spawns the three stage agents below | — | `workflow-orchestration` protocol | stage sequencing, claims, snapshots, run log |

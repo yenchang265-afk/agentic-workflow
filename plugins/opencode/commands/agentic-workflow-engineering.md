@@ -1,7 +1,7 @@
 ---
 name: agentic-workflow:engineering
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] [--pr|--push|--local] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
 ---
 
 The engineering agentic loop — one command for authoring, the human gates,
@@ -150,7 +150,13 @@ Dispatch:
   either way, but a push cannot be taken back. A `--push` or `--local` ship is
   published later with `approve <id> --pr`, which on an already-`completed/`
   task re-runs only the publish step; a bare `approve <id>` there still just
-  reports that it already moved. After a TASK gate the plugin's result
+  reports that it already moved. **`--base=<branch>` chooses what a shipped PR
+  TARGETS** — with the `=`, never `--base <branch>`, which is refused because a
+  spaced value would be read as the task id. Omitted, the gate uses the branch
+  the run was cut from (recorded on the task), then the repo's `prBase`, then
+  the platform default; never add one the user did not write, since the
+  recorded base is the ref REVIEW graded the diff against. A base that is not
+  on `origin` refuses the PR rather than opening it elsewhere. After a TASK gate the plugin's result
   carries a **`NEXT STEP`** line asking you to put the "plan it now?" question
   to the user — follow it (`question`, then `workflow_plan` on yes) and stop.
   Skipping the question is not an option: `workflow_plan` refuses a task whose

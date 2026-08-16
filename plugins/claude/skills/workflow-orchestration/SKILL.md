@@ -177,7 +177,9 @@ Don't hardcode a per-stage model, and don't work around the field.
      choice in the same breath and pass it as `publish`: `"pr"` (push the
      branch, open a draft PR), `"push"` (push only), `"local"` (publish
      nothing). Omit `publish` when the user has no preference — the repo's
-     `shipPublish` decides, and a value you supply outranks it. Ask HERE or not
+     `shipPublish` decides, and a value you supply outranks it. Pass `base`
+     only if the user names a branch for the PR to target — omitted, the gate
+     uses the base the run was cut from, which beats a guess. Ask HERE or not
      at all: shipping is terminal, so once the task is in `completed/` there is
      no gate left to ask at. A `push`/`local` ship is published later with
      `workflow_ship({id, publish:"pr"})` on the completed task.

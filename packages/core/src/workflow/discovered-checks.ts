@@ -243,6 +243,7 @@ export const admissibleChecks = (
   globs: readonly string[],
   maxTimeoutMinutes: number,
   prefixes: readonly string[] = [],
+  protectedBranches: readonly string[] = [],
 ): { accepted: CheckDef[]; rejected: RejectedCheck[] } => {
   const accepted: CheckDef[] = []
   const rejected: RejectedCheck[] = []
@@ -280,7 +281,7 @@ export const admissibleChecks = (
       rejected.push({ name: def.name, reason: `the command's \`cd ${climb}\` can leave the work tree — a check runs inside it; use a work-tree-relative directory (or the "cwd" field)` })
       continue
     }
-    if (chainedGithubPrMutation(def.command, prefixes) || chainedGitPushViolation(def.command, prefixes)) {
+    if (chainedGithubPrMutation(def.command, prefixes) || chainedGitPushViolation(def.command, prefixes, protectedBranches)) {
       rejected.push({ name: def.name, reason: "the command mutates a pull request or pushes a branch" })
       continue
     }
@@ -493,6 +494,7 @@ export const previewDiscoveredChecks = (manifest: WorkflowManifest, config: Conf
     ),
     def.timeoutMinutes ?? config.stageTimeoutMinutes,
     bashAllowlistPrefixes(config),
+    config.protectedBranches ?? [],
   )
   return {
     consumer,
@@ -557,6 +559,7 @@ export const resolveStageChecks = async (args: {
       ),
       def.timeoutMinutes ?? config.stageTimeoutMinutes,
       bashAllowlistPrefixes(config),
+      config.protectedBranches ?? [],
     )
     const { runnable, missing } = await resolvableChecks($, accepted, dir)
     const warnings = [

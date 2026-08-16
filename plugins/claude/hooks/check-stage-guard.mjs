@@ -603,13 +603,15 @@ var isAdoMcpToolOutOfStageScope = (toolName, allowed) => {
   if (!parsed) return false;
   return !(allowed ?? []).includes(parsed.tool);
 };
-var isGitPushViolation = (cmd) => {
+var PROTECTED_BRANCH_FLOOR = ["main", "master", "HEAD"];
+var isGitPushViolation = (cmd, extra = []) => {
   const c = cmd.trim();
   if (!/^git\s+(?:-\S+\s+|-C\s+\S+\s+)*push\b/.test(c)) return false;
   if (/(?:^|\s)(?:--force(?:-with-lease(?:=\S*)?)?|--delete)(?:\s|$)/.test(c)) return true;
   if (c.split(/\s+/).some((t) => /^-[a-zA-Z]+$/.test(t) && /[fd]/.test(t))) return true;
   const bare = (ref) => ref.replace(/^refs\/heads\//, "");
-  const protectedRef = (ref) => ["main", "master", "HEAD"].includes(bare(ref));
+  const guarded = extra.length === 0 ? PROTECTED_BRANCH_FLOOR : [...PROTECTED_BRANCH_FLOOR, ...extra.map(bare)];
+  const protectedRef = (ref) => guarded.includes(bare(ref));
   const tokens = c.split(/\s+/);
   let refspecs = 0;
   for (let i = tokens.indexOf("push") + 1; i < tokens.length; i++) {
@@ -631,7 +633,7 @@ var isGitPushViolation = (cmd) => {
   return false;
 };
 var chainedGithubPrMutation = (cmd, prefixes = []) => splitSegments2(cmd).some(eitherForm(isGithubPrMutation, prefixes));
-var chainedGitPushViolation = (cmd, prefixes = []) => splitSegments2(cmd).some(eitherForm(isGitPushViolation, prefixes));
+var chainedGitPushViolation = (cmd, prefixes = [], extra = []) => splitSegments2(cmd).some(eitherForm((seg) => isGitPushViolation(seg, extra), prefixes));
 
 // plugins/claude/hooks/src/emit.mjs
 var exitAfterWrite = (stream, payload, code) => {
@@ -778,12 +780,13 @@ var main = async () => {
     }
   }
   const markerPrefixes = Array.isArray(marker.bashPrefix) && marker.bashPrefix.every((p) => typeof p === "string") ? marker.bashPrefix : [];
+  const markerProtected = Array.isArray(marker.protectedBranches) && marker.protectedBranches.every((b) => typeof b === "string") ? marker.protectedBranches : [];
   if (isBash && chainedGithubPrMutation(String(ti.command ?? ""), markerPrefixes)) {
     return block2(
       `agentic-workflow: the loop must never mutate a pull request \u2014 this GitHub command is blocked. Only reads and comment replies (gh pr comment, or gh api GET, or a POST to an issues/N/comments resource) are permitted; merging, closing, approving, requesting changes, reviewer changes, and edits stay a human call.`
     );
   }
-  if (isBash && chainedGitPushViolation(String(ti.command ?? ""), markerPrefixes)) {
+  if (isBash && chainedGitPushViolation(String(ti.command ?? ""), markerPrefixes, markerProtected)) {
     return block2(
       `agentic-workflow: the loop must never push a branch other than its own head, force-push, or delete \u2014 this git push is blocked. Push only your own feature/* (or <kind>/*) branch fast-forward with no ':dst' refspec, no --force, no --delete; the watched and default branches stay a human call.`
     );

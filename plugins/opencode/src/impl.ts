@@ -423,6 +423,10 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
   // classify a segment; empty (an unset key, or a `config` hook that threw)
   // leaves those checks exactly as they were.
   let commandPrefixes: readonly string[] = []
+  // Bound from config alongside `commandPrefixes`, and for the same reason: the
+  // bash guard runs in `tool.execute.before`, which has no config to read. Empty
+  // leaves the write backstop on its permanent main/master/HEAD floor.
+  let protectedBranches: readonly string[] = []
   let reportedAgentModels = false
   const reportAgentModelsOnce = async (config: Config): Promise<void> => {
     if (reportedAgentModels) return
@@ -670,6 +674,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
         // and this hook is the only writer that appends there. See
         // applyBashAllowlistConfig.
         commandPrefixes = bashAllowlistPrefixes(raw)
+        protectedBranches = Array.isArray(raw.protectedBranches) ? (raw.protectedBranches as readonly string[]) : []
         allowlistExtrasBound = applyBashAllowlistConfig(input as AgentModelConfig, bashAllowlistExtras(raw), commandPrefixes)
       } catch {
         /* a convenience binding must never break bootstrap */
@@ -972,7 +977,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
           // mutation past classifiers that anchor on the bare tool name — and,
           // as a side effect, so this guard no longer depends on whether that
           // proxy's plugin ran before or after ours in `tool.execute.before`.
-          if (loop && (chainedGithubPrMutation(cmd, commandPrefixes) || chainedGitPushViolation(cmd, commandPrefixes))) {
+          if (loop && (chainedGithubPrMutation(cmd, commandPrefixes) || chainedGitPushViolation(cmd, commandPrefixes, protectedBranches))) {
             throw new Error(
               "agentic-workflow: blocked a PR-state or protected-branch mutation — the loop never merges, closes, " +
                 "approves, force-pushes, or pushes the default branch; those stay a human call.",
@@ -1267,9 +1272,15 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
             .describe(
               'Only meaningful when this gate SHIPS an in-review task, and only when the user chose it: "pr" pushes the branch and opens a draft PR, "push" pushes and opens nothing, "local" leaves the branch on this machine. Omit it to use the repo\'s configured shipPublish — never send a value the user did not ask for.',
             ),
+          base: tool.schema
+            .string()
+            .optional()
+            .describe(
+              'The branch a shipped task\'s pull request should TARGET, e.g. "release/2.4". Only meaningful when this gate SHIPS, and only when the user named a branch. Omit it and the gate uses the base the run was cut from, then the repo\'s prBase, then the platform default — never send a value the user did not ask for.',
+            ),
         },
         execute: async (args, ctx) => {
-          const done = await withinDeadline(driver.gateFromAgent(deps, ctx.sessionID, args.id, await getConfig(), args.publish), GATE_TOOL_TIMEOUT_MS)
+          const done = await withinDeadline(driver.gateFromAgent(deps, ctx.sessionID, args.id, await getConfig(), args.publish, args.base), GATE_TOOL_TIMEOUT_MS)
           if (done !== TIMED_OUT) return done
           await log("warn", `workflow_gate on "${args.id}" exceeded ${GATE_TOOL_TIMEOUT_MS}ms — answering the model; the move may still complete`)
           // Safe to invite a retry: approving a task that already moved takes the

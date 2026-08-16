@@ -39,8 +39,10 @@ import {
   worktreesDirFor,
   parseConfig,
   planVisualizationFor,
-  parsePublishFlags,
+  parseGateOptions,
   platformFor,
+  prBaseFor,
+  shipBaseFor,
   shipPublishFor,
   resolveUserConfigPath,
   trackerUrl,
@@ -633,16 +635,86 @@ test("an explicit per-ship mode outranks shipPublish, and an absent one does not
 })
 
 test("publish flags parse, and anything unrecognized refuses rather than being ignored", () => {
-  assert.deepEqual(parsePublishFlags(["t-1"]), { ok: true })
-  assert.deepEqual(parsePublishFlags(["t-1", "--local"]), { ok: true, publish: "local" })
-  assert.deepEqual(parsePublishFlags(["--push", "t-1"]), { ok: true, publish: "push" })
+  assert.deepEqual(parseGateOptions(["t-1"]), { ok: true, rest: ["t-1"] })
+  assert.deepEqual(parseGateOptions(["t-1", "--local"]), { ok: true, rest: ["t-1"], publish: "local" })
+  assert.deepEqual(parseGateOptions(["--push", "t-1"]), { ok: true, rest: ["t-1"], publish: "push" })
   // A typo must not ship under the configured default — that is the outcome the
   // human was typing a flag to avoid, and a push cannot be taken back.
-  const typo = parsePublishFlags(["t-1", "--localy"])
+  const typo = parseGateOptions(["t-1", "--localy"])
   assert.equal(typo.ok, false)
   assert.match(typo.ok === false ? typo.message : "", /Unknown option "--localy"/)
-  const clash = parsePublishFlags(["t-1", "--pr", "--local"])
+  const clash = parseGateOptions(["t-1", "--pr", "--local"])
   assert.equal(clash.ok, false, "there is no defensible way to pick one of two modes")
+})
+
+test("--base= carries the PR target, and the space-separated form refuses instead of eating the id", () => {
+  assert.deepEqual(parseGateOptions(["t-1", "--base=release/2.4"]), { ok: true, rest: ["t-1"], base: "release/2.4" })
+  // Both flags together, either order, with the id still recoverable from `rest`.
+  assert.deepEqual(parseGateOptions(["--base=release/2.4", "t-1", "--push"]), { ok: true, rest: ["t-1"], publish: "push", base: "release/2.4" })
+  // The `refs/heads/` form a human copies out of a git UI is accepted and
+  // normalized here, so no platform arm can double-prefix it.
+  assert.deepEqual(parseGateOptions(["--base=refs/heads/release/2.4"]), { ok: true, rest: [], base: "release/2.4" })
+
+  // The whole reason the `=` form is the only one: with a space, `release/2.4`
+  // is a bare word, and every host takes the first bare word as the task id — so
+  // a silently-accepted space form would ship a task called "release/2.4".
+  const spaced = parseGateOptions(["t-1", "--base", "release/2.4"])
+  assert.equal(spaced.ok, false)
+  assert.match(spaced.ok === false ? spaced.message : "", /needs its value inline/)
+
+  for (const bad of ["--base=", "--base=release 2.4", "--base=-release", "--base=a..b", "--base=a//b", "--base=x.lock", "--base=release/"]) {
+    assert.equal(parseGateOptions([bad]).ok, false, `${bad} must refuse, not reach gh pr create --base`)
+  }
+  const clash = parseGateOptions(["--base=main", "--base=release/2.4"])
+  assert.equal(clash.ok, false, "two bases is the same undecidable case as two publish modes")
+})
+
+test("rest is the id-bearing remainder, so a flag value can never be read as a task id", () => {
+  // The contract every host depends on: they take `rest[0]`, never a fresh scan
+  // of the raw words.
+  const r = parseGateOptions(["--base=release/2.4", "--local", "t-1", "extra"])
+  assert.deepEqual(r.ok === true ? r.rest : [], ["t-1", "extra"])
+})
+
+test("prBase accepts a branch ref, normalizes refs/heads/, and refuses anything git would choke on", () => {
+  assert.equal(parseConfig({ prBase: "release/2.4" }).prBase, "release/2.4")
+  // The form a human copies out of a git or ADO UI. Normalized HERE so no
+  // platform arm can double-prefix it.
+  assert.equal(parseConfig({ prBase: "refs/heads/release/2.4" }).prBase, "release/2.4")
+  for (const bad of ["release 2.4", "-release", "a..b", "a//b", "x.lock", "release/"]) {
+    assert.throws(() => parseConfig({ prBase: bad }), `${bad} must not reach gh pr create --base`)
+  }
+})
+
+test("prBase is undefaulted — unset means ask the platform, NOT main", () => {
+  // A literal "main" default would be wrong on every master/develop repo, and
+  // wrong loudly: it would override the platform's own answer.
+  assert.equal(parseConfig({}).prBase, undefined)
+})
+
+test("prBaseFor prefers the per-kind override, unlike shipPublish", () => {
+  // dep-sitter and main-sitter open PRs of their own, so wanting feature work on
+  // release/2.4 while dependency bumps go to main is ordinary.
+  const cfg = parseConfig({ prBase: "release/2.4", workflows: { "dep-sitter": { prBase: "main" } } })
+  assert.equal(prBaseFor(cfg, "engineering"), "release/2.4")
+  assert.equal(prBaseFor(cfg, "dep-sitter"), "main")
+  assert.equal(prBaseFor(parseConfig({}), "engineering"), undefined)
+})
+
+test("shipBaseFor: an explicit --base wins, then the recorded run base, then config", () => {
+  const cfg = parseConfig({ prBase: "develop" })
+  assert.equal(shipBaseFor(cfg, "engineering", { override: "release/2.4", recorded: "main" }), "release/2.4")
+  // The recorded base outranks config because it is the ref REVIEW graded
+  // `git diff <base>...<branch>` against — retargeting away from it shows
+  // reviewers a change nobody approved.
+  assert.equal(shipBaseFor(cfg, "engineering", { recorded: "main" }), "main")
+  assert.equal(shipBaseFor(cfg, "engineering", {}), "develop")
+  // Undefined is the documented hand-off to shipPr's platform-default chain —
+  // never a substituted "main".
+  assert.equal(shipBaseFor(parseConfig({}), "engineering", {}), undefined)
+  // The distinction the hosts depend on, same as shipPublishFor: an omitted
+  // argument must fall through rather than blank the rungs beneath it.
+  assert.equal(shipBaseFor(cfg, "engineering", { override: undefined, recorded: undefined }), "develop")
 })
 
 test("global codePlatform ado requires the ado section and a selfLogin", () => {

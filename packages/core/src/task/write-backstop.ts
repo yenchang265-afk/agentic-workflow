@@ -276,14 +276,24 @@ export const isAdoMcpToolOutOfStageScope = (toolName: string, allowed: readonly 
  *    `:dst` with empty src), including bundled short-flag clusters (`-fd`);
  *  - a `+`-prefixed refspec (a forced ref update);
  *  - a `src:dst` refspec whose destination differs from its source;
- *  - any refspec naming the default branch (`main`/`master`, bare or as `:dst`) or a
+ *  - any refspec naming a protected branch (`main`/`master`, bare or as `:dst`) or a
  *    bare `HEAD` — a fast-forward `git push origin main` has no force flag and no
  *    mismatched refspec, and `HEAD` is statically unresolvable. Residual: a PR whose
  *    head branch is literally named main/master parks — fail-safe.
+ *
+ * `extra` adds to `PROTECTED_BRANCH_FLOOR` (the repo's `protectedBranches`), for a
+ * team whose integration branch is `release/2.4` rather than the repo default. It is
+ * additive ONLY: the floor cannot be configured away, because a config that could
+ * unprotect `main` is a config that can be wrong about the one branch that matters.
+ * Deliberately NOT `prBase` — where PRs target and what agents may not push are
+ * separate policies, and an integration branch the loop IS allowed to push is a
+ * legitimate setup.
  * The `refs/heads/` prefix is normalized so `x:refs/heads/x` (same branch) passes.
  * Gated on an actively-driving loop by the caller, so a human's manual push is untouched.
  */
-export const isGitPushViolation = (cmd: string): boolean => {
+export const PROTECTED_BRANCH_FLOOR: readonly string[] = ["main", "master", "HEAD"]
+
+export const isGitPushViolation = (cmd: string, extra: readonly string[] = []): boolean => {
   const c = cmd.trim()
   if (!/^git\s+(?:-\S+\s+|-C\s+\S+\s+)*push\b/.test(c)) return false
   if (/(?:^|\s)(?:--force(?:-with-lease(?:=\S*)?)?|--delete)(?:\s|$)/.test(c)) return true
@@ -291,7 +301,8 @@ export const isGitPushViolation = (cmd: string): boolean => {
   // bundled clusters (`-fd`, `-df`) are caught, not just a lone `-f`.
   if (c.split(/\s+/).some((t) => /^-[a-zA-Z]+$/.test(t) && /[fd]/.test(t))) return true
   const bare = (ref: string): string => ref.replace(/^refs\/heads\//, "")
-  const protectedRef = (ref: string): boolean => ["main", "master", "HEAD"].includes(bare(ref))
+  const guarded = extra.length === 0 ? PROTECTED_BRANCH_FLOOR : [...PROTECTED_BRANCH_FLOOR, ...extra.map(bare)]
+  const protectedRef = (ref: string): boolean => guarded.includes(bare(ref))
   const tokens = c.split(/\s+/)
   let refspecs = 0
   for (let i = tokens.indexOf("push") + 1; i < tokens.length; i++) {
@@ -335,7 +346,7 @@ const eitherForm = (cmd: string, prefixes: readonly string[], classify: (seg: st
 
 export const chainedGithubPrMutation = (cmd: string, prefixes: readonly string[] = []): boolean =>
   eitherForm(cmd, prefixes, isGithubPrMutation)
-export const chainedGitPushViolation = (cmd: string, prefixes: readonly string[] = []): boolean =>
-  eitherForm(cmd, prefixes, isGitPushViolation)
+export const chainedGitPushViolation = (cmd: string, prefixes: readonly string[] = [], extra: readonly string[] = []): boolean =>
+  eitherForm(cmd, prefixes, (seg) => isGitPushViolation(seg, extra))
 export const chainedFindMutation = (cmd: string, prefixes: readonly string[] = []): boolean =>
   eitherForm(cmd, prefixes, isFindMutation)

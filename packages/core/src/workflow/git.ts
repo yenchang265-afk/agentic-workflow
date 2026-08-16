@@ -142,6 +142,28 @@ export const branchExists = async ($: Shell, cwd: string, branch: string): Promi
   (await run($, cwd, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])).ok
 
 /**
+ * Whether `branch` exists on `origin` — the side that matters for a PR base,
+ * which `branchExists` (local refs) cannot answer. Used only by the ship gate.
+ *
+ * Three-valued on purpose. `unknown` means the question could not be asked (no
+ * remote, no auth, offline), which must NOT read as "absent": the caller refuses
+ * a ship on `absent`, and inventing that refusal for a broken remote would block
+ * a PR the platform would have accepted.
+ *
+ * `ls-remote` exits 0 with empty output when nothing matched, so the exit code
+ * alone proves nothing — and it PREFIX-matches, so `--heads origin 2.4` happily
+ * returns `refs/heads/release/2.4`. Both are why this parses stdout and demands
+ * an exact `refs/heads/<branch>` line: a substring test would wave through the
+ * very typo the caller exists to catch.
+ */
+export const remoteBranchExists = async ($: Shell, cwd: string, branch: string): Promise<"present" | "absent" | "unknown"> => {
+  const { ok, stdout } = await run($, cwd, ["ls-remote", "--heads", "origin", branch])
+  if (!ok) return "unknown"
+  const wanted = `refs/heads/${branch}`
+  return stdout.split("\n").some((line) => line.split("\t")[1]?.trim() === wanted) ? "present" : "absent"
+}
+
+/**
  * Create a worktree at `wtPath` checked out to `branch`, cut from `base` (or
  * HEAD) when the branch doesn't exist yet. An existing branch is reused as-is,
  * never reset — same contract as `checkoutBranch`.

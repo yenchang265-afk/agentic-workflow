@@ -358,6 +358,56 @@ test("done parks the task in in-review and commits the backlog when not isolated
   assert.deepEqual(metrics, [{ outcome: "done", detail: "review passed" }])
 })
 
+// --- the done note's branch/base clauses ---
+//
+// The note is the ONLY thing that survives to the ship gate: the snapshot is
+// cleared by runDone itself, and shipTask runs later from a fresh process.
+
+/** The done note as it reached the file, recovered from the appendNote write. */
+const doneNoteFrom = (log: string[]): string => log.find((c) => c.includes("Loop done — review passed")) ?? ""
+
+test("the done note records the branch AND the base the run was cut from", async () => {
+  const state: WorkflowState = {
+    goal: "Do it",
+    stage: "review",
+    iteration: 0,
+    artifacts: {},
+    task: taskRef("t", "in-progress"),
+    git: { base: "release/2.4", branch: "feature/t" },
+  }
+  const { ctx, log } = makeCtx({ "in-progress/t.md": body(true) }, state)
+  await runTerminal(ctx, done)
+  const note = doneNoteFrom(log)
+  assert.match(note, /on branch feature\/t, base release\/2.4, awaiting human diff review/)
+})
+
+test("current-branch mode records NO base, because there the base is a commit sha", async () => {
+  // `gh pr create --base <sha>` is not a thing. Recording it would turn today's
+  // wrong-but-working platform default into a hard ship failure.
+  const state: WorkflowState = {
+    goal: "Do it",
+    stage: "review",
+    iteration: 0,
+    artifacts: {},
+    task: taskRef("t", "in-progress"),
+    git: { base: "9f1c0de1c0de1c0de1c0de1c0de1c0de1c0de1c0", branch: "my-work", onCurrentBranch: true },
+  }
+  const { ctx, log } = makeCtx({ "in-progress/t.md": body(true) }, state)
+  await runTerminal(ctx, done)
+  const note = doneNoteFrom(log)
+  assert.match(note, /on branch my-work, awaiting human diff review/)
+  assert.doesNotMatch(note, /base /, "a sha must never be offered to the ship gate as a base branch")
+})
+
+test("a run with no git state writes the note it always wrote", async () => {
+  const state: WorkflowState = { goal: "Do it", stage: "review", iteration: 0, artifacts: {}, task: taskRef("t", "in-progress") }
+  const { ctx, log } = makeCtx({ "in-progress/t.md": body(true) }, state)
+  await runTerminal(ctx, done)
+  const note = doneNoteFrom(log)
+  assert.match(note, /Loop done — review passed, awaiting human diff review/)
+  assert.doesNotMatch(note, /on branch/)
+})
+
 test("done with a blocked move reports a retryable stop, keeps the snapshot, and releases the claim", async () => {
   const state: WorkflowState = { goal: "Do it", stage: "review", iteration: 0, artifacts: {}, task: taskRef("t", "in-progress") }
   // A duplicate already sits at the destination — moveTask refuses to clobber

@@ -30,6 +30,13 @@ export interface Move {
    */
   readonly withPublish?: boolean
   /**
+   * Offers the PR base branch (ship only). Separate from `withPublish`
+   * because it is a free-text ref rather than a closed choice, and because
+   * leaving it blank means something different: not "use the config" but
+   * "use the base this run was cut from", which outranks the config.
+   */
+  readonly withBase?: boolean
+  /**
    * Offered even while a loop drives the task. Gate moves are refused on a
    * held claim so their buttons pre-disable; a move that core explicitly
    * honours under claim (withdrawing a plan request) must not — the withdrawal
@@ -90,6 +97,7 @@ const MOVES: Partial<Record<TaskStatus, readonly Move[]>> = {
         "Moves it to completed/ and commits to git. What reaches the remote is up to you — choose below. (Whatever you pick is best-effort: if the push or the PR can't be done the task still ships, and the reason is reported.)",
       danger: true,
       withPublish: true,
+      withBase: true,
     },
   ],
 }

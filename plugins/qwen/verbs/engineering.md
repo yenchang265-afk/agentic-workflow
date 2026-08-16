@@ -171,6 +171,16 @@
     the user did not write: the task completes either way, but a push cannot be
     taken back. On the fallback tool path they are the `publish` argument
     (`"pr" | "push" | "local"`) — again, only when the user chose it.
+  - **`--base=<branch>` chooses what a shipped PR TARGETS** — write it with
+    the `=`, never `--base <branch>`, which is refused (a spaced value would be
+    read as the task id). Omitted, the gate uses the branch the run was cut
+    from, which it recorded on the task; then the repo's `prBase`; then the
+    platform's default branch. Never add one the user did not write: the
+    recorded base is the ref REVIEW graded the diff against, so retargeting
+    shows reviewers a change nobody approved. A base that is not on `origin`
+    refuses the PR instead of opening it somewhere else — reship with the
+    corrected `--base=` to fix it. On the fallback tool path it is the `base`
+    argument.
   - A `--push` or `--local` ship can be published afterwards with
     `approve <id> --pr` — on a task already in `completed/` that re-runs **only**
     the publish step. The flag is what asks for it: a bare `approve <id>` on a

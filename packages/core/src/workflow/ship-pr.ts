@@ -4,7 +4,7 @@ import { platformFor, shipPublishFor, taskBranchFor } from "../config.js"
 import { adoList } from "../source/ado-shared.js"
 import type { AdoGateway } from "../source/ado-gateway.js"
 import type { Config, ShipPublish } from "./state.js"
-import { branchExists, currentBranch, pushBranch } from "./git.js"
+import { branchExists, currentBranch, pushBranch, remoteBranchExists } from "./git.js"
 
 /**
  * Publish a ship-gated task's branch, as far as the effective `shipPublish`
@@ -44,6 +44,12 @@ export interface ShipPrResult {
   readonly reason?: string
   /** The branch acted on, so the gate's message and audit note can name it. */
   readonly branch?: string
+  /**
+   * The ref a PR was actually opened ONTO. Set only when a create call ran, so a
+   * reused existing PR leaves it absent rather than asserting a target this call
+   * never chose.
+   */
+  readonly base?: string
 }
 
 const notAttempted = (mode: ShipPublish): ShipPrResult => ({ attempted: false, mode, pushed: false, created: false })
@@ -54,7 +60,7 @@ const notAttempted = (mode: ShipPublish): ShipPrResult => ({ attempted: false, m
  * by `shipPr` — the arms would have to repeat the same three constants at every
  * one of their nine returns to say nothing new.
  */
-type PrAttempt = Pick<ShipPrResult, "created" | "url" | "reason">
+type PrAttempt = Pick<ShipPrResult, "created" | "url" | "reason" | "base">
 
 // --- GitHub (via `gh`) ---
 
@@ -70,14 +76,17 @@ const ghDefaultBranch = async ($: Shell, cwd: string): Promise<string | null> =>
   return out.exitCode === 0 && name ? name : null
 }
 
-const shipGithub = async ($: Shell, log: Log, directory: string, branch: string, title: string): Promise<PrAttempt> => {
+const shipGithub = async ($: Shell, log: Log, directory: string, branch: string, title: string, wanted?: string): Promise<PrAttempt> => {
   const existing = await ghExistingPrUrl($, directory, branch)
   if (existing) return { created: false, url: existing }
+  // An explicit base skips the network lookup entirely — it is already the
+  // answer, and asking anyway only adds a way to fail.
+  //
   // The `currentBranch` fallback must never equal the head: in current-branch
   // mode (`taskBranch: false`) teardown leaves the tree ON the shipped branch,
   // so the old chain asked for a PR from a branch onto itself and `gh` refused.
-  const cur = await currentBranch($, directory)
-  const base = (await ghDefaultBranch($, directory)) ?? (cur && cur !== branch ? cur : null) ?? "main"
+  const cur = wanted ? null : await currentBranch($, directory)
+  const base = wanted ?? (await ghDefaultBranch($, directory)) ?? (cur && cur !== branch ? cur : null) ?? "main"
   // No `--json`/`-q` here: those are `gh pr view`/`gh pr list` flags. `gh pr create`
   // rejects them ("unknown flag: --json") and prints the new PR's URL on stdout.
   const out = await $`gh pr create --draft --head ${branch} --base ${base} --title ${title} --body ${""}`
@@ -85,7 +94,7 @@ const shipGithub = async ($: Shell, log: Log, directory: string, branch: string,
     .quiet()
     .nothrow()
   const url = out.stdout.toString().trim()
-  if (out.exitCode === 0 && url) return { created: true, url }
+  if (out.exitCode === 0 && url) return { created: true, url, base }
   const reason = out.stderr.toString().trim() || "gh pr create failed"
   await log("warn", `ship: gh pr create failed for ${branch} — ${reason}`)
   return { created: false, reason }
@@ -142,6 +151,7 @@ const shipAdo = async (
   config: Config,
   branch: string,
   title: string,
+  wanted?: string,
 ): Promise<PrAttempt> => {
   const ado = config.ado
   if (!ado) return { created: false, reason: "ado config missing" }
@@ -156,9 +166,9 @@ const shipAdo = async (
   const existingId = await adoExistingPrId(gateway, project, repository, branch)
   if (existingId) return { created: false, url: prUrl(existingId) }
 
-  // Same head-is-not-base rule as the GitHub arm above.
-  const cur = await currentBranch($, directory)
-  const base = (await adoDefaultBranch(gateway, project, repository)) ?? (cur && cur !== branch ? cur : null) ?? "main"
+  // Same explicit-base short-circuit and head-is-not-base rule as the GitHub arm above.
+  const cur = wanted ? null : await currentBranch($, directory)
+  const base = wanted ?? (await adoDefaultBranch(gateway, project, repository)) ?? (cur && cur !== branch ? cur : null) ?? "main"
   const createOut = await gateway.createPullRequest({
     project,
     repositoryId: repository,
@@ -178,7 +188,7 @@ const shipAdo = async (
   try {
     const data = AdoPrRefSchema.parse(createOut.data)
     if (!data.pullRequestId) return { created: false, reason: "ADO PR create: no pullRequestId in response" }
-    return { created: true, url: prUrl(data.pullRequestId) }
+    return { created: true, url: prUrl(data.pullRequestId), base }
   } catch (err) {
     return { created: false, reason: `ADO PR create: could not parse response — ${(err as Error).message}` }
   }
@@ -192,13 +202,25 @@ const shipAdo = async (
  * `publish` is the human's per-ship override; absent, the repo's `shipPublish`
  * decides, and absent that, `pr` — see `shipPublishFor`.
  *
- * `branch` is the branch the run ACTUALLY built on, read off the task file by
- * `extractRunBranch`. It is the authority when present, because the two
+ * `options.branch` is the branch the run ACTUALLY built on, read off the task
+ * file by `extractRunBranch`. It is the authority when present, because the two
  * fallbacks are both guesses: the configured prefix is wrong if `taskBranch`
  * changed since the run, and in current-branch mode (`taskBranch: false`) no
  * id→branch function exists at all — there the tree's own branch is the last
  * resort, correct only because teardown deliberately leaves the tree on it.
+ *
+ * `options.base` is the already-resolved PR target (`shipBaseFor`), or absent to
+ * let the platform name its own default branch.
  */
+export interface ShipPrOptions {
+  /** The branch the run built on — `extractRunBranch`'s answer. */
+  readonly branch?: string
+  /** The human's per-ship publish override. */
+  readonly publish?: ShipPublish
+  /** The PR's target ref, already resolved by `shipBaseFor`. Absent ⇒ ask the platform. */
+  readonly base?: string
+}
+
 export const shipPr = async (
   $: Shell,
   log: Log,
@@ -208,10 +230,17 @@ export const shipPr = async (
   id: string,
   title: string,
   gateway?: AdoGateway,
-  branch?: string,
-  publish?: ShipPublish,
+  options: ShipPrOptions = {},
 ): Promise<ShipPrResult> => {
+  // An options bag rather than two more positionals: `branch` and `base` are
+  // adjacent same-typed branch names, and transposing them opens the PR backwards
+  // (head `release/2.4` onto base `feature/t-42`) — a mistake types cannot catch
+  // and one the remote will happily ACCEPT.
+  const { branch, publish } = options
   const mode = shipPublishFor(config, publish)
+  // Normalize once, here, so config values, `--base=` and the recorded run base
+  // all reach the arms bare and neither can double-prefix `refs/heads/`.
+  const wanted = options.base?.replace(/^refs\/heads\//, "") || undefined
   try {
     // Branch resolution runs FIRST for every mode, `local` included. "There is
     // no branch here" (a hand-authored task) is a different fact from "you asked
@@ -220,16 +249,31 @@ export const shipPr = async (
     // back when none ever existed.
     const head = branch ?? taskBranchFor(config, kind, id) ?? (await currentBranch($, directory))
     if (!head || !(await branchExists($, directory, head))) return notAttempted(mode)
-    const base = { attempted: true, mode, branch: head } as const
-    if (mode === "local") return { ...base, pushed: false, created: false }
+    const common = { attempted: true, mode, branch: head } as const
+    if (mode === "local") return { ...common, pushed: false, created: false }
     if (!(await pushBranch($, directory, head))) {
       await log("warn", `ship: git push failed for ${head}`)
-      return { ...base, pushed: false, created: false, reason: "git push failed" }
+      return { ...common, pushed: false, created: false, reason: "git push failed" }
     }
-    if (mode === "push") return { ...base, pushed: true, created: false }
+    if (mode === "push") return { ...common, pushed: true, created: false }
+    // Checked AFTER the push (the work is safely on origin either way) and once
+    // for both platforms. Only an EXPLICIT base is probed: a platform-derived
+    // default came from the platform itself, so re-asking buys nothing.
+    //
+    // A miss REFUSES rather than falling back. Falling back would quietly open
+    // the PR onto the default branch — precisely the wrong-target failure this
+    // whole path exists to prevent — and the recovery is already cheap, because
+    // `publishNote` renders "PR not opened", which `prAlreadyRecorded` does not
+    // match, so `approve <id> --base=<correct>` re-enters the idempotent retry arm.
+    if (wanted && (await remoteBranchExists($, directory, wanted)) === "absent") {
+      const reason = `base branch "${wanted}" is not on origin`
+      await log("warn", `ship: ${reason} — PR not opened for ${head}`)
+      return { ...common, pushed: true, created: false, reason }
+    }
     const platform = platformFor(config, kind)
-    const attempt = platform === "ado" ? await shipAdo($, log, directory, gateway, config, head, title) : await shipGithub($, log, directory, head, title)
-    return { ...base, pushed: true, ...attempt }
+    const attempt =
+      platform === "ado" ? await shipAdo($, log, directory, gateway, config, head, title, wanted) : await shipGithub($, log, directory, head, title, wanted)
+    return { ...common, pushed: true, ...attempt }
   } catch (err) {
     // `pushed: false` is the honest answer for a throw: the only awaits that can
     // reach here either precede the push or ARE it, and `pushBranch` swallows a

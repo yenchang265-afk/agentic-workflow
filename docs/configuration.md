@@ -134,6 +134,8 @@ hand-edited afterward.
 | `workflows` | `{}` | Per-workflow-kind sections — see below. |
 | `codePlatform` | `"github"` | Which platform PR-shaped work sources talk to: `"github"` (the `gh` CLI) or `"ado"` (Azure DevOps — via the Azure DevOps MCP server + a PAT). Overridable per kind with `workflows.<kind>.codePlatform`. See below. |
 | `shipPublish` | `"pr"` | What the ship gate publishes: `"pr"` (push the branch and open a draft PR), `"push"` (push the branch, open no PR), or `"local"` (publish nothing). Every mode still completes the task; only what leaves your machine changes. Overridable per ship. See below. |
+| `prBase` | unset | The branch this repo's pull requests **target**, e.g. `"release/2.4"`. Unset does **not** mean `main` — it means ask the platform for its default branch. Outranked by the base a run was cut from and by a per-ship `--base=`. Overridable per kind with `workflows.<kind>.prBase`. See below. |
+| `protectedBranches` | `[]` | Extra branches no loop stage may `git push`, **added** to the permanent `main`/`master`/`HEAD` floor. Additive only — the floor cannot be configured away. |
 | `ado` | unset | Azure DevOps coordinates (`organization`, `project`, optional `repository`, `selfLogin`, `mcp`); **required** when any effective platform is `"ado"` — the config fails fast without it. `selfLogin` is **required** for `"ado"` (a PAT can't resolve the sitter's identity). |
 | `projectManagement` | unset | The team's task tracker (Jira / Azure DevOps) and how local tasks pair to it. Drives task-authoring defaults and the pairing view in `/agentic-workflow:engineering status`. See below. |
 | `worktreesDir` | `".workflow-worktrees"` | See hardening below. Set to `false` to opt out. |
@@ -746,6 +748,95 @@ looks only at tasks waiting at a gate.)
 
 On Claude Code and Qwen, `workflow_ship({id, publish: "pr"})` does the same
 thing directly.
+
+## PR base branch (`prBase`)
+
+Not every team merges into the repo's default branch. If yours integrates on
+`release/2.4`, that is where a shipped task's pull request should go — and
+opening it against `main` shows reviewers a diff nobody approved.
+
+The gate works this out for itself in the common case. When the loop cuts
+`feature/<id>`, it records the branch it cut **from** on the task, and the ship
+gate reads it back. So working on `release/2.4` needs no configuration at all:
+
+```
+git checkout release/2.4
+/agentic-workflow:engineering new "…"    # → approve → plan → approve → claim
+/agentic-workflow:engineering approve <id>   # PR targets release/2.4
+```
+
+`prBase` is for the cases that inference cannot cover — a repo whose task
+branches are cut from anywhere, or a kind that should target somewhere else:
+
+```json
+{
+  "prBase": "release/2.4",
+  "workflows": { "dep-sitter": { "prBase": "main" } }
+}
+```
+
+Unlike `shipPublish`, this **is** overridable per kind: `dep-sitter` and
+`main-sitter` open pull requests of their own, so they can legitimately differ.
+
+### Which base wins
+
+Highest first:
+
+| rung | source |
+| --- | --- |
+| 1 | `--base=<branch>` on this ship (or the `base` tool argument / hub field) |
+| 2 | the branch this run was cut from, recorded on the task when it parked |
+| 3 | `workflows.<kind>.prBase` |
+| 4 | `prBase` |
+| 5 | the platform's default branch (`gh repo view` / the ADO repo's `defaultBranch`) |
+| 6 | the current branch, if it differs from the head; else `main` |
+
+Rung 2 sits above the config on purpose: it is the ref REVIEW measured
+`git diff <base>...<branch>` against, so it names the exact change you approved
+at the in-review gate. Use `--base=` to retarget deliberately.
+
+Tasks completed before this existed carry no recorded base and fall straight
+through to rung 5 — exactly what they did before.
+
+### Choosing per ship
+
+```
+/agentic-workflow:engineering approve <id> --base=release/2.4
+```
+
+Write it with the `=`. The space-separated `--base release/2.4` is **refused**,
+because every host reads the first bare word as the task id — a silently
+accepted spaced value would ship a task called `release/2.4`.
+
+| where | how |
+| --- | --- |
+| typed verb | `approve <id> --base=release/2.4` |
+| Claude Code / Qwen tools | `workflow_ship({id, base})`, `workflow_approve({id, base})` |
+| OpenCode tool | `workflow_gate({id, base})` |
+| admin hub | the **base branch** field in the Ship dialog |
+
+A base that is not on `origin` **refuses the PR** rather than quietly opening it
+against the default branch. The branch is still pushed, so the fix is one
+command — `approve <id> --base=<correct>` re-runs only the publish step.
+`refs/heads/`-qualified values are accepted and normalized.
+
+## Protected branches (`protectedBranches`)
+
+No loop stage may ever `git push` `main`, `master`, or `HEAD`. If your team's
+integration branch is `release/2.4`, add it:
+
+```json
+{ "protectedBranches": ["release/2.4"] }
+```
+
+This is **additive only** — the built-in floor cannot be configured away. A
+config that could unprotect `main` is a config that can be wrong about the one
+branch that matters, and the failure would be silent until something had already
+been pushed.
+
+Deliberately separate from `prBase`: where pull requests target and what agents
+may not push are different policies. An integration branch the loop *is* allowed
+to push its own work onto is a legitimate setup, so one key cannot mean both.
 
 ## Code platform (`codePlatform` / `ado`)
 

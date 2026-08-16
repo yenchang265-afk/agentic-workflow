@@ -232,7 +232,9 @@ Two consequences worth stating, because they are what keep that line honest:
   rather than from an in-memory session map it doesn't have.
 - **Ship can push a branch and open a pull request**, which is visible outside
   the machine — its dialog carries the publish choice (`pr` / `push` / `local`,
-  defaulting to the repo's `shipPublish`) so the human decides how far it goes.
+  defaulting to the repo's `shipPublish`) and the PR's base branch (blank ⇒ the
+  branch the run was cut from, recorded on the task when it parked) so the human
+  decides how far it goes and where it lands.
   Every hub write is behind a confirm that names its real effect.
 
 It also **edits `.agentic-workflow.json`**, one named layer at a time — never the
