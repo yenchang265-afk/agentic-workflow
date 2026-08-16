@@ -99,7 +99,10 @@ The full folder lifecycle and file schema are `task-backlog-management`.
 
 `claim` pulls the next task once, now — build-ready work first, else one to
 plan; `claim <id>` runs exactly that task instead of the priority walk (BUILD
-if build-ready, else its PLAN pass). `watch [interval]` turns the
+if build-ready, else its PLAN pass). A task approved with `--auto-plan`
+crosses the plan gate automatically when its plan parks and continues into
+BUILD — the human chose that at the task gate; the ship gate is never
+automated. `watch [interval]` turns the
 session into a standing worker firing on its own `session.idle` events plus a
 per-session **polling timer** (default `watchIntervalMinutes`, floor 10s).
 Each tick first asks the server whether the session is actually idle

@@ -250,7 +250,35 @@ const sliceData = (task: Task, siblings: readonly GateCandidate[]): Record<strin
 })
 
 /** approve: a reviewed draft/ task → queued/ (audited note + commit). */
-export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult> => {
+/**
+ * Set or clear a task's `autoPlan` frontmatter flag in place, screening
+ * off-schema keys exactly as `stripSupersededPlan` does (a rewrite serializes
+ * through the schema, and zod STRIPS what it does not know). Best-effort by
+ * construction: every caller runs AFTER its gate move committed, so a failure
+ * here degrades to a warning riding the gate message and never unwinds the
+ * move. Returns "" on success (or when the flag already matches), else a
+ * leading-space warning sentence ready to append to a message.
+ */
+const writeAutoPlanFlag = async (ctx: GateCtx, ref: { readonly id: string; readonly path: string }, value: boolean): Promise<string> => {
+  const act = value ? "arm auto-plan" : "clear auto-plan"
+  try {
+    const raw = await ctx.$`cat ${ref.path}`.quiet().nothrow()
+    if (raw.exitCode !== 0) return ` Warning: could not ${act} — the task file could not be read.`
+    const content = raw.stdout.toString()
+    const parsed = parseTask(`${ref.id}.md`, content, ref.path)
+    if ((parsed.autoPlan === true) === value) return ""
+    const unknown = unknownFrontmatterKeys(content)
+    if (unknown.length > 0) {
+      return ` Warning: could not ${act} — the file carries off-schema frontmatter (${unknown.join(", ")}) that a rewrite would delete; edit the autoPlan key by hand.`
+    }
+    await rewriteTask(ctx.$, { id: ref.id, path: ref.path }, { ...taskToInput(parsed), autoPlan: value ? true : undefined }, ctx.log)
+    return ""
+  } catch (err) {
+    return ` Warning: could not ${act} — ${(err as Error).message}.`
+  }
+}
+
+export const approveTask = async (ctx: GateCtx, id: string, autoPlan?: boolean): Promise<GateResult> => {
   const { $, directory, config } = ctx
   const resolved = await resolveGateId(ctx, id)
   if (resolved && "error" in resolved) return resolved.error
@@ -267,9 +295,14 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
       // carrying the same contract as the move arm, and a repeated approve
       // mid-walk must not silently truncate the set the human is working through.
       const siblings = await remainingSlices(ctx, elsewhere!, id)
+      // An idempotent retry must not lose an explicit flag either: a repeated
+      // `approve <id> --auto-plan` arms the queued file exactly as the first
+      // approve would have. Absent flag = leave the file alone (a bare retry
+      // is a report, not a re-statement of intent).
+      const autoNote = autoPlan ? await writeAutoPlanFlag(ctx, { id, path: elsewhere!.path }, true) : ""
       return {
         ok: true,
-        message: `Task "${elsewhere!.title}" is already queued in ${config.tasksDir}/queued/ — nothing to do.`,
+        message: `Task "${elsewhere!.title}" is already queued in ${config.tasksDir}/queued/ — nothing to do.${autoPlan && !autoNote ? " Auto-plan armed — its plan will be approved automatically when it parks." : autoNote}`,
         path: elsewhere!.path,
         data: {
           approved: true,
@@ -326,18 +359,33 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
   if (!moved.ok) return moved.result
   const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): task approved — queued for planning`)
+  // The approval is authoritative about auto-plan: `--auto-plan` arms it, and a
+  // plain approve on a draft that still carries the flag CLEARS it — a stale
+  // opt-in from an earlier approve (retask sent it back to draft/) must not
+  // silently skip a gate the human did not choose to skip this time.
+  const autoNote = autoPlan
+    ? await writeAutoPlanFlag(ctx, { id, path: newPath }, true)
+    : draft.autoPlan
+      ? await writeAutoPlanFlag(ctx, { id, path: newPath }, false)
+      : ""
+  const autoMessage = autoPlan
+    ? autoNote || " Auto-plan armed — when its plan parks, the plan gate is crossed automatically and BUILD follows (replan or a fresh approve clears it; the ship gate stays yours)."
+    : draft.autoPlan
+      ? autoNote || " Auto-plan cleared — this approve did not re-request it, so the plan parks for your review."
+      : ""
   // After the move, so the just-approved slice is out of draft/ and cannot list
   // itself as its own successor.
   const siblings = await remainingSlices(ctx, draft, id)
   return {
     ok: true,
-    message: `Task approved — "${draft.title}" queued in ${config.tasksDir}/queued/ for planning.${acceptanceNote}`,
+    message: `Task approved — "${draft.title}" queued in ${config.tasksDir}/queued/ for planning.${acceptanceNote}${autoMessage}`,
     path: newPath,
     data: {
       approved: true,
       gate: "task",
       id,
       path: newPath,
+      ...(autoPlan && !autoNote ? { autoPlan: true } : {}),
       ...(acceptanceNote ? { acceptanceMissing: true } : {}),
       next: `workflow_start with id "${id}" (or workflow_claim) runs its PLAN stage`,
       ...sliceData(draft, siblings),
@@ -846,12 +894,17 @@ export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Pro
   const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): plan rejected — re-queued for planning`)
   await markPlanNext(ctx, id, actor)
+  // A human who rejected one plan wants eyes on the revision: a task that
+  // opted into auto-plan at its task gate has that opt-in withdrawn here, or
+  // the revised plan would cross the gate this rejection just closed.
+  const autoNote = task.autoPlan ? await writeAutoPlanFlag(ctx, { id, path: newPath }, false) : ""
+  const autoMessage = task.autoPlan ? autoNote || " Auto-plan cleared — the revised plan parks for your review." : ""
   return {
     ok: true,
     // The id rides in the MESSAGE, not just `data` — on the Claude host the
     // model chains the next PLAN pass from this text alone (gate-command.mjs
     // surfaces only the message), and `workflow_start` needs a copyable id.
-    message: `Plan rejected for "${task.title}" (${id}) — re-queued in ${config.tasksDir}/queued/ as plan-next; the next PLAN pass addresses the rejection and parks a revised plan in plan-review/.`,
+    message: `Plan rejected for "${task.title}" (${id}) — re-queued in ${config.tasksDir}/queued/ as plan-next; the next PLAN pass addresses the rejection and parks a revised plan in plan-review/.${autoMessage}`,
     path: newPath,
     data: { requeued: true, id, path: newPath, next: `workflow_start with id "${id}" (or workflow_claim) re-plans it now` },
   }
@@ -1182,7 +1235,7 @@ const completedTaskFor = (ctx: GateCtx, id: string): Promise<string | null> => r
  * never shadowed by a pile of drafts. Tracking epics are skipped in the id-less
  * scan — they are never approvable, so they must not create a false ambiguity.
  */
-export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering", publish?: ShipPublish, base?: string): Promise<GateResult> => {
+export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering", publish?: ShipPublish, base?: string, autoPlan?: boolean): Promise<GateResult> => {
   const tiers: readonly (readonly TaskStatus[])[] = [["plan-review", "in-review"], ["draft"]]
   const pick = await resolveGateTask(ctx, id, tiers, (t) => isEpicType(t.type))
   if (!pick.ok) {
@@ -1213,7 +1266,7 @@ export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering",
     // `data.gate`/`next` and the epic-slice continuation those arms carry, and
     // report `ok:false` for what is actually a harmless retry.
     const queuedRetry = await resolvedTaskIn(ctx, id, "queued")
-    if (queuedRetry) return approveTask(ctx, queuedRetry)
+    if (queuedRetry) return approveTask(ctx, queuedRetry, autoPlan)
     const inProgressRetry = await resolvedTaskIn(ctx, id, "in-progress")
     if (inProgressRetry) return approvePlan(ctx, inProgressRetry)
     if (pick.kind === "none") return { ok: false, message: "Nothing awaiting approval.", variant: "info" }
@@ -1229,7 +1282,7 @@ export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering",
       ...(pick.candidates ? { data: { ambiguous: true, verb: "approve", candidates: pick.candidates } } : {}),
     }
   }
-  if (pick.from === "draft") return approveTask(ctx, pick.id)
+  if (pick.from === "draft") return approveTask(ctx, pick.id, autoPlan)
   if (pick.from === "plan-review") return approvePlan(ctx, pick.id)
   return shipTask(ctx, pick.id, kind, publish, base) // in-review
 }

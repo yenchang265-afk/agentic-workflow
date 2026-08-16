@@ -11,6 +11,7 @@ import type { Config } from "../config.ts"
 import {
   abortedSessionID,
   armTaskGateAsk,
+  autoAdvanceParkedPlan,
   claimSkipReason,
   classifyReplanChain,
   configSources,
@@ -418,6 +419,18 @@ const makeShellFS = (files: Record<string, string>, log: string[], overrides: Sh
         .map((p) => p.slice(dir.length + 1))
         .filter((n) => !n.includes("/"))
       out = names.length ? { exitCode: 0, stdout: names.join("\n"), stderr: "" } : { exitCode: 1, stdout: "", stderr: "" }
+    } else if (parts[0] === "printf") {
+      // `writeFileAtomic` (printf > tmp, then mv) and `appendFileChunked`
+      // (printf >> file) are how durable writes land — same model as the gate
+      // test harness. Matched against the RAW command: the payload carries
+      // newlines that `norm` destroys.
+      const write = /^printf '%s' ([\s\S]*) (>>|>) (\S+)$/.exec(cmd.trim())
+      if (!write) out = { exitCode: 1, stdout: "", stderr: "" }
+      else {
+        const [, content = "", mode, dest = ""] = write
+        fs[dest] = mode === ">>" ? `${fs[dest] ?? ""}${content}` : content
+        out = { exitCode: 0, stdout: "", stderr: "" }
+      }
     }
     const result = {
       exitCode: out.exitCode,
@@ -2201,6 +2214,47 @@ test("claim <id> with an unknown id says so", async () => {
 
   assert.equal(toasts[0]?.variant, "warning")
   assert.match(toasts[0]?.message ?? "", /no task "nope" found/)
+})
+
+test("approve --auto-plan arms the flag on the queued file (typed-verb path)", async () => {
+  const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Chore", body: "x" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  const out = await handleCommand(deps, "sess-auto-arm", "approve my-task --auto-plan", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.match(out ?? "", /Auto-plan armed/)
+})
+
+test("autoAdvanceParkedPlan crosses the plan gate and queues the BUILD drive", async () => {
+  const parked = serializeTask({ title: "Chore", autoPlan: true, body: `${PLAN_HEADING}\n\n1. Step.` })
+  const files = { "docs/tasks/plan-review/my-task.md": parked }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  const advanced = await autoAdvanceParkedPlan(deps, "sess-auto-advance", testConfig, "my-task")
+
+  assert.equal(advanced, true)
+  assert.ok(log.some((c) => c.startsWith("mv ") && c.includes("in-progress")), "the plan gate move ran")
+  assert.ok(log.some((c) => c.startsWith("mkdir ")), "the BUILD claim marker was taken")
+  assert.match(toasts.map((t) => t.message).join("\n"), /Auto-plan: plan approved .* building…/)
+})
+
+test("autoAdvanceParkedPlan is inert for a parked plan without the flag", async () => {
+  const parked = serializeTask({ title: "Chore", body: `${PLAN_HEADING}\n\n1. Step.` })
+  const files = { "docs/tasks/plan-review/my-task.md": parked }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  const advanced = await autoAdvanceParkedPlan(deps, "sess-auto-none", testConfig, "my-task")
+
+  assert.equal(advanced, false)
+  assert.equal(toasts.length, 0)
+  assert.ok(!log.some((c) => c.startsWith("mv ")), "no gate move without the opt-in")
 })
 
 test("claim with an argument on a non-PR sitter kind still refuses", async () => {

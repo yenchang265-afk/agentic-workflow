@@ -545,7 +545,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
 
       <h3>The three human gates — one verb</h3>
       <div class="gates">
-        <div class="gate"><span class="n">Gate 1 · task gate</span><b>approve</b><code>/agentic-workflow:engineering approve &lt;id&gt;</code><span>You accept the goal &amp; acceptance criteria. draft → queued. Explicit id always required for drafts.</span></div>
+        <div class="gate"><span class="n">Gate 1 · task gate</span><b>approve</b><code>/agentic-workflow:engineering approve &lt;id&gt;</code><span>You accept the goal &amp; acceptance criteria. draft → queued. Explicit id always required for drafts. Add <code>--auto-plan</code> to skip Gate 2 for this one task: its plan is approved automatically when it parks (replan or a fresh approve clears it; Gate 3 stays yours).</span></div>
         <div class="gate"><span class="n">Gate 2 · plan gate</span><b>approve</b><code>/agentic-workflow:engineering approve [id]</code><span>You accept the plan the loop parked. plan-review → in-progress. Reject with <code>replan [id] [reason]</code>.</span></div>
         <div class="gate"><span class="n">Gate 3 · ship</span><b>approve</b><code>/agentic-workflow:engineering approve [id]</code><span>You accept the reviewed diff. in-review → completed. Publishes per <code>shipPublish</code> — override per ship with <code>--pr</code> / <code>--push</code> / <code>--local</code>. The PR targets the branch the run was cut from; override with <code>--base=&lt;branch&gt;</code>.</span></div>
       </div>

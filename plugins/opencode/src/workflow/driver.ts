@@ -87,7 +87,7 @@ import {
 import type { AdoGateway } from "@agentic-workflow/core/source/ado-gateway"
 import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
 import { clearState, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
-import { abandonTask, approveAny, rejectAny, removeTask, retaskTask, type GateCandidate, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
+import { abandonTask, approveAny, approvePlan, rejectAny, removeTask, retaskTask, type GateCandidate, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
 import { runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
@@ -2413,6 +2413,12 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config, only?: st
         ...(outcome.retryable !== undefined ? { retryable: outcome.retryable } : {}),
       })
     }
+    // A watch-claimed PLAN that parks a task armed with --auto-plan continues
+    // into BUILD unattended — the whole point of the opt-in. Never throws, so
+    // it cannot reach the release arm below and free a claim it did not take.
+    if (outcome?.kind === "park" && item.workflowKind === "engineering" && item.state.task) {
+      await autoAdvanceParkedPlan(deps, sessionID, config, item.state.task.id)
+    }
   } catch (err) {
     // Died before real work started (e.g. ensureIsolation threw, before
     // setWorkflow ran — onIdle's catch can't see the task): the claim is ours, so
@@ -2750,8 +2756,12 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
   // own ask is refused by the guards that stop a stage agent moving human gates.
   // And NEVER awaited — the turn it starts contains a question that blocks for as
   // long as the human takes, while `onIdle` is called from the event hook.
-  if (work?.kind === "start-plan" && work.askOnPark && planOutcome?.kind === "park") {
-    void promptPlanGateAsk(deps, sessionID, work.task.id)
+  if (work?.kind === "start-plan" && planOutcome?.kind === "park") {
+    // Auto-plan first: when the task opted in, the gate is crossed here and
+    // there is nothing left to ask; otherwise the human-requested plan gets
+    // its ask exactly as before.
+    const advanced = await autoAdvanceParkedPlan(deps, sessionID, config, work.task.id)
+    if (!advanced && work.askOnPark) void promptPlanGateAsk(deps, sessionID, work.task.id)
   }
 }
 
@@ -2943,7 +2953,7 @@ export const handleApprove = async (deps: Deps, sessionID: string, args: string,
   // parser knows which bare-looking words it already consumed as flag values.
   const id = opts.rest[0] ?? ""
   try {
-    const r = await approveAny(gateCtx(deps, config), id, "engineering", opts.publish, opts.base)
+    const r = await approveAny(gateCtx(deps, config), id, "engineering", opts.publish, opts.base, opts.autoPlan)
     // A task gate leaves an obvious next question, and this host DOES get a
     // model turn after a handled verb (impl.ts overrides the command prompt with
     // this outcome). So the outcome carries the ask: nothing else can open a
@@ -3639,6 +3649,53 @@ const startTaskById = async (deps: Deps, sessionID: string, id: string, config: 
               ? `it's in ${elsewhere}`
               : `no task "${id}" found`
   return report(client, `Can't claim "${id}": ${detail}.`, "warning")
+}
+
+/**
+ * Cross the plan gate automatically after a PLAN drive parks, when the task
+ * opted in at its task gate (`approve <id> --auto-plan`): approve the parked
+ * plan and queue the BUILD drive on this session via the same `start-task`
+ * pending `claim <id>` uses. The SHIP gate is never automated. The flag is
+ * judged on the freshly parked FILE, never on the memory the claim was taken
+ * with — a replan or a fresh approve may have cleared it mid-drive.
+ *
+ * Returns true when the gate was crossed, and from that point every arm
+ * returns true: the callers' plan-gate ask must not be put for a gate that no
+ * longer exists, even when the follow-on BUILD claim lost a race (the task is
+ * build-ready; the next claim/watch tick builds it). Never throws — a failure
+ * before the gate move degrades to the ordinary parked plan plus a warning,
+ * which is exactly the state the human gate already handles.
+ */
+export const autoAdvanceParkedPlan = async (deps: Deps, sessionID: string, config: Config, id: string): Promise<boolean> => {
+  try {
+    const parked = await findByIdIn(deps.$, deps.directory, config.tasksDir, "plan-review", id)
+    if (parked?.autoPlan !== true) return false
+    const r = await approvePlan(gateCtx(deps, config), id)
+    if (!r.ok) {
+      await deps.log("warn", `auto-plan: could not approve the parked plan for "${id}": ${r.message}`)
+      void toast(deps.client, `Auto-plan: could not approve "${id}" — ${r.message}`, "warning")
+      return false
+    }
+    const ready = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", id)
+    if (
+      ready &&
+      isClaimable(ready) &&
+      !findSessionDriving(id) &&
+      !driving.has(sessionID) &&
+      !getWorkflow(sessionID) &&
+      (await claimTask(deps.$, ready))
+    ) {
+      clearWorkflow(sessionID)
+      await setPending(deps, sessionID, { kind: "start-task", task: ready, goal: taskGoal(ready) })
+      void toast(deps.client, `Auto-plan: plan approved for "${ready.title}" — building… (BUILD → VERIFY → REVIEW)`, "info")
+    } else {
+      void toast(deps.client, `Auto-plan: plan approved for "${id}" — build-ready; the next claim/watch tick builds it.`, "info")
+    }
+    return true
+  } catch (err) {
+    await deps.log("warn", `auto-plan advance failed for "${id}": ${(err as Error).message}`)
+    return false
+  }
 }
 
 /** Per-kind usage toasts. Engineering carries the full lifecycle; every other

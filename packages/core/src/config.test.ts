@@ -647,6 +647,16 @@ test("publish flags parse, and anything unrecognized refuses rather than being i
   assert.equal(clash.ok, false, "there is no defensible way to pick one of two modes")
 })
 
+test("--auto-plan parses alone and alongside the ship flags", () => {
+  assert.deepEqual(parseGateOptions(["t-1", "--auto-plan"]), { ok: true, rest: ["t-1"], autoPlan: true })
+  // Order-independent, and it never eats the id or the other flags.
+  assert.deepEqual(parseGateOptions(["--auto-plan", "t-1", "--local"]), { ok: true, rest: ["t-1"], publish: "local", autoPlan: true })
+  // The unknown-option refusal now names it.
+  const typo = parseGateOptions(["t-1", "--autoplan"])
+  assert.equal(typo.ok, false)
+  assert.match(typo.ok === false ? typo.message : "", /--auto-plan/)
+})
+
 test("--base= carries the PR target, and the space-separated form refuses instead of eating the id", () => {
   assert.deepEqual(parseGateOptions(["t-1", "--base=release/2.4"]), { ok: true, rest: ["t-1"], base: "release/2.4" })
   // Both flags together, either order, with the id still recoverable from `rest`.

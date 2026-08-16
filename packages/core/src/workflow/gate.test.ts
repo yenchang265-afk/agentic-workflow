@@ -444,6 +444,51 @@ test("approveTask on a missing task fails", async () => {
   assert.equal(r.ok, false)
 })
 
+test("approveTask --auto-plan arms the flag on the queued file and says so", async () => {
+  const { ctx, fs } = makeCtx({ "draft/t.md": task("Do it") })
+  const r = await approveTask(ctx, "t", true)
+  assert.equal(r.ok, true)
+  assert.match(r.message, /Auto-plan armed/)
+  assert.ok(r.ok && r.data.autoPlan === true)
+  assert.match(fs["/repo/docs/tasks/queued/t.md"] ?? "", /^autoPlan: true$/m, "the flag must land in the queued file's frontmatter")
+})
+
+test("a plain approve on a draft still carrying the flag CLEARS it", async () => {
+  // retask sends an armed task back to draft/; re-approving without the flag
+  // must not silently keep an opt-in the human did not re-state.
+  const { ctx, fs } = makeCtx({ "draft/t.md": serializeTask({ title: "Do it", autoPlan: true, body: "context" }) })
+  const r = await approveTask(ctx, "t")
+  assert.equal(r.ok, true)
+  assert.match(r.message, /Auto-plan cleared/)
+  assert.ok(!/autoPlan/.test(fs["/repo/docs/tasks/queued/t.md"] ?? ""), "the stale flag must be gone from the queued file")
+})
+
+test("approveTask --auto-plan on an already-queued task arms the flag on retry", async () => {
+  const { ctx, fs } = makeCtx({ "queued/t.md": task("Do it") })
+  const r = await approveTask(ctx, "t", true)
+  assert.ok(r.ok && r.data.alreadyDone === true)
+  assert.match(r.message, /Auto-plan armed/)
+  assert.match(fs["/repo/docs/tasks/queued/t.md"] ?? "", /^autoPlan: true$/m)
+})
+
+test("replanTask clears the auto-plan flag — a rejected plan's revision parks for review", async () => {
+  const planned = serializeTask({ title: "Do it", autoPlan: true, body: `${PLAN_HEADING}\n\n1. Step.` })
+  const { ctx, fs } = makeCtx({ "plan-review/t.md": planned })
+  const r = await replanTask(ctx, "t", "wrong approach")
+  assert.equal(r.ok, true)
+  assert.match(r.message, /Auto-plan cleared/)
+  assert.ok(!/autoPlan/.test(fs["/repo/docs/tasks/queued/t.md"] ?? ""), "the flag must be gone from the re-queued file")
+})
+
+test("the auto-plan rewrite declines over off-schema frontmatter and warns instead", async () => {
+  const withExtra = serializeTask({ title: "Do it", body: "context" }).replace("---\n", "---\ncustomKey: kept\n")
+  const { ctx, fs } = makeCtx({ "draft/t.md": withExtra })
+  const r = await approveTask(ctx, "t", true)
+  assert.equal(r.ok, true, "the MOVE is what was asked for — it must not unwind")
+  assert.match(r.message, /could not arm auto-plan .* off-schema frontmatter \(customKey\)/)
+  assert.match(fs["/repo/docs/tasks/queued/t.md"] ?? "", /customKey: kept/, "the off-schema key survives")
+})
+
 test("approveTask refuses a tracking epic — it stays in draft/, untouched", async () => {
   const { ctx, fs, log } = makeCtx({ "draft/epic.md": serializeTask({ title: "Big feature", type: "epic", body: "children in order…" }) })
   const r = await approveTask(ctx, "epic")

@@ -37,6 +37,9 @@ releases a parked plan into the build queue (the plan gate), or ships a
 finished review after you've read the diff — a task lives in exactly one
 folder, so the move is never ambiguous, and id-less `approve` advances the
 one task waiting at a loop gate (falling back to a lone draft when none is).
+`approve <id> --auto-plan` thins the plan gate for that one task: when its
+plan parks, it is approved automatically and BUILD follows — `replan` or a
+fresh approve clears it, and the ship gate is never automated.
 **`replan [id] [reason]`**
 is the sole rejection verb: a parked plan (or a cap-tripped task, by id) goes
 back to `queued/` for re-planning. Planning happens **right before execution** —

@@ -1,7 +1,7 @@
 ---
 name: agentic-workflow:engineering
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
 ---
 
 The engineering agentic loop — one command for authoring, the human gates,
@@ -171,6 +171,13 @@ Dispatch:
   `docs/tasks/*/<id>*`: the task will still sit in its old folder. Report
   that the gate did NOT happen, with the fix (`npm install` at the
   agentic-workflow repo root, then restart opencode) — never claim it did.
+- **`--auto-plan` thins the PLAN gate for this one task, and the plugin
+  parses it — not you.** At the task gate it arms the task so that when its
+  plan later parks, the plan gate is crossed automatically and BUILD follows
+  on this session — for chore-sized work whose plan review is a rubber stamp.
+  The ship gate is never automated. A `replan` clears it (a rejected plan's
+  revision parks for review), and so does a later plain `approve` on the same
+  draft. Never add it to a command the user did not write.
 <!-- /aw:verb approve -->
 <!-- aw:verb replan -->
 - **`replan [id] [reason]`** — the sole rejection verb, and it chains the

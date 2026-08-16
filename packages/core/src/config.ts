@@ -660,8 +660,11 @@ export const SHIP_PUBLISH_FLAGS: Readonly<Record<string, ShipPublish>> = { "--pr
 /** The typed-verb flag that overrides `prBase` for a single ship. Takes its value inline — see `parseGateOptions`. */
 export const SHIP_BASE_FLAG = "--base"
 
+/** The task-gate flag that arms the plan gate's auto-approve (`approve <id> --auto-plan`). */
+export const AUTO_PLAN_FLAG = "--auto-plan"
+
 export type GateOptionParse =
-  | { readonly ok: true; readonly publish?: ShipPublish; readonly base?: string; readonly rest: readonly string[] }
+  | { readonly ok: true; readonly publish?: ShipPublish; readonly base?: string; readonly autoPlan?: boolean; readonly rest: readonly string[] }
   | { readonly ok: false; readonly message: string }
 
 /**
@@ -695,10 +698,15 @@ export type GateOptionParse =
 export const parseGateOptions = (words: readonly string[]): GateOptionParse => {
   let publish: ShipPublish | undefined
   let base: string | undefined
+  let autoPlan: boolean | undefined
   const rest: string[] = []
   for (const word of words) {
     if (!word.startsWith("-")) {
       rest.push(word)
+      continue
+    }
+    if (word === AUTO_PLAN_FLAG) {
+      autoPlan = true
       continue
     }
     if (word === SHIP_BASE_FLAG) return { ok: false, message: `"${SHIP_BASE_FLAG}" needs its value inline — pass ${SHIP_BASE_FLAG}=<branch>.` }
@@ -711,11 +719,11 @@ export const parseGateOptions = (words: readonly string[]): GateOptionParse => {
       continue
     }
     const mode = SHIP_PUBLISH_FLAGS[word]
-    if (!mode) return { ok: false, message: `Unknown option "${word}" — expected ${Object.keys(SHIP_PUBLISH_FLAGS).join(", ")}, ${SHIP_BASE_FLAG}=<branch>.` }
+    if (!mode) return { ok: false, message: `Unknown option "${word}" — expected ${Object.keys(SHIP_PUBLISH_FLAGS).join(", ")}, ${SHIP_BASE_FLAG}=<branch>, ${AUTO_PLAN_FLAG}.` }
     if (publish && publish !== mode) return { ok: false, message: `Conflicting publish options: --${publish} and --${mode} — pass one.` }
     publish = mode
   }
-  return { ok: true, rest, ...(publish ? { publish } : {}), ...(base ? { base } : {}) }
+  return { ok: true, rest, ...(publish ? { publish } : {}), ...(base ? { base } : {}), ...(autoPlan ? { autoPlan } : {}) }
 }
 
 /**

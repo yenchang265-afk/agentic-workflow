@@ -2109,7 +2109,7 @@ const runPark = async (
   action: Extract<Action, { kind: "park" }>,
 ): Promise<
   | { error: string }
-  | { action: { kind: "park"; message: string }; path: string; gate: { kind: "plan"; id: string }; next: string }
+  | { action: { kind: "park"; message: string }; path: string; gate?: { kind: "plan"; id: string }; next: string }
 > => {
   if (!active) {
     activeClaim = null
@@ -2163,6 +2163,34 @@ const runPark = async (
   active = null
   resetLoopScratch()
   writeStageMarker(null)
+  // Auto-plan: the task opted in at its task gate (`approve <id> --auto-plan`),
+  // so the plan gate is crossed here — deterministically, by the server, never
+  // as an instruction the orchestrator might skip. The flag is judged on the
+  // freshly parked FILE (a replan or fresh approve may have cleared it), and
+  // the descriptor then omits `gate` on purpose: the plan-gate ask hook and the
+  // orchestrator's own gate prose key off it, and both would otherwise put a
+  // question for a gate that no longer exists. A failed approve degrades to the
+  // ordinary parked descriptor plus the failure, which the human gate handles.
+  const parkedTask = await findByIdIn(sh, directory, config.tasksDir, "plan-review", id)
+  if (parkedTask?.autoPlan === true) {
+    const gateResult = await approvePlan(id)
+    if (gateResult.ok) {
+      return {
+        action: { kind: "park", message: `${action.message} Auto-plan: the plan gate was crossed automatically — "${id}" is build-ready in in-progress/.` },
+        path: report.path,
+        next: `auto-plan: the plan was approved automatically (--auto-plan) — call workflow_start({id: "${id}"}) to begin BUILD now, or stop here and the next claim builds it. Do not ask the plan-gate question; that gate is already crossed.`,
+      }
+    }
+    return {
+      action: { kind: "park", message: action.message },
+      path: report.path,
+      gate: { kind: "plan", id },
+      next:
+        `auto-plan could not approve the parked plan (${gateResult.message}) — fall back to the human gate: ` +
+        `show the user the plan summary, then ask with ${dialect.askTool} — ` +
+        `Approve (workflow_plan_approve("${id}") then workflow_start("${id}")), Replan with a reason (workflow_replan("${id}", reason)), or Park for later.`,
+    }
+  }
   return {
     action: { kind: "park", message: action.message },
     path: report.path,
@@ -2428,7 +2456,7 @@ server.registerTool(
  */
 const approveTask = (id: string): Promise<GateResult> => coreApproveTask(gateCtx(), id)
 const approvePlan = (id: string): Promise<GateResult> => coreApprovePlan(gateCtx(), id)
-const approveAny = (id: string, publish?: ShipPublish, base?: string): Promise<GateResult> => coreApproveAny(gateCtx(), id, "engineering", publish, base)
+const approveAny = (id: string, publish?: ShipPublish, base?: string, autoPlan?: boolean): Promise<GateResult> => coreApproveAny(gateCtx(), id, "engineering", publish, base, autoPlan)
 const shipAny = (id: string, publish?: ShipPublish, base?: string): Promise<GateResult> => coreShipAny(gateCtx(), id, "engineering", publish, base)
 const replanTask = (id: string, reason: string | undefined, liveTaskId: string | null): Promise<GateResult> =>
   coreReplanTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, reason)
@@ -2655,11 +2683,21 @@ server.registerTool(
     description:
       "/agentic-workflow:engineering approve [id] — the unified, folder-driven gate. With an explicit id it advances that task by its folder's gate: draft/ → queued (task gate), plan-review/ → in-progress (plan gate, requires an ## Implementation Plan), or in-review/ → completed (ship). An explicit id naming an already-completed/ task re-runs its publish step, which is how a push/local ship opens its PR later. The id is OPTIONAL — omit it to advance the single task at a loop wait-gate (plan-review/ or in-review/), falling back to a lone draft/ task only when neither has anything waiting; tracking epics are never auto-resolved, and the id-less form never picks a completed task. Prefer this over the specific workflow_task_approve / workflow_plan_approve / workflow_ship tools. The agent writes nothing. " +
       PUBLISH_DOC,
-    inputSchema: { id: z.string().optional(), publish: publishArg, base: baseArg },
+    inputSchema: {
+      id: z.string().optional(),
+      publish: publishArg,
+      base: baseArg,
+      autoPlan: z
+        .boolean()
+        .optional()
+        .describe(
+          "Task gate only, and only when the user explicitly asked for --auto-plan: when this task's plan later parks, the plan gate is crossed automatically and BUILD follows. Never add it on your own - it removes a human review the user did not choose to skip. A replan or a fresh approve clears it; the ship gate is never automated.",
+        ),
+    },
   },
-  async ({ id, publish, base }) => {
+  async ({ id, publish, base, autoPlan }) => {
     await loadCfg()
-    const r = await approveAny((id ?? "").trim(), publish, base)
+    const r = await approveAny((id ?? "").trim(), publish, base, autoPlan)
     return okGate(r)
   },
 )
@@ -2912,7 +2950,7 @@ async function runGate(argv: string[]): Promise<number> {
     }
     // The id comes from the parser's leftovers, never from a fresh scan of
     // `rest`: only the parser knows which bare-looking words it consumed.
-    result = await approveAny(opts.rest[0] ?? "", opts.publish, opts.base)
+    result = await approveAny(opts.rest[0] ?? "", opts.publish, opts.base, opts.autoPlan)
   } else if (verb === "reject-any") result = await rejectAny(remainder, readStageTaskId())
   else {
     // Legacy verbs require an explicit id.

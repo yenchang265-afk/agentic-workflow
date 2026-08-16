@@ -106,6 +106,11 @@ The loop (`/agentic-workflow:engineering`):
   task now: it writes the plan onto the task file, parks it in
   `plan-review/`, and exits. Building is not reachable from `plan` —
   `claim <id>` builds one now; `claim`/`watch` drive builds by priority
+- `/agentic-workflow:engineering approve <id> --auto-plan` — task-gate opt-in
+  that thins the PLAN gate for that one task: when its plan parks, it is
+  approved automatically and the BUILD drive follows on the same session
+  (`replan` clears it; a later plain `approve` on the draft clears it too;
+  the ship gate is never automated)
 - `/agentic-workflow:engineering claim [id]` — one-shot pull. Bare, it claims the
   next item, lowest priority number first: build-ready `in-progress/` work,
   then an approved `queued/` task to plan when no build work is left. With a

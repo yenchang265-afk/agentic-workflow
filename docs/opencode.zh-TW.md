@@ -88,6 +88,10 @@ FAIL/ERROR 判定，工作階段呼叫 `workflow_blocked`。兩者都會在下�
   `queued/` 任務執行 PLAN 階段：把計畫寫進任務檔案，將其暫存到
   `plan-review/`，然後結束。從 `plan` 無法抵達建置階段——`claim <id>`
   可立刻建置一個；`claim`/`watch` 依優先序驅動建置
+- `/agentic-workflow:engineering approve <id> --auto-plan`——任務閘門的選擇性
+  加值：為那一個任務削薄計畫閘門——計畫暫存時自動核准，並在同一個
+  session 接著 BUILD（`replan` 會清除它；之後對同一份草稿的普通
+  `approve` 也會清除；出貨閘門永不自動化）
 - `/agentic-workflow:engineering claim [id]`——一次性拉取。不帶引數時認領下一個
   項目，優先數字最小者優先：先取建置就緒的 `in-progress/` 工作，沒有可建置的
   工作時，再取一個已核准的 `queued/` 任務來規劃。帶任務 id（短雜湊代碼可

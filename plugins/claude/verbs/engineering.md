@@ -185,6 +185,14 @@
     `approve <id> --pr` — on a task already in `completed/` that re-runs **only**
     the publish step. The flag is what asks for it: a bare `approve <id>` on a
     finished task still just reports that it already moved, and pushes nothing.
+  - **`--auto-plan` thins the PLAN gate for this one task, and the hook parses
+    it — not you.** At the task gate it arms the task so that when its plan
+    later parks, the plan gate is crossed automatically and BUILD follows —
+    for chore-sized work whose plan review is a rubber stamp. The ship gate is
+    never automated. A `replan` clears it (a rejected plan's revision parks
+    for review), and so does a later plain `approve` on the same draft. Never
+    add it to a command the user did not write: it removes a human review the
+    user did not choose to skip.
 <!-- /aw:verb approve -->
 <!-- aw:verb replan -->
 - **`replan [id] [reason]`** — the sole rejection verb, and it chains the
