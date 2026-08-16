@@ -18,6 +18,7 @@ import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
 import { effectiveAllowlist, effectivePlatformTools, stageDef, stageRequiresCriteria, type LoadedManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
 import { pollOnce } from "@agentic-workflow/core/scheduler/scheduler"
 import { appendSchedulerEvents, skipSetKey, type SchedulerEvent } from "@agentic-workflow/core/scheduler/events-log"
+import { aggregateDenials, clearDenyLog, formatDenyFindings, readDenyLog } from "@agentic-workflow/core/workflow/deny-log"
 import {
   buildEntryState,
   buildWorkSources,
@@ -2295,7 +2296,7 @@ server.registerTool(
   "workflow_doctor",
   {
     description:
-      "Audit the backlog for structural damage a confused agent can cause: stray folders (not a status folder), task files outside every status folder, duplicate ids across status folders, and held claim markers. With fix:true, performs only the unambiguous repairs — rescue stray .md files back to draft/ (audited note + commit), remove now-empty stray folders, and release stale orphaned claim markers. Duplicates are always flagged for a human, never auto-resolved.",
+      "Audit the backlog for structural damage a confused agent can cause: stray folders (not a status folder), task files outside every status folder, duplicate ids across status folders, and held claim markers — plus the allowlist deny log (bash commands the check stages refused, aggregated with the config change that would admit each). With fix:true, performs only the unambiguous repairs — rescue stray .md files back to draft/ (audited note + commit), remove now-empty stray folders, release stale orphaned claim markers, and clear the reported deny log. Duplicates are always flagged for a human, never auto-resolved.",
     inputSchema: { fix: z.boolean().optional().describe("Apply the unambiguous repairs instead of only reporting.") },
   },
   async ({ fix }) => {
@@ -2320,13 +2321,32 @@ server.registerTool(
       "queued",
       log,
     )
+    // Allowlist deny telemetry: what the enforcement seams refused, aggregated
+    // with the config change that would admit it — the report that used to take
+    // stage-transcript archaeology (a starved stage's deny dump).
+    const denyFindings = aggregateDenials(readDenyLog(directory, config.tasksDir), (dkind: string, dstage: string) => {
+      try {
+        const def = stageDef(manifestFor(dkind).manifest, dstage)
+        return [...effectiveAllowlist(def, platformFor(config, dkind)), ...bashAllowlistExtras(config)]
+      } catch {
+        return null
+      }
+    })
     const report = {
       findings: formatAnomalies(anomalies, config.tasksDir),
       heldClaims,
       ...(strayRequests.length ? { strayPlanRequests: strayRequests } : {}),
+      ...(denyFindings.length ? { deniedCommands: formatDenyFindings(denyFindings) } : {}),
       ...(anomalies.duplicates.length ? { note: "duplicates are never auto-fixed — keep one copy, workflow_move the rest to abandoned" } : {}),
     }
-    if (!fix) return ok({ ...report, next: hasAnomalies(anomalies) || Object.keys(heldClaims).length ? "workflow_doctor with fix:true applies the unambiguous repairs" : "backlog is clean" })
+    if (!fix)
+      return ok({
+        ...report,
+        next:
+          hasAnomalies(anomalies) || Object.keys(heldClaims).length || denyFindings.length
+            ? "workflow_doctor with fix:true applies the unambiguous repairs"
+            : "backlog is clean",
+      })
 
     const actor = await gitActor(sh, directory)
     const rescued: string[] = []
@@ -2384,12 +2404,15 @@ server.registerTool(
     // the markers were never tracked. Only the CONFIRMED strays from above are
     // revoked; a request written since is left alone.
     const revokedRequests = await revokeStrayPlanRequests(sh, directory, config.tasksDir, strayRequests)
+    // Deny telemetry is acknowledged by a fix: the report above carries the
+    // aggregate, so the raw log is cleared rather than re-reported forever.
+    const denyLogCleared = denyFindings.length ? clearDenyLog(directory, config.tasksDir) : false
     if (rescued.length) {
       await commitPaths(sh, directory, [config.tasksDir], `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
     }
     return ok({
       ...report,
-      repaired: { rescued, removedDirs, releasedClaims, ...(revokedRequests.length ? { revokedRequests } : {}) },
+      repaired: { rescued, removedDirs, releasedClaims, ...(revokedRequests.length ? { revokedRequests } : {}), ...(denyLogCleared ? { denyLogCleared } : {}) },
       ...(failed.length ? { failed } : {}),
     })
   },

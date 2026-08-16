@@ -14,7 +14,7 @@ import {
 } from "@agentic-workflow/core/workflow/stage-marker"
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
 import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
-import { stageDef, stageRequiresCriteria, type LoadedManifest } from "@agentic-workflow/core/manifest/schema"
+import { effectiveAllowlist, stageDef, stageRequiresCriteria, type LoadedManifest } from "@agentic-workflow/core/manifest/schema"
 import { combineSkips, pollOnce } from "@agentic-workflow/core/scheduler/scheduler"
 import { appendSchedulerEvents, skipSetKey, type SchedulerEvent } from "@agentic-workflow/core/scheduler/events-log"
 import {
@@ -139,7 +139,10 @@ import {
   deprecatedAdoKeys,
   unreviewedAxes,
   worktreesDirFor,
+  bashAllowlistExtras,
+  platformFor,
 } from "@agentic-workflow/core/config"
+import { aggregateDenials, clearDenyLog, formatDenyFindings, readDenyLog } from "@agentic-workflow/core/workflow/deny-log"
 import { boundedShell } from "../bounded-shell.ts"
 import type { Config } from "../config.ts"
 import { splitVerb } from "../verb.ts"
@@ -4031,14 +4034,26 @@ export const handleCommand = async (
       // unparseable files), and a request written after it — the hub's Plan
       // button, mid-doctor — must never be judged against it.
       const strayRequests = await confirmedStrayPlanRequestIds(deps.$, deps.directory, config.tasksDir, queuedIds, "queued", deps.log)
+      // Allowlist deny telemetry: what the enforcement seams refused, aggregated
+      // with the config change that would admit it — the report that used to
+      // take stage-transcript archaeology (a starved stage's DeniedError dump).
+      const denyFindings = aggregateDenials(readDenyLog(deps.directory, config.tasksDir), (dkind: string, dstage: string) => {
+        try {
+          const def = stageDef(manifestFor(dkind).manifest, dstage)
+          return [...effectiveAllowlist(def, platformFor(config, dkind)), ...bashAllowlistExtras(config)]
+        } catch {
+          return null
+        }
+      })
       for (const line of formatAnomalies(anomalies, config.tasksDir)) await deps.log("warn", `doctor: ${line}`)
       if (heldQueued.length) await deps.log("info", `doctor: claim marker(s) held in queued/.claims: ${heldQueued.join(", ")}`)
       if (heldInProgress.length) await deps.log("info", `doctor: claim marker(s) held in in-progress/.claims: ${heldInProgress.join(", ")}`)
       if (strayRequests.length) {
         await deps.log("info", `doctor: plan request(s) whose task left queued/: ${strayRequests.join(", ")}`)
       }
+      for (const line of formatDenyFindings(denyFindings)) await deps.log("warn", `doctor: allowlist: ${line}`)
       const findings =
-        formatAnomalies(anomalies, config.tasksDir).length + heldQueued.length + heldInProgress.length + strayRequests.length
+        formatAnomalies(anomalies, config.tasksDir).length + heldQueued.length + heldInProgress.length + strayRequests.length + denyFindings.length
       if (!fix) {
         return report(
           client,
@@ -4108,6 +4123,9 @@ export const handleCommand = async (
       // from above are revoked; a request written since (the hub's Plan
       // button racing this doctor) is left alone.
       const revokedRequests = await revokeStrayPlanRequests(deps.$, deps.directory, config.tasksDir, strayRequests)
+      // Deny telemetry is acknowledged by a fix: the report above carries the
+      // aggregate, so the raw log is cleared rather than re-reported forever.
+      const denyCleared = denyFindings.length ? clearDenyLog(deps.directory, config.tasksDir) : false
       if (rescued.length) {
         await commitTasks(deps, config, `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
       }
@@ -4116,6 +4134,7 @@ export const handleCommand = async (
         removedDirs.length ? `removed ${removedDirs.length} stray folder(s)` : "",
         released.length ? `released ${released.length} stale claim marker(s)` : "",
         revokedRequests.length ? `dropped ${revokedRequests.length} stray plan request(s)` : "",
+        denyCleared ? `cleared the allowlist deny log (${denyFindings.length} distinct command(s) — see the log for suggestions)` : "",
         anomalies.duplicates.length ? `${anomalies.duplicates.length} duplicate id(s) left for you` : "",
       ].filter(Boolean)
       return report(client, summary.length ? `Backlog doctor: ${summary.join(" · ")}.` : "Backlog doctor: nothing to repair.", "success")

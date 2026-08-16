@@ -556,7 +556,10 @@ it. The warnings are advisory: they annotate a save, never block it. See
   declares an allowlist** (check stages, and allowlisted work stages like
   pr-sitter's publish), after the manifest's own `bashAllowlist`. The
   per-project/per-user escape hatch for an environment the shipped manifests
-  cannot know:
+  cannot know. You rarely have to reverse-engineer the glob yourself:
+  `/agentic-workflow:engineering doctor` reports every denied command from the
+  deny log with the exact `bashAllowlistExtra`/`bashAllowlistPrefix` change
+  that would admit it (see design 29):
 
   ```json
   {

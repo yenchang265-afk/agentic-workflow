@@ -316,9 +316,12 @@ Dispatch:
 <!-- aw:verb doctor -->
 - **`doctor [fix]`** — audit the backlog for structural damage (stray folders
   like `run/`, task files outside every status folder, duplicate ids, held
-  claim markers, stray plan-request markers). With `fix`, applies the
-  unambiguous repairs: rescues strays to `draft/`, removes emptied stray
-  folders, releases stale claim markers, and drops stray plan requests.
+  claim markers, stray plan-request markers) and report the allowlist deny
+  log — bash commands the check stages refused, aggregated with the config
+  change that would admit each (the suggestions land in the log; the config
+  edit is the human's call). With `fix`, applies the unambiguous repairs:
+  rescues strays to `draft/`, removes emptied stray folders, releases stale
+  claim markers, drops stray plan requests, and clears the reported deny log.
   Duplicates are always left for you.
 <!-- /aw:verb doctor -->
 

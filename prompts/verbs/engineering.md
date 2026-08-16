@@ -304,8 +304,11 @@
 - **`doctor [fix]`** — call `mcp__agentic-workflow__workflow_doctor({fix})` to audit
   the backlog for structural damage (stray folders, task files outside every
   status folder, duplicate ids, held claim markers, stray plan-request
-  markers); with `fix` it applies the unambiguous repairs. Never repair the
-  backlog by hand.
+  markers) and report the allowlist deny log — bash commands the check stages
+  refused, aggregated with the config change that would admit each (relay the
+  `deniedCommands` lines verbatim; the config edit is the human's call, never
+  yours); with `fix` it applies the unambiguous repairs and clears the
+  reported deny log. Never repair the backlog by hand.
 <!-- /aw:verb doctor -->
 <!-- aw:verb unknown -->
 - **anything else** (including a free-text goal) — do not run it. Show this

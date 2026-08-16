@@ -509,7 +509,10 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 - **`bashAllowlistExtra`**——附加在**每個宣告了允許清單的階段**（檢查階段，
   以及 pr-sitter 的 publish 這類帶允許清單的工作階段）之後的額外 bash
   glob，接在 manifest 自己的 `bashAllowlist` 後面。這是專案／使用者層級的
-  逃生口，用於內建 manifest 不可能預知的環境：
+  逃生口，用於內建 manifest 不可能預知的環境。你很少需要自己反推 glob：
+  `/agentic-workflow:engineering doctor` 會從拒絕紀錄回報每一條被拒的指令，
+  並附上能放行它的 `bashAllowlistExtra`/`bashAllowlistPrefix` 修改
+  （見設計 29）：
 
   ```json
   {

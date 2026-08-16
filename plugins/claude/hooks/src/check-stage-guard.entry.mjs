@@ -59,6 +59,7 @@ import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, chainedGithubPrMutation, ch
 import { allow, block, readStdin as read, rewriteInput } from "./pretooluse.mjs"
 import { backlogRoot, markerWriterAlive, readMarker, readTasksDir, runsDir } from "./marker.mjs"
 import { evidenceEntry, noteEvidence } from "./evidence.mjs"
+import { noteDeny } from "./deny.mjs"
 
 // The PreToolUse envelope (allow / block / rewriteInput) lives in
 // ./pretooluse.mjs so this guard and the spawn-model stamp emit byte-identical
@@ -251,6 +252,10 @@ const main = async () => {
   if (isBash && (markerList || marker.stage === "verify" || marker.stage === "review")) {
     const list = markerList ?? (marker.stage === "verify" ? VERIFY_ALLOW : REVIEW_ALLOW)
     if (!commandAllowed(effectiveCommand, list, markerPrefixes)) {
+      // Telemetry for the backlog doctor, recorded with the RAW command (the
+      // shape the agent asked for is the shape the operator must allow) before
+      // the block — best-effort, never changes the decision.
+      noteDeny(runsDir(cwd), host, marker, rawCommand)
       return block(
         `agentic-workflow: the ${marker.stage.toUpperCase()} stage is read-only — the command "${rawCommand}" is not on its allowlist. ` +
           `Only inspection/test commands are permitted; if a test runner is genuinely needed, record an ERROR verdict naming it.`,

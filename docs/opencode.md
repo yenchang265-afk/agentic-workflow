@@ -128,9 +128,14 @@ The loop (`/agentic-workflow:engineering`):
   running loop (see `recover`); `unwatch` only clears the watch flag and leaves
   an in-flight loop to finish
 - `/agentic-workflow:engineering doctor [fix]` — audit the backlog for stray folders/files,
-  duplicate ids, held claim markers, and stray plan-request markers; `fix`
-  applies the unambiguous repairs (rescue strays to `draft/`, drop emptied
-  folders, release stale claim markers, drop stray plan requests)
+  duplicate ids, held claim markers, and stray plan-request markers, and
+  report the allowlist deny log (`<tasksDir>/runs/.deny-log.jsonl`): every
+  bash command a check stage refused, aggregated with the config change that
+  would admit it (`bashAllowlistPrefix` when the wrapped command is already
+  allowed, else a narrow `bashAllowlistExtra` glob); `fix` applies the
+  unambiguous repairs (rescue strays to `draft/`, drop emptied folders,
+  release stale claim markers, drop stray plan requests, clear the reported
+  deny log)
 - `/agentic-workflow:engineering recover <id>` — resume an in-progress task whose run stopped
   early — a crash/restart, or a user **interrupt (ESC)** — from its state
   snapshot (or its persisted plan), at the exact stage it reached
