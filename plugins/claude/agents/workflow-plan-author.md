@@ -105,22 +105,14 @@ The heading must be **exactly** `## Implementation Plan`
 — the server greps for that literal string to park the task at the plan
 gate and to thread the plan into the BUILD stage.
 
-A replan **replaces** any prior plan section; it must never leave two.
-
-## Steps
-
-1. Read the task file named by the `Task file:` line in your prompt (fall
-   back to `docs/tasks/queued/`).
-2. Read the relevant code and produce the `## Implementation Plan` (see above).
-3. Write the file in place — frontmatter + body + plan. Do not move it.
+A replan **replaces** any prior plan section; it must never leave two. Write the
+file in place — frontmatter + body + plan — and leave it where it is.
 
 ## Output
 
 Return:
 - The **path** you wrote.
 - A one-paragraph **plan summary** (steps count, key files, main risk).
-- The next step: the task is parked in `plan-review/`; the human gates it
-  with `/agentic-workflow:engineering approve <id>` (or `replan <id>`).
 - One line on any assumption you made or ambiguity to resolve.
 
 ## Hard rules
@@ -132,6 +124,6 @@ Return:
   Bash `mv`/`mkdir`/`rm` against the backlog.
 - Never create a new task, and never edit any task but your own — drafting is
   `workflow-task-author`'s job, outside the loop.
-- Leave the frontmatter alone: never add keys, and in particular never a
-  `status:` key — the folder is the status.
-- Do not edit source code or run the loop.
+- Leave the frontmatter exactly as you found it — the folder is the status, so
+  a `status:` key least of all.
+- Source code is read-only to you, and the loop is not yours to run.
