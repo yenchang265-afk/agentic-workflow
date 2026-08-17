@@ -2235,12 +2235,92 @@ test("autoAdvanceParkedPlan crosses the plan gate and queues the BUILD drive", a
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
 
-  const advanced = await autoAdvanceParkedPlan(deps, "sess-auto-advance", testConfig, "my-task")
+  const advanced = await autoAdvanceParkedPlan(deps, "sess-auto-advance", testConfig, "my-task", { chain: true })
 
-  assert.equal(advanced, true)
+  assert.deepEqual(advanced, { crossed: true, chained: true })
   assert.ok(log.some((c) => c.startsWith("mv ") && c.includes("in-progress")), "the plan gate move ran")
   assert.ok(log.some((c) => c.startsWith("mkdir ")), "the BUILD claim marker was taken")
   assert.match(toasts.map((t) => t.message).join("\n"), /Auto-plan: plan approved .* building…/)
+})
+
+/**
+ * The watch claim runs INSIDE the drive (`driving` still holds the session), so
+ * it cannot carry a BUILD: a `start-task` pending queued there is consumed by
+ * nobody, and the claim marker it takes makes every gate verb refuse the task
+ * ("a loop is driving this NOW") until the stale sweep. The gate crossing is
+ * still the point — the watcher's next tick claims a build-ready task.
+ */
+test("autoAdvanceParkedPlan crosses the gate without claiming when it cannot chain", async () => {
+  const parked = serializeTask({ title: "Chore", autoPlan: true, body: `${PLAN_HEADING}\n\n1. Step.` })
+  const files = { "docs/tasks/plan-review/my-task.md": parked }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  const advanced = await autoAdvanceParkedPlan(deps, "sess-auto-nochain", testConfig, "my-task", { chain: false })
+
+  assert.deepEqual(advanced, { crossed: true, chained: false })
+  assert.ok(log.some((c) => c.startsWith("mv ") && c.includes("in-progress")), "the plan gate move still ran")
+  assert.ok(
+    !log.some((c) => c.startsWith("mkdir ") && c.includes(".claims")),
+    "no claim marker may be taken for a BUILD nothing will consume",
+  )
+  assert.match(toasts.map((t) => t.message).join("\n"), /build-ready; the next claim\/watch tick builds it/)
+})
+
+/**
+ * The wedge finding 2 closes, end to end. `pending` is consumed by `onIdle`
+ * alone, and every idle a drive produces is delivered — and dropped on
+ * `driving.has` — while it runs; a `plan <id>` session is not watching, so no
+ * timer fires either. So the auto-plan advance has to KICK the consumer itself:
+ * without it the BUILD sits queued until the human's next message while HOLDING
+ * the task's claim marker, which is strictly worse than not chaining (every
+ * gate verb refuses a claimed task) — and the toast says "building…".
+ */
+test("an auto-plan park chains into BUILD without waiting for another idle", async () => {
+  resetAskState()
+  const sessionID = "sess-auto-chain"
+  const plan = `${PLAN_HEADING}\n\n1. Step.\n\n### Verification\n\n- criterion → \`npm test\``
+  const files = { "docs/tasks/queued/my-task.md": serializeTask({ title: "Chore", autoPlan: true, body: plan }) }
+  const { client, toasts } = makeClientFS(files)
+  const commands: string[] = []
+  const prompts: string[] = []
+  const log: string[] = []
+  const withCommand = {
+    ...client,
+    session: {
+      get: async () => ({ data: { parentID: undefined } }),
+      abort: async () => ({ data: true }),
+      command: async ({ body }: { body: { command: string } }) => {
+        commands.push(body.command)
+        return { data: { parts: [], info: undefined } }
+      },
+      prompt: async () => {
+        prompts.push("plan-gate-ask")
+        return { data: undefined }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = { client: withCommand, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, sessionID, "plan my-task", testConfig)
+  await onIdle(deps, sessionID, testConfig) // PLAN → park → auto-approve → chain
+
+  // The kick is deliberately not awaited (it is the whole BUILD→VERIFY→REVIEW
+  // chain, started from an event hook), so settle it rather than assert into
+  // the same tick.
+  for (let i = 0; i < 200 && !log.some((c) => c.includes("CLAIMED")); i++) await new Promise((r) => setTimeout(r, 5))
+  await onInterrupt(deps, sessionID) // halt whatever the chain reached; the assertions are below
+
+  assert.ok(commands.includes("plan-task"), "the PLAN stage ran")
+  assert.ok(log.some((c) => c.startsWith("mv ") && c.includes("in-progress")), "the plan gate was crossed automatically")
+  assert.ok(
+    log.some((c) => c.includes("CLAIMED")),
+    "the chained BUILD drive must actually start — a queued pending nobody consumes holds the claim marker instead",
+  )
+  assert.deepEqual(prompts, [], "the plan-gate question must not be put for a gate that was crossed automatically")
+  assert.match(toasts.map((t) => t.message).join("\n"), /Auto-plan: plan approved .* building…/)
+  clearWorkflow(sessionID)
 })
 
 test("autoAdvanceParkedPlan is inert for a parked plan without the flag", async () => {
@@ -2250,9 +2330,9 @@ test("autoAdvanceParkedPlan is inert for a parked plan without the flag", async 
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
 
-  const advanced = await autoAdvanceParkedPlan(deps, "sess-auto-none", testConfig, "my-task")
+  const advanced = await autoAdvanceParkedPlan(deps, "sess-auto-none", testConfig, "my-task", { chain: true })
 
-  assert.equal(advanced, false)
+  assert.deepEqual(advanced, { crossed: false, chained: false })
   assert.equal(toasts.length, 0)
   assert.ok(!log.some((c) => c.startsWith("mv ")), "no gate move without the opt-in")
 })

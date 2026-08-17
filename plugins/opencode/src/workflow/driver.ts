@@ -2431,11 +2431,16 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config, only?: st
         ...(outcome.retryable !== undefined ? { retryable: outcome.retryable } : {}),
       })
     }
-    // A watch-claimed PLAN that parks a task armed with --auto-plan continues
-    // into BUILD unattended — the whole point of the opt-in. Never throws, so
-    // it cannot reach the release arm below and free a claim it did not take.
+    // A watch-claimed PLAN that parks a task armed with --auto-plan crosses the
+    // plan gate here, so the watcher's NEXT tick claims a build-ready task
+    // instead of a parked plan — that tick is what continues into BUILD
+    // unattended, which is the point of the opt-in. `chain: false` because this
+    // runs inside the drive (`driving` still holds this session): queueing a
+    // BUILD pending here would take the task's claim marker with nothing to
+    // consume it. Never throws, so it cannot reach the release arm below and
+    // free a claim it did not take.
     if (outcome?.kind === "park" && item.workflowKind === "engineering" && item.state.task) {
-      await autoAdvanceParkedPlan(deps, sessionID, config, item.state.task.id)
+      await autoAdvanceParkedPlan(deps, sessionID, config, item.state.task.id, { chain: false })
     }
   } catch (err) {
     // Died before real work started (e.g. ensureIsolation threw, before
@@ -2778,8 +2783,23 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
     // Auto-plan first: when the task opted in, the gate is crossed here and
     // there is nothing left to ask; otherwise the human-requested plan gets
     // its ask exactly as before.
-    const advanced = await autoAdvanceParkedPlan(deps, sessionID, config, work.task.id)
-    if (!advanced && work.askOnPark) void promptPlanGateAsk(deps, sessionID, work.task.id)
+    const auto = await autoAdvanceParkedPlan(deps, sessionID, config, work.task.id, { chain: true })
+    // The KICK the queued BUILD needs. `pending` is consumed by `onIdle` alone,
+    // and every idle this drive produced was already delivered — and dropped on
+    // `driving.has` — while it ran; a `plan <id>` session is not watching, so no
+    // timer will fire either. Without this the BUILD waits for the human's next
+    // message while HOLDING the task's claim marker, which is worse than not
+    // chaining at all: every gate verb refuses a claimed task. Never awaited —
+    // it is the whole BUILD→VERIFY→REVIEW chain, and this runs from the event
+    // hook. Re-entry is safe for the reason the hook's own `void` is: `onIdle`
+    // reaches `driving.add` with no intervening await, and a `start-task` drive
+    // never re-enters this arm (it is gated on `start-plan`).
+    if (auto.chained) {
+      void onIdle(deps, sessionID, config).catch((err: unknown) =>
+        deps.log("error", `auto-plan: the chained BUILD drive failed for "${work.task.id}": ${(err as Error).message}`),
+      )
+    }
+    if (!auto.crossed && work.askOnPark) void promptPlanGateAsk(deps, sessionID, work.task.id)
   }
 }
 
@@ -3669,32 +3689,63 @@ const startTaskById = async (deps: Deps, sessionID: string, id: string, config: 
   return report(client, `Can't claim "${id}": ${detail}.`, "warning")
 }
 
+/** What an auto-plan advance did, for the caller that has to react to both halves. */
+export interface AutoPlanOutcome {
+  /**
+   * The plan gate was crossed here. From this point every arm reports it — the
+   * callers' plan-gate ask must not be put for a gate that no longer exists,
+   * even when the follow-on BUILD claim lost a race (the task is build-ready;
+   * the next claim/watch tick builds it).
+   */
+  readonly crossed: boolean
+  /**
+   * A `start-task` pending was queued on this session, so the caller owes it a
+   * KICK: `pending` is consumed only by `onIdle`, and nothing else will call it
+   * (see the `chain` option).
+   */
+  readonly chained: boolean
+}
+
 /**
  * Cross the plan gate automatically after a PLAN drive parks, when the task
- * opted in at its task gate (`approve <id> --auto-plan`): approve the parked
- * plan and queue the BUILD drive on this session via the same `start-task`
- * pending `claim <id>` uses. The SHIP gate is never automated. The flag is
- * judged on the freshly parked FILE, never on the memory the claim was taken
- * with — a replan or a fresh approve may have cleared it mid-drive.
+ * opted in at its task gate (`approve <id> --auto-plan`). The SHIP gate is
+ * never automated. The flag is judged on the freshly parked FILE, never on the
+ * memory the claim was taken with — a replan or a fresh approve may have
+ * cleared it mid-drive. Never throws: a failure before the gate move degrades
+ * to the ordinary parked plan plus a warning, which is exactly the state the
+ * human gate already handles.
  *
- * Returns true when the gate was crossed, and from that point every arm
- * returns true: the callers' plan-gate ask must not be put for a gate that no
- * longer exists, even when the follow-on BUILD claim lost a race (the task is
- * build-ready; the next claim/watch tick builds it). Never throws — a failure
- * before the gate move degrades to the ordinary parked plan plus a warning,
- * which is exactly the state the human gate already handles.
+ * `chain` is the caller's declaration of whether it can carry a BUILD drive,
+ * and it is not a mere optimisation — a queued `start-task` pending that nobody
+ * consumes holds the task's claim marker, so every gate verb then refuses it as
+ * "a loop is driving this NOW" until the stale sweep. It was an implicit
+ * `!driving.has(sessionID)` test, which is exactly backwards from what each
+ * caller can do:
+ *
+ *  - `onIdle`'s post-`finally` arm passes `chain: true`: the drive is over, the
+ *    session is free, and it kicks `onIdle` itself on `chained`.
+ *  - the watch claim (`tryClaim`) passes `chain: false`: it runs INSIDE the
+ *    drive, so it could never have satisfied the old guard anyway, and its
+ *    watcher's next tick claims the now-build-ready task with no claim held in
+ *    between.
  */
-export const autoAdvanceParkedPlan = async (deps: Deps, sessionID: string, config: Config, id: string): Promise<boolean> => {
+export const autoAdvanceParkedPlan = async (
+  deps: Deps,
+  sessionID: string,
+  config: Config,
+  id: string,
+  opts: { readonly chain: boolean },
+): Promise<AutoPlanOutcome> => {
   try {
     const parked = await findByIdIn(deps.$, deps.directory, config.tasksDir, "plan-review", id)
-    if (parked?.autoPlan !== true) return false
+    if (parked?.autoPlan !== true) return { crossed: false, chained: false }
     const r = await approvePlan(gateCtx(deps, config), id)
     if (!r.ok) {
       await deps.log("warn", `auto-plan: could not approve the parked plan for "${id}": ${r.message}`)
       void toast(deps.client, `Auto-plan: could not approve "${id}" — ${r.message}`, "warning")
-      return false
+      return { crossed: false, chained: false }
     }
-    const ready = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", id)
+    const ready = opts.chain ? await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", id) : null
     if (
       ready &&
       isClaimable(ready) &&
@@ -3706,13 +3757,13 @@ export const autoAdvanceParkedPlan = async (deps: Deps, sessionID: string, confi
       clearWorkflow(sessionID)
       await setPending(deps, sessionID, { kind: "start-task", task: ready, goal: taskGoal(ready) })
       void toast(deps.client, `Auto-plan: plan approved for "${ready.title}" — building… (BUILD → VERIFY → REVIEW)`, "info")
-    } else {
-      void toast(deps.client, `Auto-plan: plan approved for "${id}" — build-ready; the next claim/watch tick builds it.`, "info")
+      return { crossed: true, chained: true }
     }
-    return true
+    void toast(deps.client, `Auto-plan: plan approved for "${id}" — build-ready; the next claim/watch tick builds it.`, "info")
+    return { crossed: true, chained: false }
   } catch (err) {
     await deps.log("warn", `auto-plan advance failed for "${id}": ${(err as Error).message}`)
-    return false
+    return { crossed: false, chained: false }
   }
 }
 
