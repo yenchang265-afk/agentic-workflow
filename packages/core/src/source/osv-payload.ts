@@ -310,7 +310,7 @@ export const parseOsvPayload = (raw: string, opts?: { readonly ecosystem?: strin
         continue
       }
 
-      const key = `${ecosystem} ${name}`
+      const key = `${ecosystem}\u0000${name}`
       let bucket = buckets.get(key)
       if (!bucket) {
         bucket = { name, version, ecosystem, vulns: [], ids: new Set() }

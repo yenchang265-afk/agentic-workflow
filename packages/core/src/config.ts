@@ -2,12 +2,14 @@ import path from "node:path"
 import { z } from "zod"
 import type { Client } from "./host.js"
 import { CODE_PLATFORMS, SHIP_PUBLISH_MODES, type Config, type ShipPublish, type WorkflowTrigger } from "./workflow/state.js"
-import { CheckDefSchema, type CheckDef, type StageDef } from "./manifest/schema.js"
+import { CheckDefSchema, effectiveAllowlist, type CheckDef, type StageDef } from "./manifest/schema.js"
 import type { StagePass } from "./workflow/verdict.js"
 import { TRACKER_SYSTEMS, type TrackerSystem } from "./task/schema.js"
 import {
   CONFIG_FILE,
   SHELL_BEARING_KEYS,
+  bashAllowlistExtras,
+  bashAllowlistPrefixes,
   ignoredUserConfigPaths,
   isPlainObject,
   mergeConfigLayers,
@@ -15,6 +17,7 @@ import {
   readUserLayer,
   resolveUserConfigPath,
   spawnAlias,
+  withCommandPrefixes,
 } from "./config-layers.js"
 
 /**
@@ -943,6 +946,31 @@ export const configuredChecks = (config: Config, kind: string, def: StageDef): r
  */
 export const discoverChecksFor = (config: Config, kind: string, def: StageDef): boolean =>
   config.workflows[kind]?.discoverChecks ?? def.discoverChecks
+
+/**
+ * The bash globs a stage's own agent is actually judged against — the manifest's
+ * list plus the platform's, plus `bashAllowlistExtra`, plus a
+ * `<prefix> <glob>` twin per configured `bashAllowlistPrefix`. Pure.
+ *
+ * One composition, asked once, because the two places that need it are the
+ * ENFORCEMENT seam (the Claude/Qwen stage marker, OpenCode's `config` hook) and
+ * the REPORT that explains a refusal (`doctor`'s deny-log aggregate) — and a
+ * report judged against a different list than the seam gives advice that cannot
+ * work. That is precisely what it did: doctor omitted the prefix twins, so a
+ * denial under a configured `bashAllowlistPrefix` was diagnosed as needing the
+ * prefix the operator had already configured.
+ *
+ * The empty-base rule is load-bearing and not an optimization: a stage that
+ * declares NO allowlist is unrestricted (engineering's plan/build write code
+ * freely), and appending extras there would restrict it to just the extras.
+ * `[]` therefore means "unrestricted", never "nothing is allowed" — a caller
+ * reading it as a boundary is reading it wrong.
+ */
+export const stageBashGlobs = (def: StageDef, platform: string, config: unknown): string[] => {
+  const base = effectiveAllowlist(def, platform)
+  // `withCommandPrefixes` dedupes, so an extra already in the base is not repeated.
+  return base.length ? withCommandPrefixes([...base, ...bashAllowlistExtras(config)], bashAllowlistPrefixes(config)) : []
+}
 
 /**
  * The `stageChecks` keys that name no stage of `kind` — the same silent-default

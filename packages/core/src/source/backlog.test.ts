@@ -443,10 +443,17 @@ test("claimSkipReason precedence: held beats empty beats started", () => {
   assert.match(claimSkipReason(2, 0, 0, [], []).message, /no persisted plan/)
 })
 
-test("a queued task the index hasn't caught up on falls through to the in-progress fallback", () => {
-  // Cosmetic, transient, and deliberately not special-cased: in-progress empty
-  // plus a queued task the listing missed lands on the no-persisted-plan branch,
-  // which blames in-progress. The next tick's listByStatus is fresh. Pinned here
-  // so nobody reads the fallback's wording as a promise about queued/.
-  assert.match(claimSkipReason(0, 0, 3, [], []).message, /no persisted plan/)
+test("a queued task the index hasn't caught up on reports itself, and instructs nothing", () => {
+  // This case used to fall through to the in-progress fallback and was pinned
+  // there as "cosmetic, transient, deliberately not special-cased". The prose
+  // was indeed cosmetic; the `actionable: true` riding it was not — the
+  // OpenCode watcher toasts an actionable skip, so the human was told to run
+  // `replan <id>` against an empty in-progress pool. It reports now, and stays
+  // silent: transient conditions do not get a toast.
+  const r = claimSkipReason(0, 0, 3, [], [])
+  assert.match(r.message, /taken or moved before the claim landed/)
+  assert.equal(r.actionable, false, "a transient re-list must not toast an instruction")
+  assert.doesNotMatch(r.message, /replan/, "and must not name a verb for tasks that are not there")
+  // The fallback keeps its wording for the case it was written for.
+  assert.match(claimSkipReason(2, 0, 0, [], []).message, /no persisted plan/)
 })

@@ -211,7 +211,7 @@ export const mergeEvidence = (
   const seen = new Set<string>()
   const out: EvidenceItem[] = []
   for (const item of [...(a ?? []), ...(b ?? [])]) {
-    const key = `${item.kind} ${normalizeCommand(item.ref)}`
+    const key = `${item.kind}\u0000${normalizeCommand(item.ref)}`
     if (seen.has(key)) continue
     seen.add(key)
     out.push(item)

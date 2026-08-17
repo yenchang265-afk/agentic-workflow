@@ -8,14 +8,14 @@ import { fsClient, sh } from "./shim.js"
 import { stageOrderError } from "./stage-guard.js"
 import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
 import { STALE_CLAIM_MINUTES, staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
-import { DEFAULT_CONFIG, bashAllowlistExtras, bashAllowlistPrefixes, parseGateOptions, withCommandPrefixes, loadConfig } from "@agentic-workflow/core/config"
+import { DEFAULT_CONFIG, bashAllowlistPrefixes, parseGateOptions, stageBashGlobs, loadConfig } from "@agentic-workflow/core/config"
 import { SHIP_PUBLISH_MODES, type Action, type Config, type ShipPublish, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
 import { advance, composePrompt, composePromptWithStats, firstStep, withCheckResults } from "@agentic-workflow/core/workflow/engine"
 import { checkCommands, checksBudgetMs, finalizeCheckRecord, runChecks } from "@agentic-workflow/core/workflow/checks"
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
 import type { AdoGateway } from "@agentic-workflow/core/source/ado-gateway"
 import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
-import { effectiveAllowlist, effectivePlatformTools, stageDef, stageRequiresCriteria, type LoadedManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
+import { effectivePlatformTools, stageDef, stageRequiresCriteria, type LoadedManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
 import { pollOnce } from "@agentic-workflow/core/scheduler/scheduler"
 import { appendSchedulerEvents, skipSetKey, type SchedulerEvent } from "@agentic-workflow/core/scheduler/events-log"
 import { aggregateDenials, clearDenyLog, formatDenyFindings, readDenyLog } from "@agentic-workflow/core/workflow/deny-log"
@@ -87,6 +87,7 @@ import {
   findAnyStatus as coreFindAnyStatus,
   rejectAny as coreRejectAny,
   abandonTask as coreAbandonTask,
+  commitBacklog as coreCommitBacklog,
   removeTask as coreRemoveTask,
   replanTask as coreReplanTask,
   retaskTask as coreRetaskTask,
@@ -126,7 +127,7 @@ import {
   summarizeBacklog,
   type TaskStatus,
 } from "@agentic-workflow/core/task/store"
-import { consumePlanRequest, revokeStrayPlanRequests } from "@agentic-workflow/core/task/plan-request"
+import { consumePlanRequest, requestPlan, revokeStrayPlanRequests } from "@agentic-workflow/core/task/plan-request"
 import { auditBacklog, formatAnomalies, hasAnomalies } from "@agentic-workflow/core/task/audit"
 import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-workflow/core/scheduler/lease"
 
@@ -846,9 +847,10 @@ const writeStageMarker = (stage: string | null, deadline?: number): string | nul
       // backstops classify a segment, and a bundled hook can read neither the
       // config nor a manifest.
       const prefixes = bashAllowlistPrefixes(config)
-      const base = effectiveAllowlist(def, platform)
-      // `withCommandPrefixes` dedupes, so an extra already in the base is not repeated.
-      const allowlist = base.length ? withCommandPrefixes([...base, ...bashAllowlistExtras(config)], prefixes) : []
+      // `stageBashGlobs` owns the composition (base + extras + prefix twins, and
+      // the empty-base rule that keeps an allowlist-less stage unrestricted), so
+      // doctor's deny report can be judged against the very list written here.
+      const allowlist = stageBashGlobs(def, platform, config)
       const stageAgentModelMap = stageAgentModels(m)
       writeMarkerAtomic(
         stageMarkerPath(),
@@ -970,7 +972,10 @@ const terminalCtx = (state: WorkflowState, actor: string | null): TerminalCtx =>
   state,
   manifest: manifestFor(state.kind ?? "engineering"),
   actor,
-  commitBacklog: async (message) => void (await commitPaths(sh, directory, [config.tasksDir], message)),
+  // Core's `runTerminal` gates on `ignoreBacklog` before calling this port; going
+  // through core's own helper anyway keeps the policy in the one place `gate.ts`
+  // says it lives, so no host site carries a second copy of it.
+  commitBacklog: async (message) => void (await coreCommitBacklog(sh, directory, config, message)),
   // Worktree checkpoints exclude the backlog dir — the frozen `<tasksDir>` copy
   // must never ride feature/<id> (task-file lifecycle lives on the main tree).
   checkpoint: async (message) =>
@@ -1013,6 +1018,15 @@ const startTask = async (t: Task): Promise<{ error: string } | { state: Workflow
   // file looks untouched after teardown and the watcher re-claims a task whose
   // work already ran (see store.ts CLAIMED_MARKER).
   await markClaimed(sh, t, await gitActor(sh, directory), log)
+  // Committed unconditionally — the one backlog commit that deliberately ignores
+  // `ignoreBacklog`, written down because it looks exactly like the bookkeeping
+  // sites that do respect it. This is not bookkeeping: it is what makes the claim
+  // survive the branch switch. Under the policy a repo that TRACKS its backlog
+  // would lose the note off the human branch (the loop's own `git add -A`
+  // checkpoint sweeps it onto feature/<id>), teardown would leave the human branch
+  // looking untouched, and the watcher would re-claim finished work. Under the
+  // default (untracked backlog) it is already a no-op — `git add` refuses ignored
+  // paths — so the exemption costs nothing where the knob is in force.
   await commitPaths(sh, directory, [config.tasksDir], `loop(${t.id}): claimed`)
   let state = buildEntryState(t)
   try {
@@ -1054,6 +1068,21 @@ const startPlan = async (t: Task): Promise<{ error: string } | { state: Workflow
   const markerError = writeStageMarker("plan")
   if (markerError) {
     active = null // never leave a loop marked live behind an unguarded stage
+    // No PLAN ran, so this exit must hand back everything the claim took —
+    // the same rule `startTask`'s isolation-failure arm follows, and for a
+    // sharper reason here: a held `queued/.claims/<id>` asserts a LIVE loop, so
+    // replan/abandon/remove all refuse the task and neither `claim` nor
+    // `workflow_start` can re-acquire it until the stale sweep (~75 minutes at
+    // the default stage timeout). The plan request goes back for the same
+    // reason `source/backlog.ts`'s `release()` restores a spent one: nothing
+    // was planned, so the human's ask still stands. Both best-effort — a
+    // failure here must not mask the marker error the caller has to report.
+    try {
+      await releaseClaim(sh, t)
+      await requestPlan(sh, directory, config.tasksDir, t.id, { status: "queued" })
+    } catch (err) {
+      await log("warn", `loop(${t.id}): could not hand the claim back after the PLAN marker failed — ${(err as Error).message}`)
+    }
     return { error: `Could not arm the PLAN stage marker — ${markerError}. Check that ${config.tasksDir}/runs/ is writable.` }
   }
   return { state }
@@ -1330,6 +1359,7 @@ server.registerTool(
         // loop's terminal would fire onTerminal against this stale item.
         if (state.task) {
           await markClaimed(sh, state.task, await gitActor(sh, directory), log)
+          // Unconditional for the reason `startTask`'s twin spells out above.
           await commitPaths(sh, directory, [config.tasksDir], `loop(${state.task.id}): claimed`)
         }
         state = await ensureIsolation(sh, log, directory, config, state, await resolveBase())
@@ -2388,8 +2418,10 @@ server.registerTool(
     // stage-transcript archaeology (a starved stage's deny dump).
     const denyFindings = aggregateDenials(readDenyLog(directory, config.tasksDir), (dkind: string, dstage: string) => {
       try {
-        const def = stageDef(manifestFor(dkind).manifest, dstage)
-        return [...effectiveAllowlist(def, platformFor(config, dkind)), ...bashAllowlistExtras(config)]
+        // The same composition the stage marker writes (`stageBashGlobs`), so
+        // the report is judged against the list that actually refused the
+        // command — see the helper for what the missing prefix twins cost.
+        return stageBashGlobs(stageDef(manifestFor(dkind).manifest, dstage), platformFor(config, dkind), config)
       } catch {
         return null
       }
@@ -2470,7 +2502,7 @@ server.registerTool(
     // aggregate, so the raw log is cleared rather than re-reported forever.
     const denyLogCleared = denyFindings.length ? clearDenyLog(directory, config.tasksDir) : false
     if (rescued.length) {
-      await commitPaths(sh, directory, [config.tasksDir], `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
+      await coreCommitBacklog(sh, directory, config, `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
     }
     return ok({
       ...report,

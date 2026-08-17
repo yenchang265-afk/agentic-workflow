@@ -44,6 +44,9 @@ export const noteDeny = (runsDirPath, host, marker, command) => {
       command: String(command ?? ""),
     }
     if (!entry.command.trim()) return
+    // Create `runs/` rather than ENOENT into the catch below — see core's
+    // `appendDenyEntry`, whose twin this is.
+    fs.mkdirSync(runsDirPath, { recursive: true })
     fs.appendFileSync(file, JSON.stringify(entry) + "\n")
   } catch {
     /* best-effort — telemetry must never change what the guard does */

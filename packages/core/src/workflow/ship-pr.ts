@@ -248,6 +248,11 @@ export const shipPr = async (
   // Normalize once, here, so config values, `--base=` and the recorded run base
   // all reach the arms bare and neither can double-prefix `refs/heads/`.
   const wanted = options.base?.replace(/^refs\/heads\//, "") || undefined
+  // What the catch reports, TRACKED rather than asserted — see it for why. Both
+  // start at the caller's answer so a throw during branch resolution still says
+  // what it can.
+  let pushed = false
+  let acted = branch
   try {
     // Branch resolution runs FIRST for every mode, `local` included. "There is
     // no branch here" (a hand-authored task) is a different fact from "you asked
@@ -256,12 +261,14 @@ export const shipPr = async (
     // back when none ever existed.
     const head = branch ?? taskBranchFor(config, kind, id) ?? (await currentBranch($, directory))
     if (!head || !(await branchExists($, directory, head))) return notAttempted(mode)
+    acted = head
     const common = { attempted: true, mode, branch: head } as const
     if (mode === "local") return { ...common, pushed: false, created: false }
     if (!(await pushBranch($, directory, head))) {
       await log("warn", `ship: git push failed for ${head}`)
       return { ...common, pushed: false, created: false, reason: "git push failed" }
     }
+    pushed = true
     if (mode === "push") return { ...common, pushed: true, created: false }
     // Checked AFTER the push (the work is safely on origin either way) and once
     // for both platforms. A platform-derived default is never probed: it came
@@ -299,9 +306,17 @@ export const shipPr = async (
       platform === "ado" ? await shipAdo($, log, directory, gateway, config, head, title, target) : await shipGithub($, log, directory, head, title, target)
     return { ...common, pushed: true, ...attempt }
   } catch (err) {
-    // `pushed: false` is the honest answer for a throw: the only awaits that can
-    // reach here either precede the push or ARE it, and `pushBranch` swallows a
-    // failing git rather than throwing, so nothing that threw got past it.
-    return { attempted: true, mode, pushed: false, created: false, reason: (err as Error).message, ...(branch ? { branch } : {}) }
+    // Report what actually happened, never a constant. This used to hardcode
+    // `pushed: false`, on the grounds that "the only awaits that can reach here
+    // either precede the push or ARE it" — true of the GitHub arm, false of the
+    // ADO one: `AdoGateway` is an injected PORT whose calls sit AFTER the push
+    // (`adoExistingPrId`, `adoDefaultBranch`, `createPullRequest`), with their
+    // try/catch around the payload parse only. A throwing implementation made
+    // `publishOutcome` tell the human "the branch was not pushed, so no PR was
+    // opened" about a branch that is on origin — and send them to re-push it.
+    // `acted` is the branch actually resolved, for the same reason: the option
+    // is only one of three rungs, so reporting it left the caveat nameless
+    // whenever the branch came from `taskBranchFor`/`currentBranch`.
+    return { attempted: true, mode, pushed, created: false, reason: (err as Error).message, ...(acted ? { branch: acted } : {}) }
   }
 }

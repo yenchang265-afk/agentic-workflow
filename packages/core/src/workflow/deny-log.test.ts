@@ -41,9 +41,27 @@ test("append + read round-trips entries in order", () => {
   assert.equal(read[0]?.stage, "verify")
 })
 
-test("append is best-effort: a missing runs/ dir records nothing and throws nothing", () => {
+// The invariant here has always been "never throws"; "records nothing" was the
+// implementation, and a lossy one — PLAN never snapshots, so the first loop to
+// hit a bash denial during PLAN can be the first thing that wants `runs/`, and
+// the ENOENT went into the catch-all with no trace. The writer creates the
+// directory now, as every other `runs/` writer does.
+test("append is best-effort: a missing runs/ dir is created rather than dropping the record", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "deny-log-none-"))
   appendDenyEntry(dir, "docs/tasks", entry("npm test"))
+  assert.deepEqual(
+    readDenyLog(dir, "docs/tasks").map((e) => e.command),
+    ["npm test"],
+  )
+})
+
+test("append still never throws when runs/ cannot be created", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "deny-log-blocked-"))
+  // A FILE where the directory belongs: `mkdirSync` throws ENOTDIR/EEXIST, and
+  // the writer must swallow it exactly as it swallowed the old ENOENT.
+  fs.mkdirSync(path.join(dir, "docs"), { recursive: true })
+  fs.writeFileSync(path.join(dir, "docs/tasks"), "not a directory")
+  assert.doesNotThrow(() => appendDenyEntry(dir, "docs/tasks", entry("npm test")))
   assert.deepEqual(readDenyLog(dir, "docs/tasks"), [])
 })
 
@@ -86,6 +104,31 @@ test("suggestFor derives a narrow bashAllowlistExtra glob otherwise", () => {
   // No known globs: still suggests the extra, never the prefix (a prefix
   // suggestion needs proof the wrapped command was already allowed).
   assert.match(suggestFor("just ci", null) ?? "", /add "just ci \*" to bashAllowlistExtra/)
+})
+
+/**
+ * The arm that makes the prefix advice sound. Doctor used to resolve a stage's
+ * globs WITHOUT the `withCommandPrefixes` twins the seam enforces, so a denial
+ * under an already-configured `bashAllowlistPrefix` came back as "add that
+ * prefix" — advice the operator applies and nothing changes. Judged against the
+ * effective list (what `stageBashGlobs` now hands both doctors), a command the
+ * allowlist already admits can only have been refused by something else.
+ */
+test("suggestFor refuses to blame the allowlist for a command the allowlist admits", () => {
+  const effective = ["npm test*", "rtk npm test*"]
+  const s = suggestFor("rtk npm test", effective) ?? ""
+  assert.match(s, /already admits it/)
+  assert.doesNotMatch(s, /bashAllowlistPrefix/, "the prefix is already configured — suggesting it again is a dead end")
+  assert.match(s, /write backstop|RENAMES/, "and it must name what else could have refused it")
+})
+
+test("suggestFor says so when the stage declares no allowlist at all", () => {
+  // `[]` is "unrestricted" (engineering's plan/build write code freely), never
+  // "nothing is allowed" — so a denial there is a write backstop's, and no
+  // allowlist key exists to add.
+  const s = suggestFor("git push --force origin main", []) ?? ""
+  assert.match(s, /declares no bash allowlist/)
+  assert.doesNotMatch(s, /bashAllowlistExtra/)
 })
 
 test("aggregateDenials groups by kind+stage+command, most-denied first, and formats", () => {

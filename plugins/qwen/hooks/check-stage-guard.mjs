@@ -756,6 +756,7 @@ var noteDeny = (runsDirPath, host, marker, command) => {
       command: String(command ?? "")
     };
     if (!entry.command.trim()) return;
+    fs3.mkdirSync(runsDirPath, { recursive: true });
     fs3.appendFileSync(file, JSON.stringify(entry) + "\n");
   } catch {
   }

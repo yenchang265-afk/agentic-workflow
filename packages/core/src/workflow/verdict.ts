@@ -186,10 +186,10 @@ export const mergeAxes = (
       merged.set(key, axis)
       continue
     }
-    const seen = new Set((prev.findings ?? []).map((f) => `${f.severity} ${f.detail} ${f.location ?? ""}`))
+    const seen = new Set((prev.findings ?? []).map((f) => `${f.severity}\u0000${f.detail}\u0000${f.location ?? ""}`))
     const findings = [
       ...(prev.findings ?? []),
-      ...(axis.findings ?? []).filter((f) => !seen.has(`${f.severity} ${f.detail} ${f.location ?? ""}`)),
+      ...(axis.findings ?? []).filter((f) => !seen.has(`${f.severity}\u0000${f.detail}\u0000${f.location ?? ""}`)),
     ]
     merged.set(key, {
       axis: prev.axis,

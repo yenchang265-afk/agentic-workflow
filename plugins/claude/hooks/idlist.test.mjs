@@ -25,7 +25,7 @@ test("a name that is not a task id is dropped, and the drop is stated", () => {
 })
 
 test("path separators, spaces and control characters never render", () => {
-  for (const bad of ["../../etc/passwd", "a/b", "with space", "tab\there", "bell"]) {
+  for (const bad of ["../../etc/passwd", "a/b", "with space", "tab\there", "\u0007bell"]) {
     assert.equal(idList([bad]).includes(bad), false, `expected ${JSON.stringify(bad)} to be dropped`)
   }
 })
