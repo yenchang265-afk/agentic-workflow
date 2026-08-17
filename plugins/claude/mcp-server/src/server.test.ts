@@ -280,6 +280,30 @@ test("every loop entry and terminal path resets the pass-arming scratch through 
   assert.ok(calls.length >= 8, `startTask, startPlan, workflow_claim, workflow_recover, runPark (3 exits) and runTerminal must all reset — found ${calls.length} calls`)
 })
 
+// A claim is taken before the PLAN stage marker is armed, so the arm's failure
+// arm is a drive END: it must hand back everything the claim took. It did not,
+// and a held `queued/.claims/<id>` asserts a LIVE loop — replan/abandon/remove
+// all refuse on it, and neither `claim` nor `workflow_start` can re-acquire the
+// task until the stale sweep (~75 minutes at the default stage timeout). The
+// consumed plan request goes back for the reason `source/backlog.ts`'s
+// `release()` restores a spent one: nothing was planned, so the ask still stands.
+// `startTask`'s isolation-failure arm has always done this; the two must agree.
+test("startPlan hands the claim back when the PLAN stage marker cannot be armed", () => {
+  const src = flat(source())
+  const body = src.slice(src.indexOf("const startPlan = async"), src.indexOf("const claimWarnings = async"))
+  assert.ok(body.includes("claimTask(sh, t)"), "the slice must be startPlan's body")
+  assert.match(
+    body,
+    /const markerError = writeStageMarker\("plan"\).*?if \(markerError\).*?releaseClaim\(sh, t\)/,
+    "the marker-failure arm must release the claim it took",
+  )
+  assert.match(
+    body,
+    /if \(markerError\).*?requestPlan\(sh, directory, config\.tasksDir, t\.id, \{ status: "queued" \}\)/,
+    "and restore the plan request it consumed",
+  )
+})
+
 test("workflow_advance routes a twice-rejected verdict on what the stage declared", () => {
   const body = flat(toolBody(code(source()), "workflow_advance"))
   assert.match(body, /const salvaged = rejectedFallback\(verdictRejected\)/)

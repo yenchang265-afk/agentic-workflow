@@ -126,7 +126,7 @@ import {
   summarizeBacklog,
   type TaskStatus,
 } from "@agentic-workflow/core/task/store"
-import { consumePlanRequest, revokeStrayPlanRequests } from "@agentic-workflow/core/task/plan-request"
+import { consumePlanRequest, requestPlan, revokeStrayPlanRequests } from "@agentic-workflow/core/task/plan-request"
 import { auditBacklog, formatAnomalies, hasAnomalies } from "@agentic-workflow/core/task/audit"
 import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-workflow/core/scheduler/lease"
 
@@ -1054,6 +1054,21 @@ const startPlan = async (t: Task): Promise<{ error: string } | { state: Workflow
   const markerError = writeStageMarker("plan")
   if (markerError) {
     active = null // never leave a loop marked live behind an unguarded stage
+    // No PLAN ran, so this exit must hand back everything the claim took —
+    // the same rule `startTask`'s isolation-failure arm follows, and for a
+    // sharper reason here: a held `queued/.claims/<id>` asserts a LIVE loop, so
+    // replan/abandon/remove all refuse the task and neither `claim` nor
+    // `workflow_start` can re-acquire it until the stale sweep (~75 minutes at
+    // the default stage timeout). The plan request goes back for the same
+    // reason `source/backlog.ts`'s `release()` restores a spent one: nothing
+    // was planned, so the human's ask still stands. Both best-effort — a
+    // failure here must not mask the marker error the caller has to report.
+    try {
+      await releaseClaim(sh, t)
+      await requestPlan(sh, directory, config.tasksDir, t.id, { status: "queued" })
+    } catch (err) {
+      await log("warn", `loop(${t.id}): could not hand the claim back after the PLAN marker failed — ${(err as Error).message}`)
+    }
     return { error: `Could not arm the PLAN stage marker — ${markerError}. Check that ${config.tasksDir}/runs/ is writable.` }
   }
   return { state }
