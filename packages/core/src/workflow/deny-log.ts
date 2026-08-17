@@ -66,6 +66,13 @@ export const appendDenyEntry = (directory: string, tasksDir: string, entry: Deny
     } catch {
       /* no file yet — first append creates it */
     }
+    // `runs/` may not exist yet, and the append would then ENOENT into the
+    // catch-all below — silently, which is the one thing telemetry meant to end
+    // transcript archaeology must not do. Reachable exactly where it costs most:
+    // PLAN never snapshots, so a first-ever loop that hits a bash denial during
+    // PLAN can be the first thing to want this directory. Every other `runs/`
+    // writer already creates it (stage-marker.ts, persist.ts, plan-request.ts).
+    fs.mkdirSync(path.dirname(file), { recursive: true })
     fs.appendFileSync(file, JSON.stringify(entry) + "\n")
   } catch {
     /* best-effort — telemetry must never fail the denial */
@@ -143,27 +150,48 @@ export type StageGlobsLookup = (kind: string, stage: string) => readonly string[
 const firstTokens = (command: string): string[] => command.trim().split(/\s+/u)
 
 /**
- * The config key that would admit `command` on a stage with `globs`, derived
- * mechanically — no per-ecosystem table (the table is the thing that went
- * stale four times):
+ * What no allowlist change can fix — the refusal came from somewhere else.
+ * Shared by the two arms that reach it so they cannot word it differently.
+ */
+const NOT_THE_ALLOWLIST =
+  "no allowlist change admits this — it was refused by a write backstop (a push to a protected branch, a PR mutation, a mutating `find`) " +
+  "or by a proxy that RENAMES the command, which no derived glob can cover"
+
+/**
+ * The config key that would admit `command` on a stage whose EFFECTIVE globs are
+ * `globs` (`stageBashGlobs` — the same list the seam enforces, prefix twins
+ * included), derived mechanically. No per-ecosystem table: the table is the
+ * thing that went stale four times.
  *
- * 1. If dropping the leading one or two tokens yields a command the stage
+ * 1. Globs that already admit the command mean the allowlist is not what
+ *    refused it, so no allowlist advice can be right. Same for an EMPTY list,
+ *    which means the stage declares no allowlist at all and is unrestricted.
+ *    This arm is what makes (2) sound: without it, a denial under an
+ *    already-configured `bashAllowlistPrefix` was diagnosed as needing that
+ *    very prefix — advice the operator applies and nothing changes.
+ * 2. If dropping the leading one or two tokens yields a command the stage
  *    ALREADY allows, the denial is a rewriting proxy's prefix — suggest
  *    `bashAllowlistPrefix`, which re-expresses the existing globs and widens
  *    nothing.
- * 2. Otherwise suggest a `bashAllowlistExtra` glob shaped from the command's
+ * 3. Otherwise suggest a `bashAllowlistExtra` glob shaped from the command's
  *    first two tokens: `<tool> <next> *` (or `<tool> *` for a bare tool). The
  *    second token stays even when it is flag-shaped — `pnpm --filter *` is
  *    narrower than `pnpm *`, and an extra widens the stage's scope boundary,
  *    so the suggestion always shows the narrowest mechanical form and leaves
  *    breadth as the operator's call.
  *
+ * `null` globs are the un-resolvable stage (an unknown kind, a manifest that no
+ * longer declares it): nothing can be proven about it, so it keeps the
+ * mechanical (3) — which is what this said before any of the arms existed.
+ *
  * Pure.
  */
 export const suggestFor = (command: string, globs: readonly string[] | null): string | null => {
   const tokens = firstTokens(command)
   if (!tokens.length || !tokens[0]) return null
-  if (globs && globs.length) {
+  if (globs) {
+    if (!globs.length) return `${NOT_THE_ALLOWLIST} — this stage declares no bash allowlist, so it restricts nothing`
+    if (commandAllowed(command, globs)) return `${NOT_THE_ALLOWLIST} — this stage's effective allowlist already admits it`
     for (const hop of [1, 2]) {
       if (tokens.length <= hop) break
       const prefix = tokens.slice(0, hop).join(" ")

@@ -14,7 +14,7 @@ import {
 } from "@agentic-workflow/core/workflow/stage-marker"
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
 import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
-import { effectiveAllowlist, stageDef, stageRequiresCriteria, type LoadedManifest } from "@agentic-workflow/core/manifest/schema"
+import { stageDef, stageRequiresCriteria, type LoadedManifest } from "@agentic-workflow/core/manifest/schema"
 import { combineSkips, pollOnce } from "@agentic-workflow/core/scheduler/scheduler"
 import { appendSchedulerEvents, skipSetKey, type SchedulerEvent } from "@agentic-workflow/core/scheduler/events-log"
 import {
@@ -139,7 +139,7 @@ import {
   deprecatedAdoKeys,
   unreviewedAxes,
   worktreesDirFor,
-  bashAllowlistExtras,
+  stageBashGlobs,
   platformFor,
 } from "@agentic-workflow/core/config"
 import { aggregateDenials, clearDenyLog, formatDenyFindings, readDenyLog } from "@agentic-workflow/core/workflow/deny-log"
@@ -1217,6 +1217,25 @@ const commitTasks = (deps: Deps, config: Config, message: string): Promise<boole
   withCommitLock(deps.directory, () => commitPaths(deps.$, deps.directory, [config.tasksDir], message))
 
 /**
+ * Commit a backlog mutation that is BOOKKEEPING — under the repo's
+ * `ignoreBacklog` policy, which is core's to own (`gate.ts`'s exported
+ * `commitBacklog`: "they must not re-derive the policy — it lives here, once").
+ * Host call sites used to reach `commitTasks` directly and commit whatever the
+ * knob said, which for a repo that tracks its backlog meant auto-commits it had
+ * asked not to have.
+ *
+ * `commitTasks` stays the raw primitive for the one write that is NOT
+ * bookkeeping — see `markClaimedOnHumanBranch`.
+ */
+const commitBookkeeping = async (deps: Deps, config: Config, message: string): Promise<void> => {
+  if (config.ignoreBacklog) {
+    await ensureExcluded(deps.$, deps.directory, config.tasksDir)
+    return
+  }
+  await commitTasks(deps, config, message)
+}
+
+/**
  * Commit backlog mutations (audit notes, task moves) on the MAIN tree. In
  * shared mode these ride the loop-branch checkpoints; in worktree mode the
  * checkpoints commit the worktree, so terminal-event backlog changes must be
@@ -1224,7 +1243,7 @@ const commitTasks = (deps: Deps, config: Config, message: string): Promise<boole
  */
 const commitBacklog = async (deps: Deps, config: Config, state: WorkflowState, message: string): Promise<void> => {
   if (!state.git?.worktree) return
-  await commitTasks(deps, config, message)
+  await commitBookkeeping(deps, config, message)
 }
 
 /**
@@ -1233,6 +1252,17 @@ const commitBacklog = async (deps: Deps, config: Config, state: WorkflowState, m
  * place, so anything later lands there and the human branch's task file looks
  * untouched after teardown — the watcher would re-claim a finished task; see
  * core store.ts CLAIMED_MARKER).
+ *
+ * The one backlog commit that deliberately IGNORES `ignoreBacklog`, and the
+ * exemption is written down because it looks exactly like the bug the sibling
+ * sites had. This commit is not bookkeeping: it is what makes the claim survive
+ * the branch switch. Route it through the policy and a repo that TRACKS its
+ * backlog loses the note off the human branch — the loop's own `git add -A`
+ * checkpoint sweeps it onto `feature/<id>` instead, teardown leaves the human
+ * branch looking untouched, and the watcher re-claims finished work. Under the
+ * default (untracked backlog) the commit is already a no-op, since `git add`
+ * refuses ignored paths — so the exemption costs nothing where the knob is
+ * actually in force.
  */
 const markClaimedOnHumanBranch = async (deps: Deps, config: Config, task: { id: string; path: string }): Promise<void> => {
   await markClaimed(deps.$, task, await gitActor(deps.$, deps.directory), deps.log)
@@ -2316,7 +2346,10 @@ const driveChain = async (
     // Unconditional backlog commit on the main tree (serialized per tree); core
     // decides WHEN to call it (always on park, on done/stop only when a shared-tree
     // checkpoint won't fold the move in).
-    commitBacklog: async (message) => void (await commitTasks(deps, config, message)),
+    // Core's `runTerminal` gates on `ignoreBacklog` before it calls this port;
+    // going through the same helper anyway means no host site owns a second
+    // copy of the policy, whatever core does in front of it.
+    commitBacklog: async (message) => void (await commitBookkeeping(deps, config, message)),
     // Commit-all checkpoint on the work tree; core calls it only when state.isolated.
     checkpoint: (message) => checkpoint(deps, config, state, message),
     writeMetrics: (outcome, detail, retryable) => renderMetrics(deps, sessionID, config, state, outcome, detail, retryable),
@@ -4165,8 +4198,12 @@ export const handleCommand = async (
       // take stage-transcript archaeology (a starved stage's DeniedError dump).
       const denyFindings = aggregateDenials(readDenyLog(deps.directory, config.tasksDir), (dkind: string, dstage: string) => {
         try {
-          const def = stageDef(manifestFor(dkind).manifest, dstage)
-          return [...effectiveAllowlist(def, platformFor(config, dkind)), ...bashAllowlistExtras(config)]
+          // The seam's OWN composition (`stageBashGlobs`), prefix twins and all:
+          // a report judged against a narrower list than the one that refused the
+          // command gives advice that cannot work — this omitted the twins, so a
+          // denial under a configured `bashAllowlistPrefix` was diagnosed as
+          // needing the prefix the operator already had.
+          return stageBashGlobs(stageDef(manifestFor(dkind).manifest, dstage), platformFor(config, dkind), config)
         } catch {
           return null
         }
@@ -4253,7 +4290,7 @@ export const handleCommand = async (
       // aggregate, so the raw log is cleared rather than re-reported forever.
       const denyCleared = denyFindings.length ? clearDenyLog(deps.directory, config.tasksDir) : false
       if (rescued.length) {
-        await commitTasks(deps, config, `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
+        await commitBookkeeping(deps, config, `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
       }
       const summary = [
         rescued.length ? `rescued ${rescued.length} stray file(s) to draft/` : "",

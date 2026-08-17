@@ -46,8 +46,28 @@ test("noteDeny tolerates a marker missing kind/stage and an empty command", () =
   assert.equal(lines[0].stage, "")
 })
 
-test("noteDeny never throws on an unwritable runs/ dir", () => {
-  noteDeny(path.join(os.tmpdir(), "deny-hook-does-not-exist", "nested"), "claude", { stage: "verify" }, "npm test")
+test("noteDeny creates a missing runs/ dir rather than dropping the record", () => {
+  // Same change as core's `appendDenyEntry`: the ENOENT used to vanish into the
+  // catch, losing exactly the denials of a loop whose first stage is PLAN (which
+  // snapshots nothing, so nothing else has made `runs/` yet).
+  const runs = path.join(tmpRuns(), "nested")
+  noteDeny(runs, "claude", { stage: "verify" }, "npm test")
+  const lines = fs
+    .readFileSync(path.join(runs, DENY_LOG_FILE), "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l))
+  assert.equal(lines.length, 1)
+  assert.equal(lines[0].command, "npm test")
+})
+
+test("noteDeny never throws when runs/ cannot be created", () => {
+  // A FILE where the directory belongs — mkdir throws, and the writer must
+  // swallow it exactly as it swallowed the old ENOENT.
+  const base = tmpRuns()
+  const runs = path.join(base, "runs")
+  fs.writeFileSync(runs, "not a directory")
+  assert.doesNotThrow(() => noteDeny(runs, "claude", { stage: "verify" }, "npm test"))
 })
 
 test("noteDeny stops appending past the byte cap instead of growing without bound", () => {

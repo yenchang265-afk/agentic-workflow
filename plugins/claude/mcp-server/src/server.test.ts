@@ -612,18 +612,42 @@ test("writeStageMarker reports its failures instead of swallowing them", () => {
 })
 
 // `bashAllowlistExtra` is the per-project escape hatch for a runner (or a
-// command-rewriting proxy) the manifests cannot know. The base-length guard is
-// the load-bearing half: an empty base means the stage is UNRESTRICTED, and
-// appending extras there would restrict it to just the extras.
-test("the stage marker's allowlist appends bashAllowlistExtra only when the stage declares a base", () => {
+// command-rewriting proxy) the manifests cannot know. The composition it belongs
+// to — base + extras + a twin per configured prefix, and the load-bearing
+// base-length guard that keeps an allowlist-less stage UNRESTRICTED — now lives
+// in core as `stageBashGlobs`, tested in `config.test.ts`. What matters HERE is
+// that the marker asks for it rather than carrying its own copy: doctor's deny
+// report reads the same helper, and the two drifting is what had it recommending
+// a `bashAllowlistPrefix` the operator already had configured.
+test("the stage marker composes its allowlist through the shared helper, not a local copy", () => {
   const body = code(source()).slice(code(source()).indexOf("const writeStageMarker"))
   const fn = flat(body.slice(0, body.indexOf("\n}\n") + 3))
-  assert.match(fn, /const base = effectiveAllowlist\(def, platform\)/, "extras extend the effective allowlist, they never replace it")
-  assert.match(
-    fn,
-    /base\.length \? withCommandPrefixes\(\[\.\.\.base, \.\.\.bashAllowlistExtras\(config\)\], prefixes\)/,
-    "extras must be gated on a non-empty base — an unrestricted stage stays unrestricted",
+  assert.match(fn, /const allowlist = stageBashGlobs\(def, platform, config\)/)
+  assert.doesNotMatch(fn, /effectiveAllowlist\(/, "no second composition may live here")
+  assert.doesNotMatch(fn, /bashAllowlistExtras\(/, "…including the extras half")
+})
+
+// `ignoreBacklog` is core's policy to own — `gate.ts` exports `commitBacklog`
+// precisely so no host re-derives it — and the host's bookkeeping commits used
+// to reach `commitPaths` directly and commit whatever the knob said. The CLAIMED
+// note is the ONE exemption, and it is an exemption rather than an oversight:
+// committing it on the human branch before isolation cuts feature/<id> is what
+// stops a tracked backlog losing the note (the loop's own `git add -A` would
+// sweep it onto the feature branch) and the watcher re-claiming finished work.
+test("bookkeeping commits go through core's ignoreBacklog policy; the CLAIMED note is the documented exemption", () => {
+  const src = flat(source())
+  assert.doesNotMatch(
+    src,
+    /doctor rescued \$\{rescued\.length\} stray task file\(s\) to draft\/`\)[\s\S]{0,40}commitPaths/,
+    "the doctor rescue is bookkeeping",
   )
+  assert.match(src, /await coreCommitBacklog\(sh, directory, config, `loop: doctor rescued/)
+  assert.match(src, /commitBacklog: async \(message\) => void \(await coreCommitBacklog\(sh, directory, config, message\)\)/)
+  // Both CLAIMED commits stay unconditional — and each carries the reason, so
+  // the next reader finds the exemption instead of "fixing" it back.
+  const claims = src.match(/commitPaths\(sh, directory, \[config\.tasksDir\], `loop\(\$\{[a-z.]+\.id\}\): claimed`\)/g) ?? []
+  assert.equal(claims.length, 2, "startTask and workflow_claim both keep the unconditional commit")
+  assert.match(source(), /the one backlog commit that deliberately ignores/, "and the exemption is written down")
 })
 
 // The prefixes ride the marker because a bundled hook can read neither the

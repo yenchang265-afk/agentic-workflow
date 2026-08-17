@@ -9,6 +9,7 @@ import {
   checksFor,
   configuredChecks,
   discoverChecksFor,
+  stageBashGlobs,
   concurrencyFor,
   concurrentStages,
   unknownStageCheckKeys,
@@ -1225,6 +1226,27 @@ test("discoverChecksFor lets the config turn a shipped manifest's discovery off"
   // And on for a manifest that leaves it off — the shipped kinds are not editable.
   const on = parseConfig({ workflows: { engineering: { discoverChecks: true } } })
   assert.equal(discoverChecksFor(on, "engineering", { ...def, discoverChecks: false } as StageDef), true)
+})
+
+/**
+ * The one composition both the ENFORCEMENT seam (the stage marker / OpenCode's
+ * `config` hook) and the REPORT that explains a refusal (doctor's deny-log
+ * aggregate) ask for. They disagreed: doctor omitted the prefix twins, so a
+ * denial under a configured `bashAllowlistPrefix` was diagnosed as needing that
+ * very prefix.
+ */
+test("stageBashGlobs composes base + extras + prefix twins, and keeps an allowlist-less stage unrestricted", () => {
+  const def = { ...stageWith(), name: "verify", kind: "check", bashAllowlist: ["npm test*"] } as StageDef
+  const config = parseConfig({ bashAllowlistExtra: ["just ci*"], bashAllowlistPrefix: ["rtk"] })
+  const globs = stageBashGlobs(def, "github", config)
+  assert.ok(globs.includes("npm test*"), "the manifest's own list")
+  assert.ok(globs.includes("just ci*"), "plus the configured extras")
+  assert.ok(globs.includes("rtk npm test*"), "plus a twin per configured prefix — what the seam actually enforces")
+  // `[]` means UNRESTRICTED, not "nothing allowed": a stage that declares no
+  // allowlist writes code freely, and appending extras there would narrow it to
+  // just the extras.
+  const unrestricted = { ...stageWith(), name: "build", kind: "work", bashAllowlist: [] } as StageDef
+  assert.deepEqual(stageBashGlobs(unrestricted, "github", config), [])
 })
 
 test("discoverChecks is NOT shell-bearing — a repo may set the boolean but never the commands", async () => {
