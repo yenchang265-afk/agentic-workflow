@@ -2,11 +2,12 @@
 
 # Agentic loop —— 工程（engineering）工作流程改進計畫
 
-**本頁每一份計畫（01–27）都已實作並測試完成**，存放於共用的
+**本頁每一份計畫（01–32）都已實作並測試完成**，存放於共用的
 `@agentic-workflow/core` 套件（`packages/core/`）中，供 OpenCode 外掛和 Claude
 MCP 伺服器共同使用。這些文件保留作為這些功能的設計紀錄，而非待辦的
 backlog。計畫 10–13 已於 2026-08-02 落地；計畫 14 於 2026-08-03；計畫 15 於
-2026-08-07；計畫 16–18 於 2026-08-08；計畫 24–27 於 2026-08-11。
+2026-08-07；計畫 16–18 於 2026-08-08；計畫 24–27 於 2026-08-11；計畫 32 於
+2026-08-17。
 
 來源：目前的程式碼（所有引用的路徑與函式名稱均已對照撰寫當下的原始碼驗證
 過）、[`../threat-model.md`](../threat-model.md) 中列出的殘餘風險，以及
@@ -47,6 +48,8 @@ backlog。計畫 10–13 已於 2026-08-02 落地；計畫 14 於 2026-08-03；�
 | 29 | [doctor 讀取拒絕紀錄](./29-deny-telemetry.zh-TW.md) | Allowlist 飢餓已人工診斷四次（mvn/gradle argv 順序、JS workspace 選擇器、rewriting proxy 前綴）——補救的設定鍵早就存在，缺的是診斷。強制執行的接縫現在把每一條被拒的 bash 指令追加到 `<tasksDir>/runs/.deny-log.jsonl`（Claude/Qwen：檢查階段守衛的 block 分支；OpenCode：只觀察的 `permission.ask` hook，best-effort），`doctor` 按 kind+stage+command 彙整並機械式推導建議——被包裹的指令原本就允許（需有證據）時建議 `bashAllowlistPrefix`，否則建議最窄的 `bashAllowlistExtra` glob；`doctor fix` 清除已回報的紀錄。是報告、永不自動套用——extra 會放寬 T2 邊界，寬窄是操作者的決定 | `packages/core/src/workflow/deny-log.ts`、`plugins/claude/hooks/src/deny.mjs` 的 `noteDeny` 與 `check-stage-guard.entry.mjs` 的 block 分支、`plugins/opencode/src/impl.ts` 的 `permission.ask` 觀察者、`plugins/opencode/src/workflow/driver.ts` 與 `mcp-server/src/server.ts` 的 doctor 接線；`deny-log.test.ts`、`deny.test.mjs` |
 | 30 | [`--auto-plan` 按任務削薄計畫閘門](./30-auto-plan.zh-TW.md) | 每任務三道人工閘門讓雜務的計畫審查淪為橡皮圖章，而所有粗暴解法都更糟（repo 全域跳過連高風險任務一起削薄；「瑣碎就繼續」的 prose 把控制流交給模型的心情）。`approve <id> --auto-plan` 是按任務、明確的任務閘門加值，寫進 schema 化的 frontmatter；該任務的計畫停泊時確定性地跨越閘門——OpenCode 的 `autoAdvanceParkedPlan` 核准並排入 BUILD drive（同時抑制計畫閘門詢問），Claude/Qwen 的 `runPark` 在伺服器端核准並從描述子省略 `gate` 讓詢問 hook 沉默。`replan` 清除旗標、重新普通 approve 也清除、出貨閘門永不自動化、自動核准失敗退回普通人工閘門 | `packages/core/src/task/schema.ts` 的 `autoPlan`、`config.ts` 的 `AUTO_PLAN_FLAG`/`parseGateOptions`、`workflow/gate.ts` 的 `writeAutoPlanFlag` 與 `approveTask`/`approveAny`/`replanTask`、`plugins/opencode/src/workflow/driver.ts` 的 `autoAdvanceParkedPlan`、`mcp-server/src/server.ts` 的 `runPark` 與 `workflow_approve`；`schema.test.ts`、`config.test.ts`、`gate.test.ts`、`driver.test.ts` |
 | 31 | [終端事件可以推播通知](./31-terminal-notifications.zh-TW.md) | 沒人看終端機時閘門就靜音：停泊只是 scrollback 裡的 toast，watch worker 默默堆積完成的 run，停掉的迴圈等著不知情的人。`notifyCommand`（使用者層級、含 shell——repo 層以既有的按鍵警告丟棄）在每個終端事件後以 `sh -c <command>` 觸發，環境變數帶 `AW_EVENT`/`AW_KIND`/`AW_TASK`/`AW_MESSAGE`，每個值都是逸出後的插值；`notifyEvents` 收窄集合（四個字面值，repo 可設）。單一咽喉點——`notifyTerminal` 包住每個 host 與 kind 本就經過的 `runTerminal`——10 秒上限且 best-effort：通知器慢或失敗只記警告，永不改變結果 | `packages/core/src/config.ts` 與 `workflow/state.ts` 的 `notifyCommand`/`notifyEvents`、`config-layers.ts` 的 `SHELL_BEARING_KEYS`、`workflow/terminal.ts` 的 `notifyTerminal`/`NOTIFY_TIMEOUT_MS`；`terminal.test.ts` |
+
+| 32 | [計畫不得指名一個它沒讀過的相依](./32-plan-verified-dependencies.zh-TW.md) | PLAN 在任何 host 上都沒有 shell、沒有網路（`bash: deny`；Claude/Qwen 只給 Read/Grep/Glob/Write），所以計畫裡每個版本都來自**公開** registry 的記憶——在指向內部鏡像的 repo 上，那是對另一個問題的答案，而 BUILD 要到安裝時才發現，已經遲了一次迭代。組合上去的 `dependencyContractBlock` 要求：先重用的排序（lockfile → 標準函式庫 → 新的）、版本必須是**讀到**並以 `file:line` 引用而非回想、指出這個 repo 實際解析的 registry（讀 `.npmrc`/`settings.xml`/`pip.conf`，而不是列表），以及對無法確立者明確說出「未能確立」；機器可讀的那一半是條件性 `### Dependencies` 小節裡的 `agentic-deps` 圍欄，並預報到 park 註記、park 訊息與 `approvePlan` 的 caveats。沒有任何東西會去探測——由 driver 執行的 registry 檢查設計過後放棄（PLAN 的 `bashAllowlist` 不是只管准入：`[]` 代表不受限，而非空的 marker 清單會收窄人類自己 session 裡的每一個 Bash 呼叫；`runPark` 沒有有界 shell；park 時期的綠燈會把人類的互動環境洗成事實）。BUILD 從另一端收尾：計畫指名而無法解析的相依是**計畫**缺陷，導向 `build.onError`，絕不自行替換 | `packages/core/src/workflow/declared-deps.ts`、`workflow/engine.ts` 的組合尾段、`workflow/terminal.ts` 的 park 預報、`workflow/gate.ts` 的 caveat、`prompts/agents/workflow-plan-author/body.md` + `skills/planning-and-task-breakdown/SKILL.md`、`workflows/engineering/stages/build.md`；`declared-deps.test.ts`、`terminal.test.ts`、`gate.test.ts`、`engine.test.ts` |
 
 仍未解決的殘留事項：跨行程的 `index.lock` 競速與遮罩選項。（本清單原本列出的
 另外兩項已經完成——bash 工作樹釘選在 `packages/core/src/workflow/worktree-guard.ts`，

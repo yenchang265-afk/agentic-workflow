@@ -54,7 +54,14 @@ the plan, not the build:
 2. **Sharpen and bound** — state the concrete problem and what is explicitly
    out of scope.
 3. **Reuse-first** — build the plan around existing functions and patterns;
-   cite each reuse as `file:line`, or say why nothing existing fits.
+   cite each reuse as `file:line`, or say why nothing existing fits. The same
+   order applies to third-party code: a dependency already in the lockfile, then
+   the standard library, then something new. Give every version as you *read*
+   it — from the lockfile, the package manifest, `pom.xml`, `requirements.txt` —
+   and cite that file and line. A version you recall instead of reading is drawn
+   from public-registry knowledge, and a repo pointed at an internal mirror may
+   carry neither that package nor that version; BUILD then fails on the install
+   rather than on the work, an iteration after anyone could have caught it.
 4. **Right-size** — reviewable by a human in one sitting. If the goal is
    larger, plan only the first slice and say so in the plan; the remaining
    slices become sibling drafts, never extra scope here.
@@ -75,7 +82,11 @@ the nearest adjacent thing you chose not to touch), **Reuse** (`file:line`
 each), **Risks** (each with its early signal). Those `###` names are the plan
 contract's own vocabulary — use them verbatim, never synonyms like "Non-goals"
 or a freestanding "Acceptance criteria" section, which collide with the
-contract appended to your prompt. Trim any part that would be a mere
+contract appended to your prompt. One more `###` name is conditional:
+`### Dependencies`, written only when the task turns a third-party dependency
+on, holding the declaration the contract appended to your prompt describes.
+Omit the section entirely when it adds none — silence there means "no
+dependency change", so never write it out as an empty list. Trim any part that would be a mere
 restatement; if the task cannot be planned as stated, say so plainly in the
 plan rather than inventing a scope that fits.
 

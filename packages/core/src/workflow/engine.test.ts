@@ -21,6 +21,7 @@ import type { Action, Config, WorkflowState, TaskRef } from "./state.js"
 import { resumeAtBuild, startAtPlan } from "./state.js"
 import { planContractBlock, planVisualizationBlock, verdictContractBlock, verdictFeedbackBlock, workScopeBlock, type Verdict } from "./verdict.js"
 import { checkDiscoveryBlock, noMachineChecksBlock } from "./discovered-checks.js"
+import { dependencyContractBlock } from "./declared-deps.js"
 
 /**
  * Parity suite: the manifest-interpreted engine must reproduce the original
@@ -118,7 +119,7 @@ const oracleComposeArgs = (state: WorkflowState, target: string): string => {
     // lockfiles (CHECKPOINT_LOCKFILE_EXCLUDES), so a legitimate dependency
     // change must be committed explicitly or it would never ship.
     parts.push(
-      `If this task legitimately adds, removes, or upgrades a dependency, commit the updated lockfile EXPLICITLY (\`git add <lockfile> && git commit\`) — the loop's automatic checkpoints exclude lockfiles so incidental install churn never rides into review.`,
+      `If this task legitimately adds, removes, or upgrades a dependency, commit the updated lockfile EXPLICITLY (\`git add <lockfile> && git commit\`) — the loop's automatic checkpoints exclude lockfiles so incidental install churn never rides into review.\nIf a dependency the approved plan names does not resolve here — this repo may be pointed at an internal mirror that does not carry it — that is a defect in the PLAN, not a problem for you to route around. Report it and end the turn, naming the package, the version, and the install error verbatim; the loop sends the task back for a replan. Do NOT substitute a different package, hand-roll a replacement, or widen a version range to make the install succeed: each of those turns one wrong line in a plan into a diff nobody reviewed for it, and the cost lands at REVIEW or later instead of here.`,
     )
   } else if (target === "verify") {
     if (a.plan) parts.push(`Plan & acceptance criteria:\n${a.plan}`)
@@ -248,7 +249,7 @@ const oracleCompose = (state: WorkflowState, stage: string): string => {
         // hand-written twin, and deriving it would make it agree with the code
         // by construction instead of by review.
         def.planContract ? `\n\n${checkDiscoveryBlock(stage, "verify")}` : ""
-      }`
+      }${def.planContract ? `\n\n${dependencyContractBlock(stage)}` : ""}`
 }
 
 const oracleFire = (state: WorkflowState, stage: string): { state: WorkflowState; action: Action } => ({
@@ -446,9 +447,9 @@ test("composePrompt appends the visualization block only when config opts the ki
   const plan = composePrompt(eng, state, "plan", visual)
   assert.ok(
     plan.endsWith(
-      `${workScopeBlock("plan")}\n\n${planContractBlock("plan")}\n\n${planVisualizationBlock("plan")}\n\n${checkDiscoveryBlock("plan", "verify")}`,
+      `${workScopeBlock("plan")}\n\n${planContractBlock("plan")}\n\n${planVisualizationBlock("plan")}\n\n${checkDiscoveryBlock("plan", "verify")}\n\n${dependencyContractBlock("plan")}`,
     ),
-    "plan's tail is fence → contract → visualization → check discovery, in order",
+    "plan's tail is fence → contract → visualization → check discovery → dependency contract, in order",
   )
   assert.match(plan, /```mermaid/)
   // BUILD is a work stage with no planContract — the kind-level knob must stay
@@ -542,7 +543,7 @@ test("composePrompt fences work stages to their own stage", () => {
     assert.match(prompt, /STAGE SCOPE/, `${stage} carries the scope fence`)
     const tail =
       stage === "plan"
-        ? `${workScopeBlock(stage)}\n\n${planContractBlock(stage)}\n\n${checkDiscoveryBlock(stage, "verify")}`
+        ? `${workScopeBlock(stage)}\n\n${planContractBlock(stage)}\n\n${checkDiscoveryBlock(stage, "verify")}\n\n${dependencyContractBlock(stage)}`
         : workScopeBlock(stage)
     assert.ok(prompt.endsWith(tail), `${stage} ends with its contract tail`)
   }

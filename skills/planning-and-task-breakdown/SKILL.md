@@ -157,8 +157,12 @@ few. Every decision belongs in the plan, not in the build.
    explicitly out of scope. _Done when:_ both are written and the out-of-scope
    list names at least the nearest adjacent thing you chose not to touch.
 3. **Reuse-first.** Build the plan around existing functions, utilities, and
-   patterns; cite each as `file:line`. _Done when:_ every step either cites the
-   thing it reuses or says why nothing existing fits.
+   patterns; cite each as `file:line`. The same order governs third-party code —
+   a dependency already in the lockfile, then the standard library, then
+   something new — and every version is one you *read* from the lockfile or
+   package manifest, cited, never one you recalled. _Done when:_ every step
+   either cites the thing it reuses or says why nothing existing fits, and every
+   dependency version carries the file and line it came from.
 4. **Right-size.** Keep it reviewable by a human in one sitting. If the goal is
    larger than that, order it into slices and plan only the first — the rest go
    back to branch A. _Done when:_ the plan covers one slice reviewable in one
@@ -189,6 +193,11 @@ few. Every decision belongs in the plan, not in the build.
 ### Out of Scope
 - What this deliberately does not touch, naming the nearest adjacent thing left alone.
 
+### Dependencies
+- Only when the task turns a third-party dependency on: each one, the version as read
+  (`file:line`), and — for anything not already present — the registry this repo
+  resolves from and where you read that. Say plainly which ones you could not establish.
+
 **Reuse** — `file:line` for each existing thing the steps build on.
 **Risks** — what could make this fail, and the early signal for each.
 ```
@@ -197,6 +206,9 @@ The `### Verification` and `### Out of Scope` names are the loop's plan-contract
 vocabulary (the park gate refuses a plan without a `### Verification` heading) —
 use them verbatim, not synonyms like "Non-goals" or a freestanding "Acceptance
 criteria" section, so an in-loop plan and an ad-hoc one carry the same sections.
+`### Dependencies` is the same vocabulary but conditional: write it only when
+there is a dependency to declare, and omit it entirely otherwise — its absence
+is what says "this plan adds none".
 
 Trim any part that would be a mere restatement. If the task cannot be planned as
 stated, say so plainly in the plan rather than inventing a scope that fits.
@@ -211,6 +223,8 @@ stated, say so plainly in the plan rather than inventing a scope that fits.
 - [ ] `### Verification` maps each acceptance criterion to a check that terminates with an exit code
 - [ ] Every reuse claim carries a `file:line`
 - [ ] `### Out of Scope` names what was deliberately left out
+- [ ] Any dependency the plan adds carries a version read from a cited file, and
+      anything that could not be established is marked as such rather than assumed
 - [ ] On a replan, the plan states what the prior one got wrong
 - [ ] Nothing in the plan requires the builder to make a design decision
 
