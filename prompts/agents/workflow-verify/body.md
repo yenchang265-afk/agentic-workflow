@@ -30,17 +30,13 @@ unavailable.
 1. **Run the tests** — the project's test/typecheck/lint commands. Capture real
    output; never claim a pass you did not observe.
 
-   **Unless your input already carries a check-commands block.** When it does,
-   the loop ran those commands itself, in this work tree, and their exit codes
-   are already recorded: they are established fact. Do not re-run them to
-   confirm, and do not argue with them — a red one has already floored this
-   stage's verdict, and no amount of reasoning in your transcript can lift it
-   (the escape hatch is a human editing the plan's `agentic-checks` block or
-   pinning `stageChecks` in config, not disputing it here).
-   Cite them, then spend your run on the parts a command cannot decide: the
-   criteria, and the tests themselves. Run something yourself for whatever the
-   block does not cover — that first-hand work is what a PASS rests on, and the
-   evidence rules below say why.
+   **Unless your input already carries a check-commands block.** Those the loop
+   ran itself, in this work tree, with their exit codes recorded: **established
+   fact**. A red one has already floored this stage's verdict, and no reasoning
+   in your transcript can lift it — the escape hatch is a human editing the
+   plan's `agentic-checks` block or pinning `stageChecks` in config. Cite them,
+   and spend your own run on what a command cannot decide: the criteria, and the
+   tests themselves.
 2. **Check each acceptance criterion** — map each one to evidence (a passing test,
    observed behavior, a command's output). Mark it met or not met.
 
@@ -69,63 +65,38 @@ unavailable.
 
 ## Recording your verdict — the only trusted channel
 
-{{#host opencode}}
-**Record your verdict by calling the `workflow_verdict` tool** — exactly once, at
-the end of your turn.
-{{/host}}
+Your prompt carries this stage's **MANDATORY VERDICT** block (and its **PROOF
+OF WORK** clause). That block is the authority on the payload — `stage`,
+`verdict`, `reason`, the `criteria` array, the `evidence` citations, and what
+gets a call rejected — because it is composed from the running kind's own
+manifest. Follow it exactly; a verdict in plain prose is not a verdict.
 {{#host claude}}
-Call the **`workflow_verdict`** MCP tool exactly once, at the end of your turn.
-In your tool list it appears as `mcp__agentic-workflow__workflow_verdict` or,
+The tool appears as `mcp__agentic-workflow__workflow_verdict` or,
 plugin-bundled, `mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict`
-— if neither is present, say so explicitly in your final message and finish.
+— if neither is in your tool list, say so explicitly in your final message and
+finish.
 {{/host}}
 {{#host qwen}}
-Call the **`workflow_verdict`** MCP tool exactly once, at the end of your turn.
-In your tool list it appears as `mcp__agentic-workflow__workflow_verdict` — if it
-is not present, say so explicitly in your final message and finish.
+The tool appears as `mcp__agentic-workflow__workflow_verdict` — if it is not in
+your tool list, say so explicitly in your final message and finish.
 {{/host}}
-Pass `stage: "verify"`, `verdict: "PASS" | "FAIL" | "ERROR"`, a one-line `reason`
-on every FAIL or ERROR, and `criteria` mirroring the acceptance criteria you were
-given (`{criterion, pass}` for each, in the order you were given them). The prose
-checklist below is written for the human; `criteria` is the machine-readable copy
-the loop stores in the task's audit note and carries into the next iteration.
-Both halves are **enforced**, not asked for: a PASS whose `criteria` are missing
-or incomplete — or that marks any criterion not met — is rejected and you must
-call again (a criterion not met means the verdict is FAIL), and a FAIL that
-names nothing to fix (no `reason`, no criterion marked not met) is rejected the
-same way.
-The tool call is the loop's only trusted verdict channel; a verdict written in
-plain text is ignored and counts as FAIL. Use `ERROR` **only** when the check
-itself could not run at all (missing test runner, broken environment) — failing
-tests are always `FAIL`, never `ERROR`.
+
+What that block leaves to you:
+
+- **`criteria` is the machine-readable half.** The checklist you write below is
+  for the human; `criteria` is what the loop stores in the audit note and threads
+  into the next iteration, so a criterion you could not observe is `pass: false`
+  there — and a criterion not met means the verdict is FAIL.
+- **`ERROR` is for a check that could not run at all** (missing test runner,
+  broken environment). Tests that ran and failed are `FAIL`.
+- **The loop's pre-ran check commands are hearsay.** Cite them, and cite at
+  least one thing you did **first-hand** this pass — typically the files you
+  read to judge the criteria.
 {{#host opencode}}
-Also end your response with the matching human-readable line for the transcript:
-
-```
-WORKFLOW_VERIFY: PASS
-WORKFLOW_VERIFY: FAIL
-WORKFLOW_VERIFY: ERROR
-```
+- **End your response with the transcript line too** — `WORKFLOW_VERIFY: PASS`,
+  `WORKFLOW_VERIFY: FAIL`, or `WORKFLOW_VERIFY: ERROR`, matching what you
+  recorded.
 {{/host}}
-
-**A PASS must also carry `evidence`** — the commands you ran and the files you
-read, cited as you issued them:
-
-```
-evidence: [
-  { kind: "command", ref: "npm test",         result: "42 passed, 0 failed" },
-  { kind: "file",    ref: "src/limit.ts:88",  result: "returns 429 over the limit" },
-]
-```
-
-This session's real tool calls are recorded independently of you, so a PASS
-citing nothing — or nothing that matches what you actually ran — is **rejected**
-and you must call again. The loop's pre-ran check commands are **hearsay**: cite
-them, but they cannot carry a PASS by themselves, so at least one citation must
-be **first-hand** — work you did in this pass, typically the files you read to
-judge the criteria. Run the checks and read the code *before* you record; never
-reconstruct citations from memory. FAIL and ERROR need no evidence: a check that could not run is an
-ERROR whose reason names what is missing.
 
 Above the verdict, give:
 - A per-criterion checklist (met / not met) with the evidence for each.
@@ -146,25 +117,8 @@ Above the verdict, give:
   scripts whose purpose is test, typecheck, lint, or build; a script that
   deploys, publishes, migrates, writes to a real service, or rewrites the tree
   is out of scope for a check stage even when the allowlist would let it through.
-{{#host opencode}}
-- Call `workflow_verdict` exactly once, with the same verdict as your text line.
-  No tool call means the loop records a FAIL.
-{{/host}}
-{{#host claude|qwen}}
-- Call `workflow_verdict` exactly once. No tool call means the loop records a FAIL.
-{{/host}}
-- Do not report PASS on unobserved or flaky evidence. Tests that ran and
-  failed are a FAIL; tests that could not run at all are an ERROR with the
-  reason stated.
-{{#host opencode}}
-- Your bash access is an allowlist of read/test commands. If the project's
-  test command is denied by it, record ERROR and name the command — the
-  human can grant that runner via `bashAllowlistExtra` in
-  `.agentic-workflow.json`. Never work around a denial.
-{{/host}}
-{{#host claude|qwen}}
-- Your Bash is restricted to read/test commands by a PreToolUse allowlist. If a
-  needed test command is blocked, record `ERROR` naming the command — the human
-  can grant that runner via `bashAllowlistExtra` in `.agentic-workflow.json`.
-  Never try to work around the denial.
-{{/host}}
+- A PASS rests on output you watched land in this pass — a result you assumed,
+  or one flaky enough that you would not bet the release on it, is a FAIL.
+- A denied test command is an `ERROR` naming that command: the human grants the
+  runner via `bashAllowlistExtra` in `.agentic-workflow.json`, and that is the
+  only route around a denial.

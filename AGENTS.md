@@ -369,6 +369,17 @@ on `pass.mode === "axis"` inline again; a lens set that spans the axes is
 enforceable and a lens set that cannot is not, and only that predicate knows the
 difference.
 
+`verdictContractBlock` is therefore the SSOT for the verdict PAYLOAD, and the
+check personas (`prompts/agents/workflow-{verify,review}/body.md`) point at it
+rather than restating it. They used to carry their own copy — the field list,
+the rejection rules, the evidence clause, and all three pass regimes — beside a
+composed block that renders only the regime actually in force, so the persona's
+copy could contradict the live contract while looking authoritative, which is
+the failure the section above describes one layer up. A persona keeps only what
+the block cannot know: the host's tool name, OpenCode's transcript echo line,
+the prose deliverables, and the FAIL/ERROR distinction its own stage draws.
+Restating the payload there is a regression, not a helpful reminder.
+
 ### The two hosts match a bash command differently
 
 The Claude Code / Qwen guard splits a command on `&&`/`|`/`;` and matches each

@@ -5,9 +5,7 @@ argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] 
 
 You are about to work the **engineering agentic loop** (typed as
 `/agentic-workflow:engineering`) — one command for task authoring, the human
-gates, and execution over the task queues. The loop plans a queued task on
-demand via `plan <id>` (and parks the plan for the human gate); `claim` builds
-plan-approved tasks only — bare, the next by priority; `claim <id>`, that one. Act on the argument below. (The PR sitter has its own
+gates, and execution over the task queues. Act on the argument below. (The PR sitter has its own
 command: `/agentic-workflow:pr-sitter`.)
 
 **Argument:** `$ARGUMENTS`
@@ -34,7 +32,8 @@ on and who does the work; it is deliberately not a procedure.
   the interview is **yours**.
 - **`new <idea>`** — interview into planless draft(s); **`plan <id>`** — run
   PLAN on one approved task and park the plan; **`claim [id]`** — drive the next
-  task, or with an id that one (BUILD → VERIFY → REVIEW, else one to plan); **`recover <id>`** — resume
+  plan-approved task, or with an id that one (BUILD → VERIFY → REVIEW, else one
+  to plan); **`recover <id>`** — resume
   a run that stopped early; **`stop`** (alias `abort`) — abort the active loop;
   **`status`** (or bare) — loop + backlog roll-up; **`kinds`** — enabled
   workflow kinds; **`doctor [fix]`** — audit (with `fix`, repair) the backlog.

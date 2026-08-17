@@ -1,6 +1,6 @@
 ---
 name: workflow-orchestration
-description: The protocol for driving the agentic loop inside Qwen Code — declarative workflow kinds under packages/core/workflows/<kind>/, with the engineering kind (plan → build → verify → review) as the default. Use when running /agentic-workflow:engineering — it tells the main agent the exact sequence of agentic-workflow MCP tool calls and workflow-* subagent spawns, the PLAN park-at-gate flow, the plan and ship gates it drives, the workflow_verdict contract, workflow kinds (e.g. pr-sitter), and how the loop terminates. Task authoring and plan rejection are /agentic-workflow:engineering verbs (new, retask, replan).
+description: The protocol for driving the agentic loop in Qwen Code — the exact MCP tool calls and workflow-* subagent spawns each stage takes. Use when running /agentic-workflow:engineering to drive plan → build → verify → review, park at the plan gate, hold the ship gate, handle a workflow_verdict, or drive another workflow kind (e.g. pr-sitter).
 ---
 
 # Driving the agentic loop (Qwen Code)
@@ -266,19 +266,18 @@ DevOps REST API, PAT in `AZURE_DEVOPS_EXT_PAT`) — with identical stage behavio
 either way; only the inspect and reply tools differ, and the stage prompt says
 which to use.
 
-## What is different from the OpenCode version
+## Two things this host does its own way
 
-- **No `/agentic-workflow:engineering watch`.** Watch needs an autonomous driver firing stages on idle
-  events and timers; here the main agent is the driver and the MCP server
-  cannot spawn subagents. `/agentic-workflow:engineering claim` is the pull equivalent — one human
-  trigger claims and drives the next approved task. Within your turn,
-  BUILD → VERIFY → REVIEW still advance without human turns.
-- **The interview runs in the main agent.** `/agentic-workflow:engineering new` interviews
-  the user directly (subagents can't converse); the `workflow-task-author`
-  subagent only writes the confirmed file(s). A **heavy idea is split** during
-  that interview into sibling drafts (vertical, independently shippable slices
-  ordered by `priority`) plus one `type: epic` tracking draft that is never
-  approved — see `task-backlog-management` → "Slicing a heavy idea".
+- **There is no `watch` — `claim` is the whole pull surface.** A standing
+  watcher needs an autonomous driver firing stages on idle events and timers,
+  and here the driver is you. One human trigger claims and drives the next
+  approved task; within your turn, BUILD → VERIFY → REVIEW still advance with
+  no human turns between them.
+- **The interview runs in you, the main agent** — subagents cannot converse, so
+  `workflow-task-author` only writes the file(s) you had confirmed. A heavy
+  idea is split during that interview into sibling drafts plus one `type: epic`
+  tracking draft that is never approved — see `task-backlog-management` →
+  "Slicing a heavy idea".
 - **Per-stage models are static here.** OpenCode passes the configured model at
   spawn time and Claude Code passes it to the Task tool; Qwen's `agent` tool has
   no model parameter, so `workflows.<kind>.stageModels` is baked into each
@@ -287,9 +286,10 @@ which to use.
 
 ## Red flags
 
-- Building a task whose plan never went through the plan gate
-  (`/agentic-workflow:engineering approve <id>` on the parked plan) — impossible via the
-  tools (BUILD entry only reads `in-progress/`); never work around it.
+- Building a task whose plan never crossed the plan gate
+  (`/agentic-workflow:engineering approve <id>` on the parked plan). BUILD entry
+  reads `in-progress/` only, so the tools already refuse it — leave that refusal
+  standing.
 - Continuing into BUILD after a `{kind:"park"}` without both explicit user
   answers — step 2's Approve branch is the only path through the gate.
 - Spawning a stage subagent without first calling `workflow_stage` — the

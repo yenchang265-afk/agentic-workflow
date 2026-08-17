@@ -13,19 +13,24 @@
      One block may serve several verbs: "aw:verb stop|abort".
      Host-specific WORDS use the inline tokens listed in gen-prompts.mjs
      (spawnTool, askTool, modelClause) rather than whole-block host
-     conditionals, so one sentence serves every host. -->
+     conditionals, so one sentence serves every host.
+     The workflow-orchestration pointer at the foot of this file is scoped to
+     the stage-driving verbs on purpose: status/kinds/doctor/stop and the
+     remaining gate verbs never drive a stage, and the skill is larger than
+     this whole command — the scoping is a maintainer's fact, so it stays here
+     rather than costing every driving verb a paragraph. -->
 
 <!-- aw:verb new -->
 - **`new <idea>`** — turn a rough idea into one or more **planless drafts** in
   `docs/tasks/draft/`. YOU (the main agent) run the interview — subagents
   cannot converse with the user:
-  1. **Always** invoke the `interview-me` skill first (never silently skip):
-     if the idea already states a clear goal and testable criteria, a single
-     restate-and-confirm question suffices; when anything is vague, run the
-     full one-question-at-a-time interview. Pin down the goal and 2–5
-     testable acceptance criteria. Ask through **AskUserQuestion** — one question
-     per call, your guess as the first option, free text left open — per the
-     skill's Step 2 *Delivery* rules.
+  1. **Always** invoke the `interview-me` skill first: if the idea already
+     states a clear goal and testable criteria, a single restate-and-confirm
+     question suffices; when anything is vague, run the full
+     one-question-at-a-time interview. Pin down the goal and 2–5 testable
+     acceptance criteria. Ask through **AskUserQuestion** — one question per call,
+     your guess as the first option, free text left open — per the skill's
+     Step 2 *Delivery* rules.
   2. **Judge scope — one draft, or a slice set?** A single task is built,
      verified, and reviewed by **one agent in one worktree context** (often a
      cheaper/degraded model), so a heavy idea won't fit in a working context
@@ -58,16 +63,15 @@
      sits parked. The next step is the task gate (step 5 below), asked inline
      per child.
      - **The epic file is a tracking draft only** (frontmatter `type: epic`,
-       body listing the children in order). **Never approve it** — an
-       un-approved draft is inert, so the loop never claims it. Close it by
-       hand with `abandon <id>` (or `workflow_move` to
-       `completed/`) once every child has shipped.
+       body listing the children in order), and it stays un-approved for good:
+       an un-approved draft is inert, so the loop never claims it. Close it by
+       hand with `abandon <id>` (or `workflow_move` to `completed/`) once every
+       child has shipped.
   5. **Task gate — ask, don't require a command.** Walk the non-epic children in
-     `priority` order, ONE at a time (skip the epic tracking file — never approve
-     it). After each child's answer, come back here for the next one; the
-     plugin's own follow-up names it, and **that follow-up outranks this prose**
-     wherever the two differ. For each child, ask with **AskUserQuestion**: "Approve
-     `<id>` now?"
+     `priority` order, ONE at a time. After each child's answer, come back here
+     for the next one; the plugin's own follow-up names it, and **that follow-up
+     outranks this prose** wherever the two differ. For each child, ask with
+     **AskUserQuestion**: "Approve `<id>` now?"
      - **Approve** → call `mcp__agentic-workflow__workflow_approve({id})` directly
        (task gate: `draft/` → `queued/`) — the user does not need to type
        `/agentic-workflow:engineering approve <id>`. Then ask a second
@@ -163,36 +167,35 @@
   **Spawn nothing of your own** beyond what the follow-up asks for. (Fallback,
   when no hook ran: `mcp__agentic-workflow__workflow_approve({id})`, id
   optional — then ask the same question yourself.)
-  - **`--pr` / `--push` / `--local` choose what a SHIP publishes, and the hook
-    parses them — not you.** `--pr` pushes the branch and opens a draft PR,
-    `--push` pushes and opens nothing, `--local` leaves the branch on this
-    machine. Omitted, the repo's `shipPublish` decides (default `--pr`). They
-    are ignored at the task and plan gates, which publish nothing. Never add one
-    the user did not write: the task completes either way, but a push cannot be
-    taken back. On the fallback tool path they are the `publish` argument
-    (`"pr" | "push" | "local"`) — again, only when the user chose it.
-  - **`--base=<branch>` chooses what a shipped PR TARGETS** — write it with
-    the `=`, never `--base <branch>`, which is refused (a spaced value would be
-    read as the task id). Omitted, the gate uses the branch the run was cut
-    from, which it recorded on the task; then the repo's `prBase`; then the
-    platform's default branch. Never add one the user did not write: the
-    recorded base is the ref REVIEW graded the diff against, so retargeting
-    shows reviewers a change nobody approved. A base that is not on `origin`
-    refuses the PR instead of opening it somewhere else — reship with the
-    corrected `--base=` to fix it. On the fallback tool path it is the `base`
-    argument.
+  - **Every flag below is the hook's to parse and the user's to write.** It
+    reads them off the typed command before your turn, so the only ones in play
+    are the ones the human typed — each buys something that outlives the
+    command: a push cannot be taken back, a retarget shows reviewers a diff
+    nobody approved, `--auto-plan` skips a review nobody chose to skip. On the
+    fallback tool path they are the `publish`, `base`, and `autoPlan` arguments,
+    under the same rule.
+  - **`--pr` / `--push` / `--local` choose what a SHIP publishes.** `--pr` pushes
+    the branch and opens a draft PR, `--push` pushes and opens nothing, `--local`
+    leaves the branch on this machine (`publish: "pr" | "push" | "local"`).
+    Omitted, the repo's `shipPublish` decides (default `--pr`). The task and plan
+    gates publish nothing, so all three are ignored there.
+  - **`--base=<branch>` chooses what a shipped PR TARGETS** — written with the
+    `=`, since `--base <branch>` is refused (a spaced value would be read as the
+    task id). Omitted, the gate uses the branch the run was cut from, which it
+    recorded on the task, then the repo's `prBase`, then the platform's default
+    branch — and that recorded base is the ref REVIEW graded the diff against. A
+    base that is not on `origin` refuses the PR instead of opening it somewhere
+    else; reship with the corrected `--base=` to fix it.
   - A `--push` or `--local` ship can be published afterwards with
     `approve <id> --pr` — on a task already in `completed/` that re-runs **only**
     the publish step. The flag is what asks for it: a bare `approve <id>` on a
     finished task still just reports that it already moved, and pushes nothing.
-  - **`--auto-plan` thins the PLAN gate for this one task, and the hook parses
-    it — not you.** At the task gate it arms the task so that when its plan
-    later parks, the plan gate is crossed automatically and BUILD follows —
-    for chore-sized work whose plan review is a rubber stamp. The ship gate is
-    never automated. A `replan` clears it (a rejected plan's revision parks
-    for review), and so does a later plain `approve` on the same draft. Never
-    add it to a command the user did not write: it removes a human review the
-    user did not choose to skip.
+  - **`--auto-plan` thins the PLAN gate for this one task.** At the task gate it
+    arms the task so that when its plan later parks, the plan gate is crossed
+    automatically and BUILD follows — for chore-sized work whose plan review is a
+    rubber stamp. The ship gate is never automated. A `replan` clears it (a
+    rejected plan's revision parks for review), and so does a later plain
+    `approve` on the same draft.
 <!-- /aw:verb approve -->
 <!-- aw:verb replan -->
 - **`replan [id] [reason]`** — the sole rejection verb, and it chains the
@@ -325,9 +328,7 @@
 <!-- aw:verb approve|new|retask|plan|claim|recover|replan -->
 Read the `workflow-orchestration` skill now — it is the authoritative protocol
 for how you (the main agent) drive the stages and how verdicts terminate the
-loop. It is scoped to these verbs on purpose: `status`, `kinds`, `doctor`,
-`stop` and the other gate verbs never drive a stage, and the skill is larger
-than this whole command.
+loop.
 
 The flow: `new` (interview → draft) → human reviews the draft (reshape with
 `retask <id>` if it's off) → approve queues it (asked inline right after
@@ -341,6 +342,6 @@ human reviews the plan → approve (asked inline, or `replan <why>`) → build i
 When a loop you are driving hits a gate live (a draft just written, a plan
 just parked, or a build just finished), offer the gate choices inline via
 AskUserQuestion instead of making the user type a command — the
-`workflow-orchestration` skill covers the plan and ship gates. The command
-verbs above are the deferred path for gates hit while you were away.
+`workflow-orchestration` skill covers the plan and ship gates. The typed verbs
+are the deferred path, for gates reached while the human was away.
 <!-- /aw:verb approve|new|retask|plan|claim -->

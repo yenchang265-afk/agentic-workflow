@@ -31,10 +31,10 @@ Dispatch:
 - **`new <idea>`** — turn a rough idea into one or more **planless drafts** in
   `docs/tasks/draft/`. YOU (the current agent) run the interview — subagents
   cannot converse with the user:
-  1. **Always** invoke the `interview-me` skill first (never silently skip):
-     if the idea already states a clear goal and testable criteria, a single
-     restate-and-confirm question suffices; when anything is vague, run the
-     full one-question-at-a-time interview. Pin down the goal and 2–5
+  1. **Always** invoke the `interview-me` skill first: if the idea already
+     states a clear goal and testable criteria, a single restate-and-confirm
+     question suffices; when anything is vague, run the full
+     one-question-at-a-time interview. Pin down the goal and 2–5
      testable acceptance criteria. Ask through the **`question`** tool — one
      question per call, your guess as the first option, `custom: true` so free
      text stays open — per the skill's Step 2 *Delivery* rules.
@@ -66,13 +66,12 @@ Dispatch:
      task right before execution, so plans don't rot while it sits parked. The
      next step is the task gate (step 5 below), asked inline per child.
      - **The epic file is a tracking draft only** (frontmatter `type: epic`,
-       body listing the children in order). **Never approve it** — an
-       un-approved draft is inert, so the loop never claims it. Close it by
-       hand once every child has shipped: `abandon <id>` retires the tracking
+       body listing the children in order), and it stays un-approved for good:
+       an un-approved draft is inert, so the loop never claims it. Close it by
+       hand once every child has shipped — `abandon <id>` retires the tracking
        draft.
   5. **Task gate — ask, don't require a command.** For each non-epic drafted
-     child (skip the epic tracking file — never approve it), ask with the
-     **`question`** tool: "Approve `<id>` now?"
+     child, ask with the **`question`** tool: "Approve `<id>` now?"
      - **Approve** → call the **`workflow_gate`** tool with that id (task gate:
        `draft/` → `queued/`) — the user does not need to type
        `/agentic-workflow:engineering approve <id>`. Then ask a second
@@ -141,43 +140,41 @@ Dispatch:
   - a finished `in-review/` task → `completed/` (ship — do this only after
     reviewing the branch diff).
   A task lives in exactly one folder, so the gate is never ambiguous; the
-  toast names which move happened. **`--pr` / `--push` / `--local` choose what a
-  SHIP publishes**, and the plugin parses them — not you: `--pr` pushes the
-  branch and opens a draft PR, `--push` pushes and opens nothing, `--local`
-  leaves the branch on this machine. Omitted, the repo's `shipPublish` decides
-  (default `--pr`); at the task and plan gates they do nothing, since those
-  publish nothing. Never add one the user did not write — the task completes
-  either way, but a push cannot be taken back. A `--push` or `--local` ship is
-  published later with `approve <id> --pr`, which on an already-`completed/`
-  task re-runs only the publish step; a bare `approve <id>` there still just
-  reports that it already moved. **`--base=<branch>` chooses what a shipped PR
-  TARGETS** — with the `=`, never `--base <branch>`, which is refused because a
-  spaced value would be read as the task id. Omitted, the gate uses the branch
-  the run was cut from (recorded on the task), then the repo's `prBase`, then
-  the platform default; never add one the user did not write, since the
-  recorded base is the ref REVIEW graded the diff against. A base that is not
-  on `origin` refuses the PR rather than opening it elsewhere. After a TASK gate the plugin's result
-  carries a **`NEXT STEP`** line asking you to put the "plan it now?" question
-  to the user — follow it (`question`, then `workflow_plan` on yes) and stop.
-  Skipping the question is not an option: `workflow_plan` refuses a task whose
-  gate asked for one until the `question` tool has actually been called.
-  The move itself is already done and is never yours to repeat. Without an id it advances the single task
-  at a loop wait-gate (`plan-review/` or `in-review/`), falling back to a lone
-  `draft/` task only when neither has anything waiting — loop gates outrank the
-  authoring gate, and never-approved epic tracking drafts are skipped, so the
-  loop never guesses. Fully deterministic plugin work whose outcome normally
-  REPLACES this text — so if you are reading this, the plugin did not run
-  (not loaded, or its `@agentic-workflow/core` build is stale). Glob
-  `docs/tasks/*/<id>*`: the task will still sit in its old folder. Report
-  that the gate did NOT happen, with the fix (`pnpm install` at the
-  agentic-workflow repo root, then restart opencode) — never claim it did.
-- **`--auto-plan` thins the PLAN gate for this one task, and the plugin
-  parses it — not you.** At the task gate it arms the task so that when its
-  plan later parks, the plan gate is crossed automatically and BUILD follows
-  on this session — for chore-sized work whose plan review is a rubber stamp.
-  The ship gate is never automated. A `replan` clears it (a rejected plan's
-  revision parks for review), and so does a later plain `approve` on the same
-  draft. Never add it to a command the user did not write.
+  toast names which move happened, and the move itself is never yours to
+  repeat. Without an id it advances the single task at a loop wait-gate
+  (`plan-review/` or `in-review/`), falling back to a lone `draft/` task only
+  when neither has anything waiting — loop gates outrank the authoring gate,
+  and never-approved epic tracking drafts are skipped, so the loop never
+  guesses. After a TASK gate the plugin's result carries a **`NEXT STEP`** line
+  asking you to put the "plan it now?" question to the user — follow it
+  (`question`, then `workflow_plan` on yes) and stop. Skipping the question is
+  not an option: `workflow_plan` refuses a task whose gate asked for one until
+  the `question` tool has actually been called.
+  - **Every flag is the plugin's to parse and the user's to write.** It reads
+    them off the typed command before your turn, so the only ones in play are
+    the ones the human typed — each buys something that outlives the command: a
+    push cannot be taken back, a retarget shows reviewers a diff nobody
+    approved, `--auto-plan` skips a review nobody chose to skip.
+  - **`--pr` / `--push` / `--local` choose what a SHIP publishes.** `--pr`
+    pushes the branch and opens a draft PR, `--push` pushes and opens nothing,
+    `--local` leaves the branch on this machine. Omitted, the repo's
+    `shipPublish` decides (default `--pr`); the task and plan gates publish
+    nothing, so all three do nothing there. A `--push` or `--local` ship is
+    published later with `approve <id> --pr`, which on an already-`completed/`
+    task re-runs only the publish step; a bare `approve <id>` there still just
+    reports that it already moved.
+  - **`--base=<branch>` chooses what a shipped PR TARGETS** — with the `=`,
+    since `--base <branch>` is refused because a spaced value would be read as
+    the task id. Omitted, the gate uses the branch the run was cut from
+    (recorded on the task), then the repo's `prBase`, then the platform default
+    — and that recorded base is the ref REVIEW graded the diff against. A base
+    that is not on `origin` refuses the PR rather than opening it elsewhere.
+  - **`--auto-plan` thins the PLAN gate for this one task.** At the task gate it
+    arms the task so that when its plan later parks, the plan gate is crossed
+    automatically and BUILD follows on this session — for chore-sized work whose
+    plan review is a rubber stamp. The ship gate is never automated. A `replan`
+    clears it (a rejected plan's revision parks for review), and so does a later
+    plain `approve` on the same draft.
 <!-- /aw:verb approve -->
 <!-- aw:verb replan -->
 - **`replan [id] [reason]`** — the sole rejection verb, and it chains the
@@ -186,12 +183,7 @@ Dispatch:
   the task marked plan-next, and immediately starts a PLAN pass on it in this
   session — the revised plan parks back in `plan-review/` for the gate (a busy
   session or a claim race falls back to plan-next, which the next
-  `claim`/`watch` honours first). Fully deterministic plugin work whose
-  outcome normally REPLACES this text — so if you are reading this, the plugin
-  did not run (not loaded, or its `@agentic-workflow/core` build is stale).
-  Glob `docs/tasks/*/<id>*`: the task will still sit in its old folder. Report
-  that the gate did NOT happen, with the fix (`pnpm install` at the
-  agentic-workflow repo root, then restart opencode) — never claim it did.
+  `claim`/`watch` honours first).
 <!-- /aw:verb replan -->
 <!-- aw:verb abandon -->
 - **`abandon <id> [reason]`** — cancel a task: it moves to `abandoned/`, the
@@ -202,12 +194,7 @@ Dispatch:
   they want it *gone*. The plugin refuses a task a live loop is driving or one
   holding a claim marker, and releases any worktree the task owned. An id is
   required. This is also how an epic tracking draft is closed once every child
-  has shipped. Fully deterministic plugin work whose outcome normally
-  REPLACES this text — so if you are reading this, the plugin did not run
-  (not loaded, or its `@agentic-workflow/core` build is stale). Glob
-  `docs/tasks/*/<id>*`: the task will still sit in its old folder. Report
-  that nothing was abandoned, with the fix (`pnpm install` at the
-  agentic-workflow repo root, then restart opencode) — never claim it was.
+  has shipped.
 <!-- /aw:verb abandon -->
 <!-- aw:verb remove -->
 - **`remove <id> --force`** — hard-delete a task from the backlog entirely.
@@ -223,13 +210,17 @@ Dispatch:
     `ignoreBacklog` defaults to `true`, keeping `docs/tasks/` out of git
     entirely, so a forced remove is usually permanent. Prefer `abandon` unless
     the user has said they want the file gone.
-  - Fully deterministic plugin work whose outcome normally REPLACES this
-    text — so if you are reading this, the plugin did not run (not loaded, or
-    its `@agentic-workflow/core` build is stale). Nothing was deleted or
-    dry-run. Report that, with the fix (`pnpm install` at the agentic-workflow
-    repo root, then restart opencode) — never claim the remove or its dry run
-    happened.
 <!-- /aw:verb remove -->
+<!-- aw:verb approve|replan|abandon|remove -->
+**All four gate verbs are deterministic plugin work, and the plugin's own
+outcome normally REPLACES this text.** Reading it means the plugin did not run
+— not loaded, or its `@agentic-workflow/core` build is stale — so nothing
+moved, nothing was deleted, and no dry run happened. Glob
+`docs/tasks/*/<id>*`, confirm the task still sits in its old folder, and report
+that the verb had no effect, naming the fix: `pnpm install` at the
+agentic-workflow repo root, then restart opencode. Describe the move as done
+only after seeing the file in its target folder.
+<!-- /aw:verb approve|replan|abandon|remove -->
 
 ## Execution
 

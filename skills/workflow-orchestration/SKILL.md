@@ -1,6 +1,6 @@
 ---
 name: workflow-orchestration
-description: The automatic agentic loop behind /agentic-workflow:engineering — the declarative workflow kinds, the stages, the human gates, and the workflow_verdict contract. Use when you need to know how the loop plans, builds, parks at a gate, claims and isolates work, recovers an interrupted run, schedules another kind, or terminates.
+description: The agentic loop behind /agentic-workflow:engineering — park-at-gate stages, claim and worktree isolation, the workflow_verdict contract. Use when driving a task through plan → build → verify → review, holding a human gate, claiming or recovering a run, reading a verdict, or running another workflow kind.
 ---
 
 # The agentic loop
@@ -59,19 +59,16 @@ finished review → `completed/` (ship, with `--pr`/`--push`/`--local` choosing
 what the ship publishes). Id-less, it resolves the single task
 waiting at a loop wait-gate, falling back to a lone draft only when no loop
 gate is waiting, so a pile of drafts never shadows a parked plan and
-never-approved epic drafts are skipped. **`replan [id] [why]`** is the sole
-rejection verb — back to `queued/` marked plan-next, and the plugin
-immediately chains a PLAN pass in the same session so a revised plan parks
-straight back in `plan-review/` (a busy session or a claim race leaves the
-task plan-next instead, which the next `claim`/`watch` honours first). The
-reason is audited on the task
-file and threaded into the next PLAN pass's prompt as a structured
-"Rejection reason from the plan gate" section (`extractReplanReason` parses it
-back off the audit note) — on the explicit `plan <id>` path AND the
-claim/watch path alike — so the new plan addresses it directly instead of
-digging through notes; a successful park (the `Plan written` note) retires it
-automatically, which holds whether PLAN replaced its section in place or
-stacked a new heading.
+never-approved epic drafts are skipped. **`replan [id] [why]`** is the sole rejection verb — back to `queued/` marked
+plan-next, with a PLAN pass chained in the same session so the revised plan
+parks straight back in `plan-review/` (a busy session or a claim race leaves it
+plan-next instead, which the next `claim`/`watch` honours first). The reason is
+audited on the task file and threaded into the next PLAN pass's prompt as a
+structured "Rejection reason from the plan gate" section — on the explicit
+`plan <id>` path and the claim/watch path alike — so the new plan addresses it
+instead of digging through notes. A successful park (the `Plan written` note)
+retires it, whether PLAN replaced its section in place or stacked a new
+heading.
 
 Deterministic plugin code enforces the plan gate by grepping for the
 `## Implementation Plan` heading — and, since the PLAN stage carries the plan
@@ -266,14 +263,10 @@ that already failed. It is absent on the first iteration.
 
 - **REVIEW PASS** → done; the task moves to `in-review/`. Review
   `git diff <base>...feature/<id>`, then `approve <id>` — the ship gate, which
-  completes the task and publishes the branch as far as you ask: `--pr` (push
-  and open a draft PR), `--push` (push only), `--local` (publish nothing).
-  Omitted, the repo's `shipPublish` decides; the default is `--pr`. A `--push`
-  or `--local` ship is published later with `approve <id> --pr`, which re-runs
-  only the publish step. `--base=<branch>` chooses what the PR targets;
-  omitted, the gate uses the branch the run was cut from (recorded on the task),
-  then the repo's `prBase`, then the platform default. The loop never ships for
-  you.
+  completes the task and publishes the branch as far as its `--pr`/`--push`/
+  `--local` and `--base=` flags ask (the command body defines them; omitted,
+  the repo's `shipPublish` and the recorded base decide). The loop never ships
+  for you.
 - **FAIL** with budget remaining → re-build with the failure threaded in. A
   verify-FAIL re-build drops stale review feedback and vice versa: old feedback
   judged an older build.
@@ -337,9 +330,6 @@ both run REVIEW several times and take the **worst** verdict, so a single
 prompt-injected reviewer cannot wave a change through (threat model T1), at ~N×
 review time. Which of the two enforces axis coverage per pass, how they
 interact, and the unreviewed-axis warning are in `docs/configuration.md`.
-
-(`gateBeforeBuild` and `interviewBeforePlan` no longer exist. Old config files
-carrying them still parse; the keys are ignored.)
 
 ## Verification
 

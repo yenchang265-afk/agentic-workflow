@@ -54,98 +54,46 @@ verdicts instead of converging.
 6. **Decide** — PASS only if there are no Critical or Important findings on any
    axis; otherwise FAIL.
 
-**How many axes you report depends on how the loop dispatched you, and your
-prompt says which.** There are three cases:
+**How many axes you report depends on how the loop dispatched you.** Your
+prompt's **MANDATORY VERDICT** block says which of the three regimes is in
+force, and a `REVIEW AXIS n/N:` or `REVIEW LENS n/N:` line names your pass:
 
-- **`REVIEW AXIS n/N:`** — you are **one focused pass** of a per-axis fan-out:
-  review and report **that axis only**, and judge only it — a finding outside
-  your axis belongs to the pass that owns it. A verdict that does not carry
-  your own axis is **rejected** and you will have to call again.
-- **`REVIEW LENS n/N:`** — you are one pass of a lens fan-out, and your lens
-  cuts across axes rather than being one. Report **only the axes your lens
-  actually bears on**, and leave out every axis you did not examine: the
-  sibling lenses cover those, all passes merge worst-wins, and a clean PASS
-  you did not earn becomes the whole stage's verdict for that axis. Never pad
-  the array to five.
-- **Neither line** — you are the single pass for the whole stage, and all five
-  axes must appear. A verdict missing an axis is **rejected** and you will
-  have to call again.
+- **an axis pass** covers exactly the one axis named there — a finding outside
+  it belongs to the pass that owns it;
+- **a lens pass** covers only the axes your lens actually bears on, leaving out
+  every axis you did not examine;
+- **no such line** makes you the single pass for the stage, covering all five.
+
+Passes merge **worst-wins**, which is what makes an unearned clean PASS
+expensive: it becomes the whole stage's verdict for that axis. Report the axes
+you worked, and nothing else.
 
 ## Output
 
-**Record your verdict by calling the `workflow_verdict` MCP tool**
-(`mcp__agentic-workflow__workflow_verdict` or, plugin-bundled,
-`mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict`) — the loop's only
-trusted verdict channel. If neither is in your tool list, say so explicitly in
-your final message and finish.
-Call it exactly once, at the end of your turn, with `stage: "review"`,
-`verdict: "PASS" | "FAIL" | "ERROR"`, a one-line `reason` on FAIL or ERROR,
-and an `axes` array covering **every axis the loop asked you for, in that one
-call** — all five for a single pass:
+Your prompt carries this stage's **MANDATORY VERDICT** block (and its **PROOF
+OF WORK** clause). That block is the authority on the payload — `stage`,
+`verdict`, `reason`, the `axes` array and its findings, the `evidence`
+citations, and what gets a call rejected — because it is composed from the
+running kind's manifest for the regime you are actually in. Follow it exactly;
+a verdict in plain prose is not a verdict.
+The tool appears as `mcp__agentic-workflow__workflow_verdict` or,
+plugin-bundled, `mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict`
+— if neither is in your tool list, say so explicitly in your final message and
+finish.
 
-```
-axes: [
-  { axis: "correctness",  verdict: "PASS" },
-  { axis: "readability",  verdict: "PASS" },
-  { axis: "architecture", verdict: "PASS" },
-  { axis: "security",     verdict: "FAIL",
-    findings: [{ severity: "critical", detail: "user id interpolated into the SQL template",
-                 location: "src/db/query.ts:41" }] },
-  { axis: "performance",  verdict: "PASS" },
-]
-```
+What that block leaves to you:
 
-…or exactly your own axis, and nothing else, for a focused pass:
+- **An axis `ERROR` is for one you genuinely could not assess** — no hot path in
+  this diff to judge performance against, say. It is non-blocking and reported
+  onward as *unassessed*, so it beats inventing a finding to fill the slot.
+- **The overall `ERROR` is for a review that could not run at all** (an
+  unreadable diff). Findings are always `FAIL`.
 
-```
-axes: [
-  { axis: "security", verdict: "FAIL",
-    findings: [{ severity: "critical", detail: "user id interpolated into the SQL template",
-                 location: "src/db/query.ts:41" }] },
-]
-```
-
-- An axis with no findings is a clean `PASS` — say so, don't omit it.
-- Use `ERROR` on an **axis** you genuinely could not assess (e.g. no hot path
-  in this diff to judge performance against). Don't invent a finding to fill it.
-  An axis `ERROR` is **non-blocking** — it neither fails nor stops the stage,
-  and it is reported to the next iteration as *unassessed*. But a `PASS` in
-  which **every** axis is `ERROR` is refused: if the whole review could not
-  run, record the overall verdict `ERROR` instead.
-- A call that misses an axis **the loop asked you for** is **rejected and not
-  recorded**, and partial submissions are **not** accumulated across calls. The
-  rejection message names what is missing.
-- In a focused pass your result is merged worst-wins with the sibling passes:
-  a Critical or Important finding on your axis alone fails the whole stage,
-  and a clean PASS from you cannot rescue another axis.
-- Your overall verdict is worsened to match your axes: a Critical or Important
-  finding anywhere makes the stage FAIL no matter what you declare.
-
-A verdict written in plain text is ignored and counts as FAIL. Use
-`ERROR` for the overall verdict **only** when the review itself could not run
-(e.g. the diff is unreadable) — findings are always `FAIL`, never `ERROR`.
-
-**A PASS must also carry `evidence`** — the commands you ran and the files you
-read while reviewing, cited as you issued them:
-
-```
-evidence: [
-  { kind: "command", ref: "git diff main...HEAD", result: "6 files, ~180 lines" },
-  { kind: "file",    ref: "src/db/query.ts:41",   result: "user id interpolated into the SQL" },
-]
-```
-
-This session's real tool calls are recorded independently of you, so a PASS
-citing nothing — or nothing that matches what you actually ran or read — is
-**rejected** and you must call again. Read the diff and the code it touches
-*before* you record; never reconstruct citations from memory. FAIL and ERROR need
-no evidence: a review that could not run is an ERROR whose reason names why.
-
-Above the verdict, give a structured review in prose: findings grouped by axis,
-each categorized Critical / Important / Suggestion with `file:line` and a fix
-recommendation — the same findings you put in the `axes` payload. On FAIL, make the Critical/Important findings concrete enough
-for the next BUILD iteration to act on directly without re-reading the whole
-diff from scratch.
+Above the verdict, give a structured review in prose: the same findings you put
+in the `axes` payload, grouped by axis, each categorized Critical / Important /
+Suggestion with `file:line` and a fix recommendation. On FAIL, make every
+Critical and Important finding concrete enough for the next BUILD iteration to
+act on without re-reading the diff from scratch.
 
 ## Candidate rules
 
@@ -160,7 +108,5 @@ patterns worth a permanent rule — one-off bugs get no candidate rule.
 ## Hard rules
 
 - **Never** edit, create, or delete files; never fix code. Report, don't repair.
-- Call `workflow_verdict` exactly once. No tool call means the loop records a FAIL.
-- A FAIL must name at least one Critical or Important finding on some axis;
-  a FAIL that names nothing to fix is rejected (the next BUILD would have
-  nothing to act on).
+- A FAIL hands the next BUILD its work list, so it names at least one Critical
+  or Important finding on some axis — one that names nothing is rejected.

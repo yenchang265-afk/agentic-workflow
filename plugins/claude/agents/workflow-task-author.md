@@ -27,13 +27,16 @@ backlog lifecycle — follow it exactly rather than improvising.
   "A slice set" below.
 - **`retask <id>`** — reshape a draft **in place**. Your prompt carries the
   **id** plus the confirmed new title, priority, acceptance, and body (and a
-  `tracker` block if the draft had one). Overwrite `docs/tasks/draft/<id>.md`,
-  which **must already exist**, keeping the same filename/id even if the title
-  changed — same schema as `new`, still **no `## Implementation Plan`**. If the
-  file is absent, return an error naming it rather than creating a new one
-  (that would duplicate the id — use `new` for a fresh draft). A task that was
-  already approved into `queued/` has been moved back to `draft/` by the plugin
-  before you run, so it is always `draft/<id>.md` you overwrite.
+  `tracker` block if the draft had one). Read the existing
+  `docs/tasks/draft/<id>.md` first — carry its `epic: <epic-id>` key and the
+  body's `Part of epic:` line forward **unchanged**, since a retask reshapes the
+  goal and never the set membership — then overwrite that same file, keeping the
+  filename/id even when the title changed. Same schema as `new`, still **no
+  `## Implementation Plan`**. The file **must already exist**; if it is absent,
+  return an error naming it rather than creating a new one (that would duplicate
+  the id — use `new` for a fresh draft). A task already approved into `queued/`
+  has been moved back to `draft/` by the plugin before you run, so it is always
+  `draft/<id>.md` you overwrite.
 
 ## Input contract
 
@@ -103,13 +106,10 @@ first child is written, because every child names it.
   with `priority` set to its order (`0`, `1`, `2`, …), `acceptance` its own
   subset, and `epic: <epic-id>` in the frontmatter. End the body with a prose
   line `Part of epic: <epic-id> (slice k of N)`. Still **planless** — the PLAN
-  stage plans each child on claim.
-  - The `epic:` key is not decoration: it is the only link the gates can read.
-    A bare `approve` uses it to offer the slices as a choice instead of refusing
-    "multiple tasks awaiting", and the task gate uses it to ask about the next
-    slice once one is queued. The body line is for the human; nothing is derived
-    from it. **A child without `epic:` is an orphan slice** — the human gets a
-    dead end and has to type every id.
+  stage plans each child on claim. The `epic:` key is the only link the gates
+  can read; the prose line is for the human, and nothing is derived from it, so
+  a child written without the key is an **orphan slice** — a bare `approve`
+  cannot offer the set as a choice, and the human types every id.
 - **The epic** `docs/tasks/draft/<shortid>-<epic-slug>.md` — add `type: epic` to
   the frontmatter (`acceptance` may be empty or a one-line rollup). It does
   **not** carry an `epic:` key — it is the parent, not a slice. The body lists
@@ -119,45 +119,13 @@ first child is written, because every child names it.
 Write the children first and the **epic last**, so its body can name the
 children's final ids.
 
-## Steps
-
-Mode `new`:
-
-1. Take the confirmed title(s), priority, acceptance, and body from your prompt
-   — one draft, or a confirmed slice set (children + epic).
-2. Derive each slug; confirm the target path(s) are free. For a slice set, mint
-   every id — the epic's included — before writing anything.
-3. Write the draft — frontmatter + body only, exactly in the schema above —
-   and stop. No plan section. For a slice set, write each child (each carrying
-   `epic: <epic-id>`) then the epic (see "A slice set"); none of them carry a
-   plan section.
-
-Mode `retask`:
-
-1. Take the id and the confirmed title, priority, acceptance, and body (and any
-   `tracker` block) from your prompt.
-2. Confirm `docs/tasks/draft/<id>.md` exists; if not, return an error naming it
-   (the plugin has already moved a previously-approved `queued/` task back here,
-   so an absent file means the id is wrong, not that it sits elsewhere).
-3. Read the existing file's frontmatter first and carry `epic: <epic-id>`
-   forward **unchanged** if it is there (keep the body's `Part of epic:` line
-   too) — a retask reshapes the goal, never the set membership, and dropping
-   the key orphans the slice ("A slice set" above).
-4. Overwrite that file in place — frontmatter + body only, exactly in the schema
-   above, keeping the filename/id — and stop. No plan section.
-
 ## Output
 
-Mode `new` — return:
-- The **path** you wrote.
-- The **title** and the **acceptance criteria** you chose.
-- The next step: review the draft, then `/agentic-workflow:engineering approve <id>` to
-  queue it for the loop.
-
-Mode `retask` — return:
-- The **path** you rewrote (unchanged id).
-- The reshaped **title** and **acceptance criteria**.
-- The next step: review the reshaped draft, then `/agentic-workflow:engineering approve <id>`.
+Return, for either mode:
+- The **path(s)** you wrote — a `retask` rewrite keeps its id, so say so.
+- The **title** and **acceptance criteria** each file carries.
+- The next step: review the draft, then `/agentic-workflow:engineering approve <id>`
+  queues it for the loop.
 
 ## Hard rules
 

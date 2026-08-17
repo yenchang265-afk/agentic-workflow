@@ -1,6 +1,6 @@
 ---
 name: task-backlog-management
-description: The filesystem task backlog under docs/tasks/ — folder-as-status, the task file schema, and who moves what. Use when writing or moving a task file, when reading one to tell whether its loop is live, interrupted, or claimable, or when running the /agentic-workflow:engineering authoring verbs.
+description: The task backlog under docs/tasks/ — folder-as-status, the task file schema, who moves what. Use when writing or moving a task file, reading one to tell whether its loop is live, interrupted, or claimable, or running the /agentic-workflow:engineering authoring verbs.
 ---
 
 # The task backlog
@@ -122,23 +122,20 @@ under `runs/` cover exact-stage crash recovery).
 Each task is planned, built, verified, and reviewed by **one agent in one
 worktree context** (often a cheaper model), so a heavy idea will not fit. The
 backlog *is* the decomposition primitive: at `new`, the calling agent judges
-scope and — when the idea spans slices (more than one independent deliverable,
-more than ~5 acceptance criteria, or more than one subsystem) — splits it into
-**sibling drafts**, each a vertical, independently shippable slice with its own
-acceptance subset, plus one **epic tracking draft** (`type: epic`) whose body
-lists the children in order. There is no token metering; this is a scope
-judgement, not a measured limit.
+scope against the thresholds its own verb instructions carry and, when the idea
+spans slices, writes **sibling drafts** — each a vertical, independently
+shippable slice with its own acceptance subset — plus one **epic tracking
+draft** (`type: epic`) whose body lists the children in order. Three rules hold
+that set together:
 
 - Children are ordered by `priority` (0, 1, 2 …), which orders claims but does
   **not** block. A worktree branches from `origin/main`, so a child building on
   a sibling's code cannot see it until that sibling ships — the human approving
   and shipping stacked children one at a time *is* the dependency gate.
   Genuinely independent slices run in any order.
-- Each child carries `epic: <epic-id>` in its frontmatter. That is what makes
-  the set approvable one gate at a time: a bare `approve` offers the slices as a
-  choice rather than refusing "multiple tasks awaiting", and the task gate names
-  the next un-approved slice once one is queued. A child written without it is an
-  orphan — the human has to type every id.
+- Each child carries `epic: <epic-id>` in its frontmatter — the key the gates
+  read (see the schema above), and what makes the set approvable one gate at a
+  time. A child written without it is an orphan: the human types every id.
 - The **epic file is never approved.** An un-approved draft is inert, so the
   loop never claims it; it is a human-facing index, closed with `abandon <id>`
   once every child has shipped.
