@@ -272,6 +272,55 @@ test("park under a non-discovering kind writes the note exactly as before — no
   assert.ok(!log.some((c) => c.includes("agentic-checks") && c.includes(">>")), "no forecast text")
 })
 
+/** A parked plan carrying an `agentic-deps` fence and nothing else notable. */
+const planWithDeps = (deps: string): string =>
+  serializeTask({ title: "Do it", body: `${PLAN_HEADING}\n\n1. step\n\n### Dependencies\n\n\`\`\`agentic-deps\n${deps}\n\`\`\`` })
+
+test("park names an unverifiable dependency on the note and the message", async () => {
+  // The failure this exists for: BUILD discovers it at install time, an
+  // iteration after the human could have caught it at the gate for free.
+  const files = {
+    "queued/t.md": planWithDeps('[{ "name": "p-retry", "ecosystem": "npm", "status": "unverified", "evidence": "mirror has no such package" }]'),
+  }
+  const { ctx, log } = makeCtx(files, planState())
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "park", "forecast only — never a park-time veto")
+  assert.ok(report.kind === "park" && report.message.includes("dependencies: 1 UNVERIFIED (p-retry"), `message carries it: ${report.kind === "park" ? report.message : ""}`)
+  assert.ok(log.some((c) => c.includes("dependencies: 1 UNVERIFIED")), "and durably, on the audit note")
+})
+
+test("park's dependency forecast composes with the checks forecast on one line", async () => {
+  const body = `${PLAN_HEADING}\n\n1. step\n\n### Verification\n\n\`\`\`agentic-checks\n[{ "name": "tests", "command": "npm test" }]\n\`\`\`\n\n### Dependencies\n\n\`\`\`agentic-deps\n[{ "name": "zod", "ecosystem": "npm", "version": "3.23.8", "status": "existing", "evidence": "pnpm-lock.yaml:1204" }]\n\`\`\``
+  const { ctx, log } = makeCtx({ "queued/t.md": serializeTask({ title: "Do it", body }) }, planState(), {
+    manifest: discoveryManifest(),
+  })
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "park")
+  const msg = report.kind === "park" ? report.message : ""
+  assert.ok(msg.includes("discovered checks: 1 admitted for VERIFY"), "checks half survives")
+  assert.ok(msg.includes("dependencies: 1 existing"), "deps half rides after it")
+  assert.ok(log.some((c) => c.includes("Plan written — parked for plan review — discovered checks: 1 admitted for VERIFY — dependencies: 1 existing")), "both suffixes ride the one note, in order")
+})
+
+test("park on a plan with no deps fence adds no dependency text at all", async () => {
+  // Deliberately unlike the checks forecast, which reports its own absence: most
+  // tasks add no dependency, and a line on every park would train the reader to
+  // skip the suffix — taking the checks half down with it.
+  const { ctx, log } = makeCtx({ "queued/t.md": body(true) }, planState())
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "park")
+  assert.ok(report.kind === "park" && !report.message.includes("dependencies:"), "message says nothing about dependencies")
+  assert.ok(!log.some((c) => c.includes("dependencies:")), "and neither does the note")
+})
+
+test("park survives a malformed deps fence with a warning, and still parks", async () => {
+  const { ctx, log } = makeCtx({ "queued/t.md": planWithDeps("[{ not json") }, planState())
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "park", "a malformed block costs the forecast, never the park")
+  assert.ok(log.some((c) => c.includes("is not valid JSON")), "the reason is logged for the operator")
+  assert.ok(report.kind === "park" && report.message.includes("1 malformed"), "and counted on the gate line")
+})
+
 test("park accepts a contract-flagged plan whose Verification heading varies in case and suffix", async () => {
   const planned = serializeTask({ title: "Do it", body: `${PLAN_HEADING}\n\n1. step\n\n### verification & testing\n\n- npm test` })
   const { ctx, log } = makeCtx({ "queued/t.md": planned }, planState(), { manifest: contractManifest("plan") })

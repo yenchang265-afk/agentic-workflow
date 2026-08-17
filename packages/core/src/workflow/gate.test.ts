@@ -935,6 +935,34 @@ test("approvePlan warns on a plan with no ### Verification, and on stacked plan 
   assert.ok(!r3.message.includes("Note:"), "a contract-clean plan approves without caveats")
 })
 
+test("approvePlan warns when the plan rests on a dependency it could not establish", async () => {
+  // Repeated from the park note deliberately: the two gates have different
+  // readers, and this is the message in front of the human at the moment the
+  // approval is still theirs to withhold.
+  const deps = '[{ "name": "p-retry", "ecosystem": "npm", "status": "unverified", "evidence": "not carried by the internal mirror" }]'
+  const risky = task(
+    "Do it",
+    `${PLAN_HEADING}\n\n1. step\n\n### Verification\n\n- test: npm test\n\n### Dependencies\n\n\`\`\`agentic-deps\n${deps}\n\`\`\``,
+  )
+  const { ctx } = makeCtx({ "plan-review/t.md": risky })
+  const r = await approvePlan(ctx, "t")
+  // Warn, never refuse: a refusal strands the task with no verb better than the
+  // replan the human just declined.
+  assert.ok(r.ok, "the approval still goes through")
+  assert.match(r.message, /could not establish/)
+  assert.match(r.message, /p-retry/)
+  assert.ok(r.ok && Array.isArray(r.data.caveats) && r.data.caveats.some((c) => c.includes("p-retry")), "and rides data.caveats for the hosts")
+
+  // An `existing` declaration is proof enough for this gate — no caveat.
+  const proven = task(
+    "Do it",
+    `${PLAN_HEADING}\n\n1. step\n\n### Verification\n\n- test: npm test\n\n### Dependencies\n\n\`\`\`agentic-deps\n[{ "name": "zod", "ecosystem": "npm", "version": "3.23.8", "status": "existing", "evidence": "pnpm-lock.yaml:1204" }]\n\`\`\``,
+  )
+  const { ctx: ctx2 } = makeCtx({ "plan-review/t.md": proven })
+  const r2 = await approvePlan(ctx2, "t")
+  assert.ok(r2.ok && r2.data.caveats === undefined, "a cited, already-present dependency draws no caveat")
+})
+
 // `replan <id> <reason>` used to detect the leading id with an exact filename match,
 // so a short-hash handle (`f7k3`) fell through into the reason and the SOLE plan-review
 // task was replanned instead of the one the human named. rejectAny now resolves the

@@ -3,6 +3,7 @@ import type { LoadedManifest } from "../manifest/schema.js"
 import { resolveValidateHook } from "../manifest/registry.js"
 import { appendNote, auditNote, contractRejectedNote, extractPlan, findByIdIn, moveTask, planHeadingCount, releaseClaim, stopContextNote, unaddressedRejectionCount } from "../task/store.js"
 import { clampedChecksDetail, previewDiscoveredChecks } from "./discovered-checks.js"
+import { depsSummaryLine, previewDeclaredDeps } from "./declared-deps.js"
 import { hasVerificationSection } from "./verdict.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { ensureExcluded } from "./git.js"
@@ -308,7 +309,30 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
           ? ` — discovered checks: NONE admitted for ${preview.consumer.toUpperCase()} (${clipped || "the block admitted no commands"})`
           : ` — no agentic-checks block: ${preview.consumer.toUpperCase()} will run no machine-run checks`
   }
-  await appendNote($, fresh, auditNote(`Plan written — parked for plan review${checksLine}`, new Date(), actor), log)
+  // The same forecast one noun over: what the plan says it will INSTALL. A
+  // dependency the plan author could not prove — the common shape on a repo
+  // pointed at an internal mirror, where the author has no shell and no network
+  // — is otherwise indistinguishable at this gate from a proven one, and the
+  // loop only learns the difference when BUILD's install fails, an iteration
+  // later. Named entries rather than a count, because the whole value is that
+  // the answer fits on the line the human is already reading. Never a veto, and
+  // `null` (no fence at all, i.e. most tasks) renders nothing rather than a line
+  // on every park that would train the reader to skip this suffix entirely.
+  //
+  // Wrapped because this whole forecast is a nicety and the park is not: every
+  // exit path from here has to reach `releaseClaim`, and a held marker asserts
+  // a LIVE loop that every gate verb then refuses to act on. `resolveStageChecks`
+  // states the same rule for its own module — a bug in it must never be the
+  // thing that stops a run. A throw here costs the suffix and nothing else.
+  let depsLine = ""
+  try {
+    const depsPreview = previewDeclaredDeps(plan)
+    for (const issue of depsPreview?.issues ?? []) await log("warn", `loop(${id}): ${issue}`)
+    depsLine = depsSummaryLine(depsPreview)
+  } catch (err) {
+    await log("warn", `loop(${id}): dependency forecast skipped — ${(err as Error).message}`)
+  }
+  await appendNote($, fresh, auditNote(`Plan written — parked for plan review${checksLine}${depsLine}`, new Date(), actor), log)
   // moveTask THROWS on a duplicate destination or a failed `mv`. Unguarded, that
   // exception escapes runTerminal after the park note is already on disk claiming
   // a park that never happened, and the queued/ claim marker is never released —
@@ -327,10 +351,11 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
   }
   await commitBacklog(ctx, `loop(${id}): plan written — parked for review`)
   await ctx.writeMetrics("done", "plan parked for review")
-  // The checks forecast rides the report too: the park message is what the
-  // hosts surface (toast / tool result), and the human deciding approve-or-
-  // replan should not have to open the task file to learn no checks will run.
-  return { kind: "park", taskId: id, path: newPath, message: `${action.message}${checksLine}` }
+  // Both forecasts ride the report too: the park message is what the hosts
+  // surface (toast / tool result), and the human deciding approve-or-replan
+  // should not have to open the task file to learn that no checks will run, or
+  // that the plan rests on a package nobody could prove this repo can install.
+  return { kind: "park", taskId: id, path: newPath, message: `${action.message}${checksLine}${depsLine}` }
 }
 
 /** done: the loop finished — park the task in in-review/ for human diff review. */

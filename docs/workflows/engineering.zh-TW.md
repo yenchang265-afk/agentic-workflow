@@ -186,6 +186,29 @@ JSON 壞掉、指令被拒、二進位檔沒安裝，迴圈都與這個功能出
 指令用 `workflows.engineering.stageChecks`（存在但為空的清單會同時關掉兩者），或用
 `"discoverChecks": false` 關閉這個管道。
 
+PLAN 還帶著同樣形狀的第二份契約，關於**相依套件**。計畫指名一個套件，就等於
+指示 BUILD 去安裝它，而計畫作者既沒有 shell 也沒有網路——所以一個它沒讀過的
+版本只能來自公開 registry 的記憶，而在指向內部鏡像的 repo 上，那個鏡像可能既
+沒有那個套件、也沒有那個版本。因此契約要求：先重用的排序（先看 lockfile 裡已有
+的相依，再看標準函式庫，最後才是新的）、版本必須是**讀到並以 `file:line` 引用**
+而不是回想出來的、指出這個 repo 實際解析的 registry（從 `.npmrc`、`settings.xml`、
+`pip.conf` 或該生態系對應的檔案讀出），以及——對任何無法確立的項目——直接明講。
+機器可讀的那一半是條件性 `### Dependencies` 小節裡的 `agentic-deps` 圍欄：
+
+```json
+[{ "name": "zod", "ecosystem": "npm", "version": "3.23.8", "status": "existing", "evidence": "pnpm-lock.yaml:1204" }]
+```
+
+這個區塊不會安裝任何東西，也沒有任何閘門會因它而拒絕計畫。它是給**計畫閘門前的
+人類**看的，因為知道貴組織鏡像裡有什麼的正是那個人：park 訊息與稽核註記會帶上
+一行摘要（`dependencies: 3 existing, 1 UNVERIFIED (p-retry — …)`），而 `approve`
+會在你仍然可以不批准的那一刻，把同一件事再說一次當作 caveat。不加任何相依的計畫
+會整個省略這個小節——它的缺席就代表「沒有相依變動」，所以絕大多數的 park 不會多
+出任何一行。所有失敗模式都退化成「少一點預報 + 一則警告」：沒有圍欄、JSON 壞掉、
+條目被拒，park 都和這個功能出現前完全一樣。BUILD 從另一端收尾：已核准計畫指名的
+相依若在工作樹中無法解析，那是**計畫**的缺陷，所以 BUILD 會回報並停下等待 replan，
+而不是自行換成計畫從未指名的套件。
+
 VERIFY 與 REVIEW 另外宣告 `requireEvidence`，因此兩者的 **PASS** 都必須列出
 自己實際執行過的指令與讀過的檔案（`evidence: [{ kind, ref, result }]`）。這些
 引用會與 host 的工具守衛獨立寫下的紀錄（ledger）交叉比對——所以一趟什麼都沒

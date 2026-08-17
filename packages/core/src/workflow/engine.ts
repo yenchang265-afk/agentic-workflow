@@ -8,6 +8,7 @@ import { clampWithStats } from "./budget.js"
 import { anyFailed, checksBlock, type CheckResult } from "./checks.js"
 import { contextFor, planVisualizationFor, prBaseFor, stagePasses } from "../config.js"
 import { checkDiscoveryBlock, discoveringStage, noMachineChecksBlock } from "./discovered-checks.js"
+import { dependencyContractBlock } from "./declared-deps.js"
 import {
   planContractBlock,
   planVisualizationBlock,
@@ -360,7 +361,14 @@ export const composeStagePrompt = (
     ? `${rendered}${noChecks}\n\n${verdictContractBlock(def.name, def.requiredAxes, mode, def.requireEvidence, criteriaCount)}`
     : `${rendered}\n\n${workScopeBlock(def.name)}${def.planContract ? `\n\n${planContractBlock(def.name)}` : ""}${
         visualize ? `\n\n${planVisualizationBlock(def.name)}` : ""
-      }${def.planContract && discover ? `\n\n${checkDiscoveryBlock(def.name, discover)}` : ""}`
+      }${def.planContract && discover ? `\n\n${checkDiscoveryBlock(def.name, discover)}` : ""}${
+        // Unconditional on `planContract`, unlike the two blocks above: it needs
+        // no consuming stage (nothing downstream reads the fence — the human at
+        // the plan gate does) and no config flag, so a config-less caller sees
+        // exactly what the loop sends. A plan that adds no dependency omits the
+        // section and the block says so.
+        def.planContract ? `\n\n${dependencyContractBlock(def.name)}` : ""
+      }`
 }
 
 /**

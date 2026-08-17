@@ -6,6 +6,7 @@ import { appendNote, auditNote, epicSiblings, extractPlan, extractRunBase, extra
 import { withoutPlanSections } from "../task/plan-section.js"
 import { redact } from "../task/redact.js"
 import { hasVerificationSection } from "./verdict.js"
+import { unverifiedDepsCaveat } from "./declared-deps.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { requestPlan } from "../task/plan-request.js"
 import { commitPaths, ensureExcluded, gitActor } from "./git.js"
@@ -743,6 +744,13 @@ export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult>
     planHeadingCount(task.body) > 1
       ? "the body carries more than one ## Implementation Plan heading — superseded plan text remains in the task's prose"
       : undefined,
+    // Repeated here rather than left to the park note because the two gates
+    // have different readers: the park suffix is a toast at the moment the plan
+    // lands, and this is the message in front of the human at the moment the
+    // approval is still theirs to withhold. An unprovable dependency is the one
+    // plan defect whose cost is paid a whole iteration later, in a BUILD that
+    // fails on an install rather than on the work.
+    unverifiedDepsCaveat(planText),
   ].filter((c): c is string => !!c)
   const caveatNote = caveats.length > 0 ? ` Note: ${caveats.join("; ")}.` : ""
   const actor = await gitActor($, directory)

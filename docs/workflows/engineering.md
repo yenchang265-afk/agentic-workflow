@@ -199,6 +199,36 @@ that is not installed all leave the loop checking exactly as it did before.
 Pin your own commands with `workflows.engineering.stageChecks` (a present-but-
 empty list disables both), or turn the channel off with `"discoverChecks": false`.
 
+PLAN carries a second contract of the same shape, about **dependencies**. A plan
+that names a package prescribes an install BUILD will attempt, and the plan
+author has no shell and no network — so a version it did not read comes from
+public-registry knowledge, which on a repo pointed at an internal mirror may name
+neither the package nor the version that mirror carries. The contract therefore
+asks for reuse-first ordering (a dependency already in the lockfile, then the
+standard library, then something new), a version **read and cited `file:line`**
+rather than recalled, the registry the repo actually resolves from (read from
+`.npmrc`, `settings.xml`, `pip.conf`, or whatever its ecosystem uses), and — for
+anything it could not establish — a plain statement to that effect. The
+machine-readable half is an `agentic-deps` fence in a conditional
+`### Dependencies` subsection:
+
+```json
+[{ "name": "zod", "ecosystem": "npm", "version": "3.23.8", "status": "existing", "evidence": "pnpm-lock.yaml:1204" }]
+```
+
+Nothing installs from this block and no gate refuses a plan over it. It is read
+by the **human at the plan gate**, who is the one who knows what the
+organisation's mirror carries: the park message and the audit note carry a
+one-line summary (`dependencies: 3 existing, 1 UNVERIFIED (p-retry — …)`), and
+`approve` repeats it as a caveat at the moment the approval is still yours to
+withhold. A plan that adds no dependency omits the section entirely — its
+absence means "no dependency change", so no line is rendered on the great
+majority of parks. Every failure mode degrades to less forecast plus a warning:
+no fence, malformed JSON, or a rejected entry all leave the park exactly as it
+was. BUILD closes the loop from the other end: a plan-named dependency that does
+not resolve in the work tree is a **plan** defect, so BUILD reports it and stops
+for a replan rather than substituting a package the plan never named.
+
 VERIFY and REVIEW additionally declare `requireEvidence`, so a **PASS** from
 either must cite the commands it ran and the files it read (`evidence:
 [{ kind, ref, result }]`). Those citations are cross-checked against a ledger the
