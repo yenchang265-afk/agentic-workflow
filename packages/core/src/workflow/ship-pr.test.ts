@@ -340,12 +340,23 @@ test("shipPr (ado) reports a reason when PR creation fails", async () => {
   assert.match(result.reason ?? "", /403/)
 })
 
-test("shipPr never throws on an unexpected error", async () => {
+test("shipPr never throws on an unexpected error, and still reports the push it made", async () => {
   const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
   const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", scriptedGateway({ throws: true }))
   assert.equal(result.attempted, true)
   assert.equal(result.created, false)
   assert.ok(result.reason)
+  // The catch used to hardcode `pushed: false`, reasoning that nothing after the
+  // push can throw. True of the `gh` arm; false of this one — `AdoGateway` is an
+  // injected PORT, and its calls sit after `pushBranch` with their try/catch
+  // around the payload parse only. So a throwing implementation had the ship
+  // gate tell the human "the branch was not pushed, so no PR was opened"
+  // (`publishOutcome`) about a branch that is on origin, and send them to
+  // re-push it.
+  assert.equal(result.pushed, true, "the push succeeded before the gateway threw — the caveat must not deny it")
+  // Same rule for the branch: the caller passed none here, so reporting
+  // `options.branch` left the caveat unable to name what it was talking about.
+  assert.equal(result.branch, "feature/task-1", "the resolved branch is named even when the failure came later")
 })
 
 // --- Which branch gets shipped ---

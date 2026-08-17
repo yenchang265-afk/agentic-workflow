@@ -299,10 +299,26 @@ export const approveTask = async (ctx: GateCtx, id: string, autoPlan?: boolean):
       // `approve <id> --auto-plan` arms the queued file exactly as the first
       // approve would have. Absent flag = leave the file alone (a bare retry
       // is a report, not a re-statement of intent).
-      const autoNote = autoPlan ? await writeAutoPlanFlag(ctx, { id, path: elsewhere!.path }, true) : ""
+      //
+      // Unless a planner holds the file RIGHT NOW: `writeAutoPlanFlag` is a
+      // read-modify-write (`cat` → parse → `rewriteTask`), so running it against
+      // a task the PLAN stage is appending its plan to is a lost update — the
+      // same hazard `replanQueued` refuses on, one verb over, and the reason the
+      // claim marker is the cross-process signal. Unlike the move arms this one
+      // still reports SUCCESS: the task is queued, which is what `approve` was
+      // asked for; only the flag did not land, and the message says so with the
+      // gate to use instead.
+      const heldByPlanner = autoPlan ? (await listClaimIds($, directory, config.tasksDir, "queued")).includes(id) : false
+      const autoNote = autoPlan && !heldByPlanner ? await writeAutoPlanFlag(ctx, { id, path: elsewhere!.path }, true) : ""
+      const armed = autoPlan && !heldByPlanner && !autoNote
+      const autoMessage = heldByPlanner
+        ? ` Auto-plan was NOT armed — "${id}" is being planned right now, and rewriting its file would discard the plan being written; approve the plan yourself when it parks in ${config.tasksDir}/plan-review/.`
+        : armed
+          ? " Auto-plan armed — its plan will be approved automatically when it parks."
+          : autoNote
       return {
         ok: true,
-        message: `Task "${elsewhere!.title}" is already queued in ${config.tasksDir}/queued/ — nothing to do.${autoPlan && !autoNote ? " Auto-plan armed — its plan will be approved automatically when it parks." : autoNote}`,
+        message: `Task "${elsewhere!.title}" is already queued in ${config.tasksDir}/queued/ — nothing to do.${autoMessage}`,
         path: elsewhere!.path,
         data: {
           approved: true,
@@ -310,6 +326,7 @@ export const approveTask = async (ctx: GateCtx, id: string, autoPlan?: boolean):
           gate: "task",
           id,
           path: elsewhere!.path,
+          ...(armed ? { autoPlan: true } : {}),
           next: `workflow_start with id "${id}" (or workflow_claim) runs its PLAN stage`,
           ...sliceData(elsewhere!, siblings),
         },

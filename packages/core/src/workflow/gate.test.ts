@@ -471,6 +471,26 @@ test("approveTask --auto-plan on an already-queued task arms the flag on retry",
   assert.match(fs["/repo/docs/tasks/queued/t.md"] ?? "", /^autoPlan: true$/m)
 })
 
+/**
+ * `writeAutoPlanFlag` is a read-modify-write (`cat` → parse → `rewriteTask`), so
+ * running it against a task the PLAN stage is appending its plan to is a lost
+ * update — the hazard `replanQueued` already refuses on, one verb over, with the
+ * claim marker as the cross-process signal. The retry arm still reports SUCCESS:
+ * the task IS queued, which is what `approve` was asked for; only the flag did
+ * not land, and the message has to say so rather than claim an arming that never
+ * happened.
+ */
+test("approveTask --auto-plan does not rewrite a queued file a live planner holds", async () => {
+  const before = task("Do it")
+  const { ctx, fs } = makeCtx({ "queued/t.md": before, "queued/.claims/t": "" })
+  const r = await approveTask(ctx, "t", true)
+  assert.ok(r.ok && r.data.alreadyDone === true, "the move already happened — this is still a success")
+  assert.equal(r.data.autoPlan, undefined, "nothing was armed, so nothing may claim it was")
+  assert.match(r.message, /Auto-plan was NOT armed/)
+  assert.match(r.message, /plan-review/, "and it must name the gate to use instead")
+  assert.equal(fs["/repo/docs/tasks/queued/t.md"], before, "the planner's file is untouched")
+})
+
 test("replanTask clears the auto-plan flag — a rejected plan's revision parks for review", async () => {
   const planned = serializeTask({ title: "Do it", autoPlan: true, body: `${PLAN_HEADING}\n\n1. Step.` })
   const { ctx, fs } = makeCtx({ "plan-review/t.md": planned })
