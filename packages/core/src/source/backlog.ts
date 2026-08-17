@@ -101,6 +101,22 @@ export const claimSkipReason = (
       actionable: true,
     }
   }
+  // With an EMPTY in-progress pool the fallback below has no subject: what
+  // happened is that a queued task the client index still listed was gone from
+  // the real filesystem by the time `reverify` looked (a finished run's `mv`),
+  // so nothing was claimed and nothing is held. Saying "in-progress task(s) have
+  // no persisted plan" there names a pool with no tasks in it — and, because the
+  // fallback is `actionable: true`, the OpenCode watcher TOASTS it and tells the
+  // human to run `replan <id>` against tasks that do not exist. A wrong
+  // instruction is not cosmetic, which is why this is no longer left to the
+  // fallback: the condition is transient (the next tick re-lists), so it reports
+  // and does not instruct.
+  if (inProgressCount === 0) {
+    return {
+      message: "watch: 0 claimable — the queued task(s) listed for this tick were taken or moved before the claim landed; the next tick re-lists",
+      actionable: false,
+    }
+  }
   return {
     message:
       "watch: 0 claimable — in-progress task(s) have no persisted plan (send them back with /agentic-workflow:engineering replan <id>)",

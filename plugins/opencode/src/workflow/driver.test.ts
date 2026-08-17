@@ -2314,6 +2314,16 @@ test("an auto-plan park chains into BUILD without waiting for another idle", asy
 
   assert.ok(commands.includes("plan-task"), "the PLAN stage ran")
   assert.ok(log.some((c) => c.startsWith("mv ") && c.includes("in-progress")), "the plan gate was crossed automatically")
+  // The CLAIMED note's commit is the one backlog commit that ignores
+  // `ignoreBacklog` (true in testConfig) on purpose: it is what makes the claim
+  // survive the branch switch, so routing it through the policy would let a
+  // repo that TRACKS its backlog lose the note off the human branch and have the
+  // watcher re-claim finished work. Every OTHER backlog commit now goes through
+  // `commitBookkeeping`; this one must not follow.
+  assert.ok(
+    log.some((c) => c.startsWith("git -C /repo commit") && c.includes("claimed")),
+    "the CLAIMED note is committed even under ignoreBacklog — the exemption is load-bearing",
+  )
   assert.ok(
     log.some((c) => c.includes("CLAIMED")),
     "the chained BUILD drive must actually start — a queued pending nobody consumes holds the claim marker instead",
