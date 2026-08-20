@@ -16,9 +16,9 @@ import { lintWorkflowKnobs } from "../knobs.js"
  *
  * 1. **Raw is the model; zod is only a linter.** `ConfigSchema` is a plain
  *    `z.object`, so parsing strips keys it doesn't know. A parse-then-write
- *    would silently delete `watchIntervalMinutes` and the `hub` section — the
- *    hub deleting its own config. Edits are applied to raw JSON; the schema only
- *    ever *refuses* a write.
+ *    would silently delete the `hub` section — the hub deleting its own config —
+ *    along with any host-only or retired key the file still carries. Edits are
+ *    applied to raw JSON; the schema only ever *refuses* a write.
  * 2. **One named layer at a time.** `mergeConfigLayers` merges the user layer
  *    under the repo's, so saving the *merged* view to the repo file would
  *    flatten the user layer into it — writing `ado.pat` out of

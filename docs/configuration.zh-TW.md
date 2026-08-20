@@ -117,7 +117,6 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 | `ignoreBacklog` | `true` | 見下方強化項。設成 `false` 可將每次任務移動都提交為稽核紀錄（舊有行為）。 |
 | `stageTimeoutMinutes` | `60` | 單一階段的牆鐘時間上限；超過此時限的階段會讓迴圈失敗，而不是卡住不動。 |
 | `checkTimeoutMinutes` | `10` | 單一 driver 執行的檢查指令（`stageChecks` ／計畫發現的檢查）的牆鐘時間上限。與 `stageTimeoutMinutes` 分開，因為後者不涵蓋檢查：兩個 host 上檢查都跑在階段上限之外。超時的檢查會被殺掉並回報結束碼 `124` ⇒ 階段 ERROR。 |
-| `watchIntervalMinutes` | `5` | `/agentic-workflow:engineering watch` 的預設輪詢週期；可透過 `/agentic-workflow:engineering watch <interval>` 依 session 覆寫。**僅限 OpenCode**——這個欄位是 OpenCode 外掛在 `src/config.ts` 中疊加在共用核心結構描述（`packages/core/src/config.ts`）之上的擴充欄位；Claude Code 外掛沒有 watch 計時器。 |
 | `workflows` | `{}` | 各工作流程類型的區段——見下方。 |
 | `codePlatform` | `"github"` | 決定 PR 形狀的工作來源要跟哪個平台對話：`"github"`（`gh` CLI）或 `"ado"`（Azure DevOps——透過 Azure DevOps MCP 伺服器 + 一個 PAT）。可用 `workflows.<kind>.codePlatform` 依類型覆寫。見下方。 |
 | `shipPublish` | `"pr"` | 出貨閘門要發布什麼：`"pr"`（推送分支並開一個 draft PR）、`"push"`（只推送分支，不開 PR）或 `"local"`（什麼都不發布）。三種模式都一樣會把任務標記為完成，改變的只有「有什麼東西離開你的機器」。可以逐次出貨覆寫。見下方。 |
@@ -134,8 +133,12 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 
 三個外掛讀取的都是同一份檔案：結構描述位於共用核心套件
 （`packages/core/src/config.ts`），每個 host 可以用只有自己能支援的
-欄位去擴充它（目前：OpenCode 的 `watchIntervalMinutes`——見
-[`plugins/claude/README.md`](../plugins/claude/README.md)）。
+欄位去擴充它——不過目前沒有任何 host 這麼做。`watchIntervalMinutes`
+（全域的預設 watch 輪詢週期，僅限 OpenCode）是最後一個這類欄位，現已
+**退役**：請改用 `/agentic-workflow:engineering watch <interval>` 依
+session 設定，或用 `workflows.<kind>.trigger.intervalMinutes`（見下文）
+依類型持久化設定。仍然設定了它的設定檔可以正常載入，並會記錄一則指出
+這兩個替代做法的警告。
 
 ## 工作流程類型（`workflows`）
 
@@ -227,8 +230,8 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
   ```
 
   - `{ "type": "poll", "intervalMinutes"?: n }`——預設值：一個常駐
-    計時器（回退到 `watchIntervalMinutes`），加上 idle 事件時的
-    認領。
+    計時器（省略 `intervalMinutes` 時為每 5 分鐘），加上 idle 事件時的
+    認領。`watch <interval>` 參數會就該 session 覆寫它。
   - `{ "type": "cron", "schedule": "<5-field cron>" }`——**只有**
     排程觸發時才會認領；一般的 idle 事件永遠不會認領。若排程觸發
     落在 session 忙碌時會被跳過——下一次觸發會重試。語法在設定
@@ -632,8 +635,8 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
   後的視圖從不會被寫回——那樣做會把使用者層級扁平化進儲存庫檔案，
   把 `ado.pat` 複製進一份可能被提交（commit）的檔案裡。
 - **它不認得的鍵會被保留，並標示為已保留。** 編輯器寫入的是原始
-  JSON，因此一個只有 host 認得的鍵（`watchIntervalMinutes`）或
-  `hub` 區段在儲存後會原封不動存活下來。它們會列在「已保留、不可
+  JSON，因此 `hub` 區段、只有 host 認得的鍵，或你檔案裡仍留著的已退役
+  鍵，在儲存後都會原封不動存活下來。它們會列在「已保留、不可
   編輯」之下——這也代表一個頂層的拼錯會出現在那裡，而不是悄悄消失。
 - **`ado.pat` 從不會傳到瀏覽器。** 它會被替換成一個佔位符；保持
   不動就會維持已儲存的值。把一個 PAT 寫進一份**沒有加入

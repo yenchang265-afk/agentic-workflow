@@ -131,7 +131,6 @@ hand-edited afterward.
 | `ignoreBacklog` | `true` | See hardening below. Set to `false` to commit every task move as an audit trail (the old behavior). |
 | `stageTimeoutMinutes` | `60` | Wall-clock cap on a single stage; a stage exceeding it fails the loop instead of hanging it. |
 | `checkTimeoutMinutes` | `10` | Wall-clock cap on ONE driver-run check command (`stageChecks` / the plan's discovered checks). Separate from `stageTimeoutMinutes`, which does not cover them: checks run outside the stage cap on both hosts. A check that exceeds it is killed and reported as exit `124` ⇒ stage ERROR. |
-| `watchIntervalMinutes` | `5` | Default polling cadence for `/agentic-workflow:engineering watch`; overridable per session via `/agentic-workflow:engineering watch <interval>`. **OpenCode-only** — this field is an extension the OpenCode plugin adds in `src/config.ts` on top of the shared core schema (`packages/core/src/config.ts`); the Claude Code plugin has no watch timer. |
 | `workflows` | `{}` | Per-workflow-kind sections — see below. |
 | `codePlatform` | `"github"` | Which platform PR-shaped work sources talk to: `"github"` (the `gh` CLI) or `"ado"` (Azure DevOps — via the Azure DevOps MCP server + a PAT). Overridable per kind with `workflows.<kind>.codePlatform`. See below. |
 | `shipPublish` | `"pr"` | What the ship gate publishes: `"pr"` (push the branch and open a draft PR), `"push"` (push the branch, open no PR), or `"local"` (publish nothing). Every mode still completes the task; only what leaves your machine changes. Overridable per ship. See below. |
@@ -147,9 +146,13 @@ hand-edited afterward.
 | `reviewLenses` | `[]` | See hardening below. Max 5 lenses. |
 
 All three plugins read the same file: the schema lives in the shared core
-package (`packages/core/src/config.ts`), and each host may extend it with
-fields only it can honor (today: OpenCode's `watchIntervalMinutes` — see
-[`plugins/claude/README.md`](../plugins/claude/README.md)).
+package (`packages/core/src/config.ts`), and a host may extend it with fields
+only it can honor — though none does today. `watchIntervalMinutes` (a global
+default watch cadence, OpenCode-only) was the last such field and has been
+**retired**: set the cadence per session with
+`/agentic-workflow:engineering watch <interval>`, or persistently and per kind
+with `workflows.<kind>.trigger.intervalMinutes` (below). A config that still
+sets it loads fine and logs a warning naming both replacements.
 
 ## Workflow kinds (`workflows`)
 
@@ -243,7 +246,8 @@ it. The warnings are advisory: they annotate a save, never block it. See
   ```
 
   - `{ "type": "poll", "intervalMinutes"?: n }` — the default: a standing
-    timer (falls back to `watchIntervalMinutes`), plus claims on idle events.
+    timer (every 5 minutes when `intervalMinutes` is omitted), plus claims on
+    idle events. A `watch <interval>` argument overrides it for that session.
   - `{ "type": "cron", "schedule": "<5-field cron>" }` — claims fire **only**
     when the schedule fires; plain idle events never claim. A fire landing
     while the session is busy is skipped — the next fire retries. Syntax is
@@ -684,10 +688,10 @@ are worth knowing, because each exists to prevent a specific way of losing data:
   written back — doing so would flatten the user layer into the repo file,
   copying `ado.pat` into a file that may be committed.
 - **Keys it doesn't recognise are preserved, and shown as preserved.** The
-  editor writes raw JSON, so a host-only key (`watchIntervalMinutes`) or the
-  `hub` section survives a save untouched. They're listed under *Preserved, not
-  editable* — which also means a top-level typo appears there instead of
-  vanishing silently.
+  editor writes raw JSON, so the `hub` section, a host-only key, or a retired
+  one your file still carries survives a save untouched. They're listed under
+  *Preserved, not editable* — which also means a top-level typo appears there
+  instead of vanishing silently.
 - **`ado.pat` never reaches the browser.** It's replaced by a placeholder;
   leaving it untouched keeps the stored value. Writing a PAT into a repo file
   that **isn't gitignored is refused** — prefer `AZURE_DEVOPS_EXT_PAT`.

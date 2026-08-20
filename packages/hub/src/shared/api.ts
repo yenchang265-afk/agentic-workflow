@@ -585,10 +585,11 @@ export interface ConfigLayerResponse {
   readonly issues: readonly ConfigIssue[]
   readonly warnings: readonly ConfigWarning[]
   /**
-   * Top-level keys present on disk that core's schema doesn't know — a host-only
-   * key (`watchIntervalMinutes`), the hub's own `hub` section, or a typo.
-   * Surfaced read-only so they are visibly preserved rather than silently
-   * dropped, and so a typo shows up here instead of vanishing.
+   * Top-level keys present on disk that core's schema doesn't know — the hub's
+   * own `hub` section, a host-only key, a retired one (`RETIRED_CONFIG_KEYS`),
+   * or a typo. Surfaced read-only so they are visibly preserved rather than
+   * silently dropped, and so a typo — or a setting that has stopped doing
+   * anything — shows up here instead of vanishing.
    */
   readonly passthrough: readonly string[]
   /** Dotted paths whose values were redacted on the way out. */

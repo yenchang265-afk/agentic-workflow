@@ -60,9 +60,12 @@ export type { KindStages, SpawnAlias } from "./config-layers.js"
  * Misconfiguration fails fast with a clear message rather than silently
  * falling back to defaults.
  *
- * Host-only fields (e.g. the OpenCode plugin's `watchIntervalMinutes`) live in
- * each host's extension of `ConfigSchema` — see the generic `parseConfigWith`/
- * `loadConfigWith` loaders below.
+ * No host declares a field of its own today — the last one, OpenCode's
+ * `watchIntervalMinutes`, is retired (`RETIRED_CONFIG_KEYS`). Should one need
+ * to again, it belongs in that host's extension of `ConfigSchema` rather than
+ * here — see the generic `parseConfigWith`/`loadConfigWith` loaders below,
+ * which exist for exactly that. A host may still add a REFINEMENT without a
+ * field, as OpenCode does for cron schedules it alone can run.
  */
 
 /** Which code-management platform PR-shaped work sources talk to. */
@@ -831,6 +834,53 @@ export const deprecatedAdoKeys = (config: Config): string[] => {
   return DEPRECATED_ADO_KEYS.filter((key) => ado[key] !== undefined).map((key) => `ado.${key}`)
 }
 
+/**
+ * Top-level config keys that no longer exist, mapped to what replaces them.
+ *
+ * The sibling of `DEPRECATED_ADO_KEYS` one level up, and it needs its own
+ * reader for a structural reason: `ado` is a `looseObject`, so a stale key
+ * inside it survives parsing and can be named from the parsed config. A
+ * TOP-LEVEL key cannot — zod strips what the schema does not declare — so by
+ * the time anyone holds a `Config` the value is simply gone. `retiredConfigKeys`
+ * therefore reads the RAW merged layer, before parsing.
+ *
+ * Warned about rather than accepted, because the alternative is the failure
+ * mode this codebase keeps re-learning: a key the user deliberately set is
+ * silently ignored, the behavior reverts to a default, and nothing anywhere
+ * says so — which reads as "the setting doesn't work" rather than "that setting
+ * is gone, here is the one to use".
+ *
+ * - `watchIntervalMinutes` — a global default watch cadence, when the two rungs
+ *   above it already covered every use: `watch <interval>` per session, and
+ *   `workflows.<kind>.trigger.intervalMinutes` persistently and per kind. It
+ *   also applied ONE cadence to every watched kind, which a repo running a
+ *   `dep-sitter` beside an `engineering` loop never wants.
+ */
+export const RETIRED_CONFIG_KEYS: Readonly<Record<string, string>> = {
+  watchIntervalMinutes:
+    'use `watch <interval>` for one session (e.g. `watch 30s`), or "workflows.<kind>.trigger": {"type":"poll","intervalMinutes":N} to set it per kind and persist it',
+}
+
+/**
+ * Retired top-level keys present in a RAW config layer, paired with what
+ * replaces each, in `RETIRED_CONFIG_KEYS` order.
+ *
+ * Takes the raw merged layer rather than a `Config` (see above), so it is safe
+ * to call on an unvalidated `JSON.parse` — including from the bare-node hook and
+ * OpenCode bootstrap contexts `readRawConfigLayers` serves.
+ *
+ * Returns the pair rather than a pre-joined sentence so a caller never has to
+ * take the string back apart to render it: the replacement text contains em
+ * dashes of its own, so any separator a formatter picked would be ambiguous to
+ * re-split. Pure.
+ */
+export const retiredConfigKeys = (raw: unknown): { readonly key: string; readonly replacement: string }[] => {
+  if (!isPlainObject(raw)) return []
+  return Object.entries(RETIRED_CONFIG_KEYS)
+    .filter(([key]) => raw[key] !== undefined)
+    .map(([key, replacement]) => ({ key, replacement }))
+}
+
 /** How a watching host schedules claims for a workflow kind: configured trigger, else poll. Pure. */
 export const triggerFor = (config: Config, kind: string): WorkflowTrigger =>
   config.workflows[kind]?.trigger ?? { type: "poll" }
@@ -1413,7 +1463,25 @@ export const loadConfigWith = async <T>(
 
   if (userRaw === undefined && repoRaw === undefined) return schema.parse({}) // both absent/empty → defaults
   const label = userRaw === undefined ? CONFIG_FILE : `${CONFIG_FILE} (merged with ${userPath})`
-  const parsed = parseConfigWith(schema, mergeConfigLayers(userRaw ?? {}, repoRaw ?? {}), label)
+  const merged = mergeConfigLayers(userRaw ?? {}, repoRaw ?? {})
+  // A retired top-level key is INVISIBLE after this line — zod strips what the
+  // schema does not declare — so it is named here, against the raw merged layer,
+  // while the value still exists. Warned rather than rejected so an in-flight
+  // loop keeps running, exactly like `deprecatedAdoKeys`.
+  for (const { key, replacement } of retiredConfigKeys(merged)) {
+    await client.app
+      .log({
+        body: {
+          service: "agentic-workflow",
+          level: "warn",
+          message: `${label} sets "${key}", which no longer exists — it is ignored. Instead: ${replacement}.`,
+        },
+      })
+      .catch(() => {
+        /* the load matters, the warning is best-effort */
+      })
+  }
+  const parsed = parseConfigWith(schema, merged, label)
   // Config that can never take effect gets its diagnostic at load: an opt-in
   // kind's section without `enabled` — a typo'd `"enable": true` included —
   // otherwise leaves the sitter off with the config file claiming otherwise

@@ -2861,6 +2861,15 @@ const promptPlanGateAsk = async (deps: Deps, sessionID: string, id: string): Pro
 /** Minimum watch polling cadence — anything tighter just burns idle queries. */
 const MIN_WATCH_INTERVAL_MS = 10_000
 
+/**
+ * Watch cadence when nothing asks for another one. A constant rather than a
+ * config key: `watch <interval>` sets it for a session and
+ * `workflows.<kind>.trigger.intervalMinutes` sets it per kind and persists, so a
+ * third global knob only offered one cadence for every kind at once — which is
+ * rarely the wanted shape. See `RETIRED_CONFIG_KEYS`.
+ */
+const DEFAULT_WATCH_INTERVAL_MINUTES = 5
+
 /** Parse one interval token (`30s`, `5m`, `2h`, bare minutes, `10 M`), or null. Pure. */
 const parseIntervalSpec = (s: string): { intervalMs: number } | null => {
   const m = /^(\d+(?:\.\d+)?)\s*([smh]?)$/i.exec(s)
@@ -4029,7 +4038,7 @@ export const handleCommand = async (
       // poll trigger's, else the host default.
       const overrideMs = "intervalMs" in trigger ? trigger.intervalMs : undefined
       const configuredMin = configured.type === "poll" ? configured.intervalMinutes : undefined
-      const intervalMs = Math.max(overrideMs ?? (configuredMin ?? config.watchIntervalMinutes) * 60_000, MIN_WATCH_INTERVAL_MS)
+      const intervalMs = Math.max(overrideMs ?? (configuredMin ?? DEFAULT_WATCH_INTERVAL_MINUTES) * 60_000, MIN_WATCH_INTERVAL_MS)
       handle = armPoll(intervalMs, () => void watchTick(deps, sessionID, config))
     }
     watchTimers.set(sessionID, handle)

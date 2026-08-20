@@ -189,9 +189,10 @@ sitter 在 `/agentic-workflow:pr-sitter` 上。
 當此檔案不存在時，仍會讀取舊有的 `~/.agentic-workflow.json` 作為後備）
 （逐欄位比較時儲存庫層級勝出；所有欄位
 都有預設值）——完整的欄位參考見
-[`docs/configuration.md`](../../docs/configuration.md)。schema 與
-OpenCode 外掛相同，**只是少了** `watchIntervalMinutes`（這裡沒有 watch
-模式——見下方）；`workflows.<kind>.trigger` 可以被解析，但在這個
+[`docs/configuration.md`](../../docs/configuration.md)。schema 現在與
+OpenCode 外掛**完全相同**——該 host 最後一個自有欄位
+`watchIntervalMinutes` 已經退役，它現在只多加一項只有它能處理的 cron
+語法檢查；`workflows.<kind>.trigger` 可以被解析，但在這個
 只能拉取的 host 上是無作用的（`workflow_claim` 仍然是手動觸發方式）；
 已移除的 `gateBeforeBuild`/`interviewBeforePlan` 這兩個欄位會被靜靜
 忽略。

@@ -455,7 +455,6 @@ const testConfig: Config = {
   ignoreBacklog: true,
   stageTimeoutMinutes: 10,
   checkTimeoutMinutes: 10,
-  watchIntervalMinutes: 5,
   worktreesDir: false,
   taskBranch: "feature/",
   reviewLenses: [],
@@ -2405,6 +2404,35 @@ test("report-and-stop verbs return their outcome for the command hook to surface
   assert.match(claimed ?? "", /Claiming the next pr-sitter item/)
   assert.equal(unwatched, toasts[1]?.message, "unwatch returns exactly what it toasted")
   assert.match(unwatched ?? "", /watching/i)
+})
+
+/**
+ * The watch cadence used to have three rungs; the global `watchIntervalMinutes`
+ * config key was the bottom one and is retired (`RETIRED_CONFIG_KEYS`). What
+ * has to keep working is the two that replaced it — the `watch <interval>`
+ * argument and the per-kind `trigger.intervalMinutes` — plus the constant
+ * underneath them, which is the whole reason the key could go.
+ */
+test("watch cadence: the command argument beats a per-kind trigger, which beats the default", async () => {
+  const arm = async (args: string, config: Config): Promise<string> => {
+    const { client, toasts } = makeClientFS({})
+    const deps: Deps = { client, $: makeShellFS({}, []), directory: "/repo", log: () => {} }
+    try {
+      await handleCommand(deps, "sess", args, config)
+      return toasts.map((t) => t.message).join("\n")
+    } finally {
+      // Arming starts a real interval; leaving it running would keep the test
+      // process alive and let a tick fire into a torn-down fixture.
+      await handleCommand(deps, "sess", "unwatch", config)
+    }
+  }
+
+  const perKind: Config = { ...testConfig, workflows: { engineering: { trigger: { type: "poll", intervalMinutes: 15 } } } }
+
+  assert.match(await arm("watch", testConfig), /every 5m/, "no argument and no trigger → the built-in default")
+  assert.match(await arm("watch", perKind), /every 15m/, "workflows.<kind>.trigger.intervalMinutes sets the persistent cadence")
+  assert.match(await arm("watch 30s", perKind), /every 30s/, "the command argument overrides the configured trigger")
+  assert.match(await arm("watch 2h", testConfig), /every 2h/, "the command argument overrides the default")
 })
 
 test("authoring verbs return undefined so their command markdown reaches the model", async () => {
