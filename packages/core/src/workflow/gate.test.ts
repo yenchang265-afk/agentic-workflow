@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { DEFAULT_CONFIG } from "../config.js"
-import { PLAN_HEADING } from "../task/store.js"
+import { PLAN_HEADING, TASK_APPROVED_MARKER } from "../task/store.js"
 import { serializeTask } from "../task/schema.js"
 import { abandonTask, approveAny, approvePlan, approveTask, oneLineReason, rejectAny, removeTask, replanTask, REPLAN_REASON_MAX, retaskTask, shipAny, shipTask, type GateCtx, type GateResult } from "./gate.js"
 
@@ -429,6 +429,20 @@ test("approveTask moves a draft to queued and returns a structured result", asyn
   assert.ok(r.ok && r.data.approved === true)
   assert.match(r.message, /queued/)
   assert.ok(log.some((c) => c.startsWith("mv ") && c.includes("queued")))
+})
+
+test("approveTask's note opens with TASK_APPROVED_MARKER — the park gate's strike tally retires on it", async () => {
+  // A reword that drops the prefix does not error, it silently un-retires the
+  // contract-refusal strikes: a task the park gate returned for triage then gets
+  // ONE PLAN attempt per approval instead of three, forever. Pinned here for the
+  // same reason retaskTask's marker is.
+  const { ctx, raw } = makeCtx({ "draft/t.md": task("Do it") })
+  const r = await approveTask(ctx, "t")
+  assert.equal(r.ok, true)
+  const lines = notePayload(raw, "Task approved")
+  assert.equal(lines.length, 1, "exactly one line lands in the file")
+  assert.ok(lines[0]!.startsWith(TASK_APPROVED_MARKER), `the marker opens it: ${lines[0]}`)
+  assert.match(lines[0]!, /\[[^\]\n]+\]$/, "and the closing stamp is still on it")
 })
 
 test("approveTask on an already-queued task is an idempotent success", async () => {

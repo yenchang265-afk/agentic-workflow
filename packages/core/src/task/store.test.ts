@@ -462,6 +462,46 @@ test("a reshape retires the contract strikes — the tally is about the task tex
   assert.equal(unaddressedRejectionCount(body), 1, "only the strike earned after the reshape still stands")
 })
 
+test("a task-gate approval retires the contract strikes — the park gate's own draft return earns a fresh three", () => {
+  // The park gate's 3-strike arm returns the task to draft/ under a note of its
+  // OWN wording, and `retaskTask` on a task already in draft/ writes nothing —
+  // so neither existing anchor lands on the path back. Without the task-gate
+  // anchor the strikes survived the triage, the next contract miss counted 3+1,
+  // and the task was dumped straight back to draft/ having had ONE attempt,
+  // under a message claiming "PLAN failed 4 times". One higher every round.
+  const triaged = `\n> Plan contract unmet after 3 attempts — returned to draft for human triage [2026-01-06T00:00:00.000Z by dev]\n`
+  const approved = `\n> Task approved — queued for planning [2026-01-07T00:00:00.000Z by dev]\n`
+  const body =
+    `${PLAN_HEADING}\n\nApproach.\n` +
+    contractRejectionNote("one") +
+    contractRejectionNote("two") +
+    contractRejectionNote("three") +
+    triaged +
+    approved +
+    contractRejectionNote("the first miss of a fresh cycle")
+  assert.equal(unaddressedRejectionCount(body), 1, "the human re-took the task gate — the tally starts over")
+})
+
+test("a plan rejection stays PENDING across the task gate — only the strike tally resets", () => {
+  // The two parsers deliberately disagree here: the planner must still be told
+  // what it kept getting wrong, so `pendingPlanRejection` does not treat the
+  // approval as an anchor. Retiring the reason too would send the next PLAN
+  // pass back in blind — the failure `extractReplanReason` exists to prevent.
+  const approved = `\n> Task approved — queued for planning [2026-01-07T00:00:00.000Z by dev]\n`
+  const body = `${PLAN_HEADING}\n\nApproach.\n` + contractRejectionNote("no ### Verification subsection") + approved
+  assert.equal(unaddressedRejectionCount(body), 0, "the strikes are retired")
+  assert.equal(extractReplanReason(task("a", 0, body)), "no ### Verification subsection", "the reason is not")
+})
+
+test("a replan re-queues WITHOUT a task gate, so its strikes survive", () => {
+  // `replanTask` moves plan-review/ → queued/ directly. Anchoring the tally on
+  // the task gate must not accidentally retire a counter on that path — the
+  // planner really is still looping on the same contract mistake there.
+  const approved = `\n> Task approved — queued for planning [2026-01-01T00:00:00.000Z by dev]\n`
+  const body = `Goal.\n${approved}${PLAN_HEADING}\n\nApproach.\n` + contractRejectionNote("one") + contractRejectionNote("two")
+  assert.equal(unaddressedRejectionCount(body), 2, "the approval predates the strikes; it retires nothing")
+})
+
 test("extractReplanReason ignores the marker quoted mid-line or without the audit stamp", () => {
   // Mid-line: prose about the system. Line-anchored but stamp-less: a plan's own
   // blockquote. Neither is lifecycle state.

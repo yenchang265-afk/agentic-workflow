@@ -380,6 +380,37 @@ test("two human replans plus one contract miss is NOT three contract strikes", a
   assert.ok(!("/repo/docs/tasks/draft/t.md" in fs), "two human replans never count toward the contract strike limit")
 })
 
+test("a triage return plus a re-approval earns a fresh three — the strikes never reach across the task gate", async () => {
+  // The end of the loop this closes: three strikes send the task to draft/ "for
+  // human triage", the human re-approves, and the very next contract miss used
+  // to count 3 + 1 and dump it straight back — one attempt, under a message
+  // claiming "PLAN failed 4 times", and one higher every round after that. The
+  // task-gate note is what retires the tally (`TASK_APPROVED_MARKER`); nothing
+  // else on the path back does, since the return note carries its own wording
+  // and `retask` writes nothing on a task already in draft/.
+  const stamped = (text: string) => `> ${text} [2026-08-01T00:00:00.000Z by tester]`
+  const contract = (n: string) => stamped(`Plan rejected [contract] — sent back to queued for re-planning — refusal ${n}`)
+  const planned = serializeTask({
+    title: "Do it",
+    body: [
+      `${PLAN_HEADING}`,
+      "",
+      "1. step",
+      "",
+      contract("one"),
+      contract("two"),
+      contract("three"),
+      stamped("Plan contract unmet after 3 attempts — returned to draft for human triage"),
+      stamped("Task approved — queued for planning"),
+    ].join("\n"),
+  })
+  const { ctx, fs } = makeCtx({ "queued/t.md": planned }, planState(), { manifest: contractManifest("plan") })
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "error")
+  assert.ok("/repo/docs/tasks/queued/t.md" in fs, "strike one of a fresh cycle: still queued, not drafted")
+  assert.ok(!("/repo/docs/tasks/draft/t.md" in fs), "the human's re-approval bought a full three attempts back")
+})
+
 test("a prior successful park retires old rejections — the strike counter never reaches across cycles", async () => {
   // Same two old rejections, but a `Plan written` note after them: they were
   // addressed, so this refusal is strike ONE and the task stays queued.

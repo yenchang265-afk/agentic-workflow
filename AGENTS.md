@@ -740,6 +740,35 @@ critique of a plan that no longer exists.
   `addressed` set the rejection would go from retired back to pending purely as a
   side effect of the strip.
 
+### An audit-trail counter needs an anchor on every path that resets it
+
+The task file IS the ledger, so `pendingPlanRejection` and
+`unaddressedRejectionCount` derive their state by counting notes after the last
+`addressed` marker — crash-safe by construction, and wrong the moment a path
+exists that ought to retire an entry but writes no marker either parser reads.
+Twice now: `retask` (closed by `TASK_RESHAPED_MARKER`), then the park gate's own
+3-strike return to `draft/`, which writes a note in ITS OWN wording and is
+followed by a `retaskTask` that is a **no-op writing nothing** on a task already
+in `draft/`. So the strikes survived the human triage, the next contract miss
+counted 3 + 1, and the task was dumped straight back after ONE attempt under a
+message tallying every cycle that ever ran — one higher each round, forever.
+
+- **Anchor on the HUMAN's move, not the machine's.** `TASK_APPROVED_MARKER` is
+  the fix because every route out of `draft/` crosses `approveTask`, so no way
+  back can miss it — where anchoring on the return note would have covered only
+  the path that happened to be reported. It also stays correct in the other
+  direction: `replanTask` re-queues with no task gate, so a rejected plan's
+  strikes rightly survive it.
+- **The two parsers are allowed to disagree, deliberately.** The approval
+  retires the strike TALLY and not the pending rejection REASON: the next PLAN
+  pass still has to be told what it kept getting wrong, which is the whole job
+  of `extractReplanReason`.
+- **A marker is a contract with the note's writer.** Rewording a gate note is
+  silent — nothing errors, the counter just stops retiring — so each anchor's
+  writer is pinned by a test on the note it actually appends (`gate.test.ts` for
+  the task-gate and reshape markers, `terminal.test.ts` for `Plan written`).
+  Pin any new anchor the same way.
+
 ### A stage subagent must not be able to ask
 
 The mirror of the section above: the plugin cannot originate a question, and no

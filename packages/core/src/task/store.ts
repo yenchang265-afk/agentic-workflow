@@ -124,6 +124,35 @@ export const PLAN_WRITTEN_MARKER = "> Plan written"
 export const TASK_RESHAPED_MARKER = "> Sent back to draft"
 
 /**
+ * The audit note `approveTask` appends when a human takes the TASK gate —
+ * `draft/` → `queued/`. The retirement anchor for `unaddressedRejectionCount`,
+ * and the only one that fits what that counter measures: mechanical park-gate
+ * refusals of THIS task since a human last passed it through the gate.
+ *
+ * `PLAN_WRITTEN_MARKER` and `TASK_RESHAPED_MARKER` do not cover the case, which
+ * is how a returned task ended up with one attempt instead of three. The park
+ * gate's own 3-strike arm moves the task to `draft/` "for human triage" under a
+ * note of its own wording — not the reshape marker — and `retaskTask` on a task
+ * that is ALREADY in `draft/` is a no-op that writes no note at all. So nothing
+ * on the path back retired the strikes: the human re-approved, the very next
+ * contract miss counted 3 + 1, and the task was dumped straight back to `draft/`
+ * under a message claiming "PLAN failed 4 times" about a cycle that had run
+ * once. Forever, and one higher each round — a task returned for triage could
+ * never earn a full three attempts again.
+ *
+ * Anchoring on the human's own gate move rather than on the machine's return is
+ * what makes that total: every route out of `draft/` goes through `approveTask`,
+ * so any way a strike-carrying task comes back has crossed this note. It also
+ * keeps the counter honest in the other direction — `replanTask` re-queues
+ * WITHOUT a task gate, so a rejected plan's strikes correctly survive it.
+ *
+ * Deliberately NOT an anchor for `pendingPlanRejection`: the rejection REASON
+ * should still thread into the next PLAN pass, which is how the planner learns
+ * what it kept getting wrong. Only the strike tally starts over.
+ */
+export const TASK_APPROVED_MARKER = "> Task approved"
+
+/**
  * The one formatter for a plan-rejection audit note. `extractReplanReason`
  * parses this exact shape back (marker + reason prefix); a second hand-built
  * copy of the string is how a writer and the parser drift apart — the plan
@@ -452,7 +481,18 @@ export const unaddressedRejectionCount = (body: string): number => {
   // given one attempt rather than three. `pendingPlanRejection` already treats
   // the reshape as an anchor — these two parsers read the same audit trail and
   // must agree about what retires an entry in it.
-  const addressed = Math.max(lastMarkerIndex(body, PLAN_WRITTEN_MARKER), lastMarkerIndex(body, TASK_RESHAPED_MARKER))
+  //
+  // And so does a TASK-GATE APPROVAL, which is the anchor the park gate's own
+  // 3-strike return needs: it moves the task to draft/ under a note of its own
+  // wording, and `retaskTask` writes nothing on a task already there, so the
+  // reshape anchor never lands on that path. See `TASK_APPROVED_MARKER` for the
+  // full failure it closes — a triage-returned task got one attempt per human
+  // approval, forever, under a message counting every cycle that ever ran.
+  const addressed = Math.max(
+    lastMarkerIndex(body, PLAN_WRITTEN_MARKER),
+    lastMarkerIndex(body, TASK_RESHAPED_MARKER),
+    lastMarkerIndex(body, TASK_APPROVED_MARKER),
+  )
   let count = 0
   for (let idx = body.indexOf(PLAN_REJECTED_MARKER); idx !== -1; idx = body.indexOf(PLAN_REJECTED_MARKER, idx + 1)) {
     if (idx !== 0 && body[idx - 1] !== "\n") continue
