@@ -373,6 +373,11 @@ export const approveTask = async (ctx: GateCtx, id: string, autoPlan?: boolean):
       ? ` Note: it has no acceptance criteria — VERIFY will have nothing objective to check and the plan's ### Verification has nothing to map; use retask to add some if this task should have them.`
       : ""
   const actor = await gitActor($, directory)
+  // The note leads with `TASK_APPROVED_MARKER` (`Task approved`), which is what
+  // retires the park gate's contract-refusal strikes — keep that prefix if this
+  // text is reworded, or a task the park gate returned for triage gets one PLAN
+  // attempt per approval instead of three, forever. Same writer/parser pairing
+  // `retaskTask` keeps with `TASK_RESHAPED_MARKER`.
   const moved = await noteThenMove(ctx, draft, "queued", "Task approved — queued for planning", actor)
   if (!moved.ok) return moved.result
   const newPath = moved.path
