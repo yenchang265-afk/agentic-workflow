@@ -45,12 +45,12 @@ const makeRepo = ({ config, marker } = {}) => {
 
 const SPAWN = { description: "plan it", prompt: "do the thing", subagent_type: "agentic-workflow:workflow-plan", run_in_background: false }
 
-const run = (cwd, tool_input, { tool_name = "Agent", host } = {}) =>
+const run = (cwd, tool_input, { tool_name = "Agent", host, env = {} } = {}) =>
   spawnSync(process.execPath, [HOOK], {
     input: JSON.stringify({ cwd, tool_name, tool_input }),
     encoding: "utf8",
     // A developer's real user-scope config must never leak into these cases.
-    env: { ...process.env, AGENTIC_WORKFLOW_USER_CONFIG: "", ...(host === undefined ? {} : { AGENTIC_WORKFLOW_HOST: host }) },
+    env: { ...process.env, AGENTIC_WORKFLOW_USER_CONFIG: "", ...(host === undefined ? {} : { AGENTIC_WORKFLOW_HOST: host }), ...env },
   })
 
 /** The `updatedInput` the hook emitted, or null when it allowed the call as-is. */
@@ -176,6 +176,17 @@ test("a live deadline keeps the marker binding; a deadline-less legacy marker st
     const input = { ...SPAWN, subagent_type: "agentic-workflow:workflow-build" }
     assert.equal(rewriteOf(run(cwd, input))?.model, "opus")
   }
+})
+
+test("the config resolves from AGENTIC_WORKFLOW_DIR, exactly as the marker does", () => {
+  // The regression this pins: the hook resolved the MARKER through backlogRoot
+  // (which honors AGENTIC_WORKFLOW_DIR) but read the CONFIG from the session
+  // cwd — so with the env var pointing at the repo, `agentModels` in the repo's
+  // own .agentic-workflow.json silently never bound while the server reported
+  // the setting as valid. Same resolution-mismatch class marker.mjs documents.
+  const repo = makeRepo({ config: { agentModels: { "workflow-plan": "haiku" } } })
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), "spawn-stamp-cwd-"))
+  assert.equal(rewriteOf(run(elsewhere, SPAWN, { env: { AGENTIC_WORKFLOW_DIR: repo } }))?.model, "haiku")
 })
 
 test("an unprefixed subagent_type still resolves", () => {

@@ -136,6 +136,23 @@ test("upgradeCandidates enforces the severity floor, directness, and the majors-
   assert.deepEqual(skippedMajors.map((c) => c.pkg), ["express"])
 })
 
+test("an unknown installed version classifies as minor — never as patch via self-comparison", () => {
+  // `npm ls` parse failed (or the package is absent from the depth-0 listing):
+  // `semverImpact(target, target)` always said "patch", the least conservative
+  // class, so a patch-only autoFix policy claimed a bump nobody classified.
+  // npm's isSemVerMajor:false bounds the unknown at minor, so that is the
+  // worst honest answer: claimable under the default policy, parked for a
+  // human under patch-only.
+  const report = { vulnerabilities: { lodash: vuln({}) } }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const defaultPolicy = upgradeCandidates(report as any, {}, {}, POLICY)
+  assert.equal(defaultPolicy.claimable[0]?.impact, "minor")
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const patchOnly = upgradeCandidates(report as any, {}, {}, { ...POLICY, autoFix: ["patch"] })
+  assert.deepEqual(patchOnly.claimable, [], "a patch-only policy must not claim an unclassifiable bump")
+  assert.deepEqual(patchOnly.skippedMajors.map((c) => c.pkg), ["lodash"], "it parks for a human instead")
+})
+
 test("upgradeCandidates merges outdated deps when enabled, vulnerable candidates winning and severity ordering first", () => {
   const report = { vulnerabilities: { lodash: vuln({}) } }
   const outdated = {

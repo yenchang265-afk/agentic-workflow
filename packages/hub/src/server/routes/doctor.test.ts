@@ -103,11 +103,11 @@ const lease = (dir: string): void => {
   fs.writeFileSync(p, JSON.stringify({ pid: 999, host: "h", startedAt: now, heartbeatAt: now, intervalMs: 60_000 }))
 }
 
-const depsFor = (directory: string): HubDeps => ({
+const depsFor = (directory: string, config = DEFAULT_CONFIG): HubDeps => ({
   directory,
   tasksDir: "docs/tasks",
   boards: BOARDS,
-  config: DEFAULT_CONFIG,
+  config,
   workflowsDir: path.join(directory, "workflows-unused"),
   projectsDir: "/nonexistent",
   opencodeDbPath: "/nonexistent.db",
@@ -141,7 +141,11 @@ test("the report is read-only — a GET leaves the backlog byte-identical", asyn
   cleanup(dir)
 })
 
-test("fix rescues a stray to draft/, commits, and reports it", async () => {
+test("fix rescues a stray to draft/ WITHOUT committing under the default ignoreBacklog", async () => {
+  // The rescue commit must go through core's `commitBacklog` policy choke
+  // point: under the default `ignoreBacklog: true` a doctor fix re-asserts the
+  // exclude entry instead of committing — a raw `commitPaths` here used to
+  // commit the whole backlog into the user's history.
   const dir = makeRepo()
   fs.mkdirSync(path.join(dir, "docs", "tasks", "run"))
   fs.writeFileSync(path.join(dir, "docs", "tasks", "run", "orphan.md"), TASK("orphan"))
@@ -149,6 +153,24 @@ test("fix rescues a stray to draft/, commits, and reports it", async () => {
   git(dir, "commit", "-qm", "add stray")
 
   const res = await fix(dir)
+  assert.equal(res.status, 200)
+  const body = res.body as DoctorFixResponse
+  assert.deepEqual(body.rescued, ["docs/tasks/run/orphan.md"])
+  assert.ok(fs.existsSync(path.join(dir, "docs", "tasks", "draft", "orphan.md")))
+  assert.match(execFileSync("git", ["log", "-1", "--pretty=%s"], { cwd: dir }).toString(), /add stray/, "no backlog commit under ignoreBacklog: true")
+  const exclude = fs.readFileSync(path.join(dir, ".git", "info", "exclude"), "utf8")
+  assert.ok(exclude.includes("/docs/tasks/"), "the policy's compensating exclude entry is asserted instead")
+  cleanup(dir)
+})
+
+test("fix rescues a stray to draft/, commits, and reports it when the backlog is tracked", async () => {
+  const dir = makeRepo()
+  fs.mkdirSync(path.join(dir, "docs", "tasks", "run"))
+  fs.writeFileSync(path.join(dir, "docs", "tasks", "run", "orphan.md"), TASK("orphan"))
+  git(dir, "add", "-A")
+  git(dir, "commit", "-qm", "add stray")
+
+  const res = await postDoctorFix(depsFor(dir, { ...DEFAULT_CONFIG, ignoreBacklog: false }))
   assert.equal(res.status, 200)
   const body = res.body as DoctorFixResponse
   assert.deepEqual(body.rescued, ["docs/tasks/run/orphan.md"])
