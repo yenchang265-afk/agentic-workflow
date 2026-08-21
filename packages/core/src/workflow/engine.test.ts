@@ -728,6 +728,31 @@ test("PLAN never renders the worktree paragraph — its isolation is none", () =
   assert.match(composePrompt(eng, { ...state, stage: "build" }, "build"), /Worktree: this loop's isolated checkout/)
 })
 
+/**
+ * The prompt's `git -C <wt> …` and `cd <wt> && …` are COPIED INTO A SHELL by the
+ * stage agent, so a worktree under a path with a space (`/mnt/c/Claude Code/…`,
+ * the everyday Windows/macOS shape) hands it a command the shell splits: git
+ * reads `-C /mnt/c/Claude` and the `cd` gets two arguments. The worktree pin
+ * already quotes its own rewrite for exactly this; the prompt half did not.
+ */
+test("a worktree path with spaces is shell-quoted in the commands the prompt hands the agent", () => {
+  const spaced = "/mnt/c/Claude Code/repo/.workflow-worktrees/add-foo"
+  const state = { ...mk("g", task), stage: "verify", git: { base: "main", branch: "feature/add-foo", worktree: spaced } }
+  const prompt = composePrompt(eng, state, "verify")
+  assert.match(prompt, /`git -C "\/mnt\/c\/Claude Code\/repo\/\.workflow-worktrees\/add-foo" diff main\.\.\.feature\/add-foo`/)
+  assert.match(prompt, /`cd "\/mnt\/c\/Claude Code\/repo\/\.workflow-worktrees\/add-foo" && `/)
+  // The prose naming the directory stays bare — it is read, not executed, and
+  // the file tools take a path argument rather than a shell word.
+  assert.match(prompt, new RegExp(`isolated checkout is ${spaced.replace(/[./]/g, "\\$&")} —`))
+})
+
+test("an ordinary worktree path is left untouched — the quoting adds nothing where nothing is needed", () => {
+  const state = { ...mk("g", task), stage: "verify", git: { base: "main", branch: "feature/add-foo", worktree: "/wt/add-foo" } }
+  const prompt = composePrompt(eng, state, "verify")
+  assert.match(prompt, /`git -C \/wt\/add-foo diff main\.\.\.feature\/add-foo`/)
+  assert.match(prompt, /`cd \/wt\/add-foo && `/)
+})
+
 // --- the manifest's additive semantics (what the legacy fn could not express) ---
 
 test("park and done actions carry the manifest's toStatus", () => {

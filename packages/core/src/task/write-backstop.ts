@@ -179,13 +179,56 @@ export const commandAllowed = (cmd: string, globs: readonly string[], prefixes: 
 }
 
 /**
+ * The `-X`/`--method` value in every spelling `gh`'s flag parser accepts.
+ *
+ * pflag reads a shorthand's value ATTACHED (`-XDELETE`), `=`-joined (`-X=DELETE`)
+ * or separated (`-X DELETE`) — all three are the same call. The separated-only
+ * form this used to match made `gh api …/comments/9 -XDELETE` read as a GET, i.e.
+ * as a plain read, which is the one answer that must never be wrong here.
+ *
+ * Anchored at a token boundary (`(?:^|\s)`), which is what keeps a URL that
+ * merely contains the letters (`gh api repos/o/r/contents/a-Xb`) from being read
+ * as a method. Long flags take no attached value, so `--method` still requires a
+ * separator. Pure.
+ */
+const GH_METHOD_RE = /(?:^|\s)(?:-X\s*=?\s*|--method[\s=]+)([A-Za-z]+)/
+
+/**
+ * A `gh api` body flag, in the same three spellings — `-fevent=APPROVE` is
+ * `-f event=APPROVE`. A body makes gh send POST, which is what turns
+ * `…/reviews` into a review submission. Pure.
+ */
+const GH_BODY_FLAG_RE = /(?:^|\s)(?:-[fF](?:[=\s]|$|[A-Za-z_])|--(?:field|raw-field|input)(?:[=\s]|$))/
+
+/**
+ * The global flags that may precede a `gh` subcommand, including the ones that
+ * take a SEPARATE value (`-R o/r`, `--repo o/r`).
+ *
+ * A bare `(?:-\S+\s+)*` stopped at the value: `gh --repo o/r pr merge 3` matched
+ * `--repo ` and then wanted `pr`, found `o/r`, and the whole classifier reported
+ * "not a PR mutation" for a merge. The `[^-\s]`-led value alternative is
+ * backtracking-safe — on `gh --foo pr merge` the engine falls back to consuming
+ * the flag alone, so the subcommand is still found. Pure.
+ */
+const GH_GLOBAL_FLAGS = "(?:--?\\S+(?:\\s+[^-\\s]\\S*)?\\s+)*"
+
+const GH_PR_MUTATION_RE = new RegExp(`^gh\\s+${GH_GLOBAL_FLAGS}pr\\s+(?:merge|close|ready|edit|lock|unlock|review)\\b`)
+const GH_API_RE = new RegExp(`^gh\\s+${GH_GLOBAL_FLAGS}api\\b`)
+
+/**
  * A `gh` command that mutates a pull request. The loop must NEVER merge, close,
  * approve, or otherwise change PR state:
  *
  *  - `gh pr merge|close|ready|edit|lock|unlock|review` — state changes / approvals
  *    (the sitter replies with `gh pr comment`, never these);
  *  - `gh api` with a non-GET/POST method (PUT/PATCH/DELETE) or hitting a `/merge`
- *    endpoint — GET reads and POST review-comment replies stay allowed;
+ *    endpoint — GET reads and POST review-comment replies stay allowed. The
+ *    method and body flags are read in every spelling `gh`'s own parser accepts,
+ *    ATTACHED shorthand included: pflag reads `-XDELETE` and `-fevent=APPROVE`
+ *    exactly as it reads `-X DELETE` and `-f event=APPROVE`, so a classifier that
+ *    only knows the separated form calls a DELETE a GET and waves it through —
+ *    and the backstop's whole job is to hold when a permissive glob (the
+ *    pr-sitter's own `gh api repos/…/pulls/…/comments…`) already matched it;
  *  - `gh api` with any write method (including the POST implied by a body flag —
  *    `-f`/`-F`/`--field`/`--raw-field`/`--input`) to a `/reviews` or
  *    `/requested_reviewers` resource — a review submission (`event=APPROVE|…`) or a
@@ -198,13 +241,13 @@ export const commandAllowed = (cmd: string, globs: readonly string[], prefixes: 
  */
 export const isGithubPrMutation = (cmd: string): boolean => {
   const c = cmd.trim()
-  if (/^gh\s+(?:-\S+\s+)*pr\s+(?:merge|close|ready|edit|lock|unlock|review)\b/.test(c)) return true
-  if (/^gh\s+(?:-\S+\s+)*api\b/.test(c)) {
+  if (GH_PR_MUTATION_RE.test(c)) return true
+  if (GH_API_RE.test(c)) {
     if (/\/merge(?:\b|\/|\?|$)/.test(c)) return true
-    const m = /(?:-X|--method)[ =]+([A-Za-z]+)/.exec(c)
+    const m = GH_METHOD_RE.exec(c)
     // No explicit -X but a body flag makes gh send POST — `gh api …/reviews
     // -f event=APPROVE` must not read as GET.
-    const impliesBody = /(?:^|\s)(?:-f|-F|--field|--raw-field|--input)(?:[=\s]|$)/.test(c)
+    const impliesBody = GH_BODY_FLAG_RE.test(c)
     const method = m ? m[1]!.toUpperCase() : impliesBody ? "POST" : "GET"
     if (method !== "GET" && /\/(?:reviews|requested_reviewers)(?:\b|\/|\?|$)/.test(c)) return true
     return !(method === "GET" || method === "POST")
@@ -274,6 +317,13 @@ export const isAdoMcpToolOutOfStageScope = (toolName: string, allowed: readonly 
  * force. On top of any push allowlist glob, reject:
  *  - any force (`-f`, `--force`, `--force-with-lease`) or a delete (`-d`, `--delete`,
  *    `:dst` with empty src), including bundled short-flag clusters (`-fd`);
+ *  - a BULK flag, which acts on refs no refspec named: `--mirror` force-updates
+ *    every ref under `refs/` and deletes the ones that are gone locally, `--all`
+ *    pushes every local branch (`main` among them), `--tags` every tag, `--prune`
+ *    deletes remote refs with no local counterpart. Every refspec rule below is
+ *    blind to these because there IS no refspec — `git push origin --mirror`
+ *    carries no force flag, no `+`, and no `dst`, so it read as a clean push of
+ *    nothing while matching the pr-sitter's own `git push origin *` glob;
  *  - a `+`-prefixed refspec (a forced ref update);
  *  - a `src:dst` refspec whose destination differs from its source;
  *  - any refspec naming a protected branch (`main`/`master`, bare or as `:dst`) or a
@@ -293,10 +343,27 @@ export const isAdoMcpToolOutOfStageScope = (toolName: string, allowed: readonly 
  */
 export const PROTECTED_BRANCH_FLOOR: readonly string[] = ["main", "master", "HEAD"]
 
+/**
+ * `git`'s own options ahead of the subcommand, with `-C <dir>`'s argument allowed
+ * to be QUOTED.
+ *
+ * A bare `\S+` there stopped at the first space, so `git -C "/a b/wt" push origin
+ * main` did not read as a push at all and every rule below was skipped. That
+ * shape is what the stage prompt now hands an agent whose worktree sits under a
+ * path with a space (engine.ts `shellQuote`), so the quoted form has to parse
+ * here or the pairing opens a hole instead of closing one. Pure.
+ */
+const GIT_LEADING_OPTS = "(?:-C\\s+(?:\"[^\"]*\"|'[^']*'|\\S+)\\s+|-\\S+\\s+)*"
+
+const GIT_PUSH_RE = new RegExp(`^git\\s+${GIT_LEADING_OPTS}push\\b`)
+
 export const isGitPushViolation = (cmd: string, extra: readonly string[] = []): boolean => {
   const c = cmd.trim()
-  if (!/^git\s+(?:-\S+\s+|-C\s+\S+\s+)*push\b/.test(c)) return false
+  if (!GIT_PUSH_RE.test(c)) return false
   if (/(?:^|\s)(?:--force(?:-with-lease(?:=\S*)?)?|--delete)(?:\s|$)/.test(c)) return true
+  // Bulk flags push (or delete) refs no refspec named, so the refspec walk below
+  // cannot see them at all — see the doc above.
+  if (/(?:^|\s)--(?:mirror|all|tags|prune)(?:\s|$)/.test(c)) return true
   // Short flags are walked per token so the short delete form (`-d`) and
   // bundled clusters (`-fd`, `-df`) are caught, not just a lone `-f`.
   if (c.split(/\s+/).some((t) => /^-[a-zA-Z]+$/.test(t) && /[fd]/.test(t))) return true

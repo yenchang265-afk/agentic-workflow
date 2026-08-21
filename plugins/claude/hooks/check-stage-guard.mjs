@@ -120,6 +120,11 @@ var hasShellExpansion = (seg) => {
   return false;
 };
 var FIND_MUTATING_FLAGS = /* @__PURE__ */ new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprintf", "-fprint0", "-fls"]);
+var GH_GLOBAL_FLAGS = "(?:--?\\S+(?:\\s+[^-\\s]\\S*)?\\s+)*";
+var GH_PR_MUTATION_RE = new RegExp(`^gh\\s+${GH_GLOBAL_FLAGS}pr\\s+(?:merge|close|ready|edit|lock|unlock|review)\\b`);
+var GH_API_RE = new RegExp(`^gh\\s+${GH_GLOBAL_FLAGS}api\\b`);
+var GIT_LEADING_OPTS = `(?:-C\\s+(?:"[^"]*"|'[^']*'|\\S+)\\s+|-\\S+\\s+)*`;
+var GIT_PUSH_RE = new RegExp(`^git\\s+${GIT_LEADING_OPTS}push\\b`);
 
 // packages/core/dist/task/guard.js
 var ALLOW = { allow: true };
@@ -255,7 +260,7 @@ var underWorktree = (worktree, target) => {
   return !rel.startsWith("..") && !path2.isAbsolute(rel);
 };
 var gitCDir = (segment) => {
-  const m = /^git\s+-C\s+(\S+)\s+/.exec(segment.trim());
+  const m = /^git\s+-C\s+("[^"]*"|'[^']*'|\S+)\s+/.exec(segment.trim());
   return m ? unquote(m[1]) : null;
 };
 var shellQuote = (p) => /[\s"'\\$`]/.test(p) ? `"${p.replace(/(["\\$`])/g, "\\$1")}"` : p;
@@ -554,13 +559,18 @@ var commandAllowed = (cmd, globs, prefixes = []) => {
   if (segments.some(eitherForm(isFindMutation, prefixes))) return false;
   return segments.length > 0 && segments.every((s) => isBareCd(s) || matchesAny3(s, globs));
 };
+var GH_METHOD_RE = /(?:^|\s)(?:-X\s*=?\s*|--method[\s=]+)([A-Za-z]+)/;
+var GH_BODY_FLAG_RE = /(?:^|\s)(?:-[fF](?:[=\s]|$|[A-Za-z_])|--(?:field|raw-field|input)(?:[=\s]|$))/;
+var GH_GLOBAL_FLAGS2 = "(?:--?\\S+(?:\\s+[^-\\s]\\S*)?\\s+)*";
+var GH_PR_MUTATION_RE2 = new RegExp(`^gh\\s+${GH_GLOBAL_FLAGS2}pr\\s+(?:merge|close|ready|edit|lock|unlock|review)\\b`);
+var GH_API_RE2 = new RegExp(`^gh\\s+${GH_GLOBAL_FLAGS2}api\\b`);
 var isGithubPrMutation = (cmd) => {
   const c = cmd.trim();
-  if (/^gh\s+(?:-\S+\s+)*pr\s+(?:merge|close|ready|edit|lock|unlock|review)\b/.test(c)) return true;
-  if (/^gh\s+(?:-\S+\s+)*api\b/.test(c)) {
+  if (GH_PR_MUTATION_RE2.test(c)) return true;
+  if (GH_API_RE2.test(c)) {
     if (/\/merge(?:\b|\/|\?|$)/.test(c)) return true;
-    const m = /(?:-X|--method)[ =]+([A-Za-z]+)/.exec(c);
-    const impliesBody = /(?:^|\s)(?:-f|-F|--field|--raw-field|--input)(?:[=\s]|$)/.test(c);
+    const m = GH_METHOD_RE.exec(c);
+    const impliesBody = GH_BODY_FLAG_RE.test(c);
     const method = m ? m[1].toUpperCase() : impliesBody ? "POST" : "GET";
     if (method !== "GET" && /\/(?:reviews|requested_reviewers)(?:\b|\/|\?|$)/.test(c)) return true;
     return !(method === "GET" || method === "POST");
@@ -604,10 +614,13 @@ var isAdoMcpToolOutOfStageScope = (toolName, allowed) => {
   return !(allowed ?? []).includes(parsed.tool);
 };
 var PROTECTED_BRANCH_FLOOR = ["main", "master", "HEAD"];
+var GIT_LEADING_OPTS2 = `(?:-C\\s+(?:"[^"]*"|'[^']*'|\\S+)\\s+|-\\S+\\s+)*`;
+var GIT_PUSH_RE2 = new RegExp(`^git\\s+${GIT_LEADING_OPTS2}push\\b`);
 var isGitPushViolation = (cmd, extra = []) => {
   const c = cmd.trim();
-  if (!/^git\s+(?:-\S+\s+|-C\s+\S+\s+)*push\b/.test(c)) return false;
+  if (!GIT_PUSH_RE2.test(c)) return false;
   if (/(?:^|\s)(?:--force(?:-with-lease(?:=\S*)?)?|--delete)(?:\s|$)/.test(c)) return true;
+  if (/(?:^|\s)--(?:mirror|all|tags|prune)(?:\s|$)/.test(c)) return true;
   if (c.split(/\s+/).some((t) => /^-[a-zA-Z]+$/.test(t) && /[fd]/.test(t))) return true;
   const bare = (ref) => ref.replace(/^refs\/heads\//, "");
   const guarded = extra.length === 0 ? PROTECTED_BRANCH_FLOOR : [...PROTECTED_BRANCH_FLOOR, ...extra.map(bare)];

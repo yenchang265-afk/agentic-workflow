@@ -207,6 +207,31 @@ export const commandAllowed = (cmd, globs, prefixes = []) => {
 }
 
 /**
+ * The `-X`/`--method` value in every spelling gh's flag parser accepts —
+ * attached (`-XDELETE`), `=`-joined (`-X=DELETE`) or separated (`-X DELETE`).
+ * Anchored at a token boundary so a URL merely containing the letters
+ * (`gh api repos/o/r/contents/a-Xb`) is not read as a method. Long flags take no
+ * attached value, so `--method` still requires a separator. TWIN of
+ * `GH_METHOD_RE` in packages/core/src/task/write-backstop.ts.
+ */
+const GH_METHOD_RE = /(?:^|\s)(?:-X\s*=?\s*|--method[\s=]+)([A-Za-z]+)/
+
+/** A `gh api` body flag, in the same three spellings. TWIN of `GH_BODY_FLAG_RE` in core. */
+const GH_BODY_FLAG_RE = /(?:^|\s)(?:-[fF](?:[=\s]|$|[A-Za-z_])|--(?:field|raw-field|input)(?:[=\s]|$))/
+
+/**
+ * gh's global flags ahead of the subcommand, including the ones taking a SEPARATE
+ * value (`-R o/r`, `--repo o/r`) — a bare `(?:-\S+\s+)*` stopped at the value, so
+ * `gh --repo o/r pr merge 3` read as "not a PR mutation". Backtracking-safe: on
+ * `gh --foo pr merge` the engine falls back to consuming the flag alone. TWIN of
+ * `GH_GLOBAL_FLAGS` in core.
+ */
+const GH_GLOBAL_FLAGS = "(?:--?\\S+(?:\\s+[^-\\s]\\S*)?\\s+)*"
+
+const GH_PR_MUTATION_RE = new RegExp(`^gh\\s+${GH_GLOBAL_FLAGS}pr\\s+(?:merge|close|ready|edit|lock|unlock|review)\\b`)
+const GH_API_RE = new RegExp(`^gh\\s+${GH_GLOBAL_FLAGS}api\\b`)
+
+/**
  * A `gh` command that mutates a pull request. The loop must NEVER merge, close,
  * approve, or otherwise change PR state — the GitHub mirror of the ADO write
  * backstop (threat-model T1/T8). The publish stage's allowlist permits `gh api *`
@@ -217,7 +242,10 @@ export const commandAllowed = (cmd, globs, prefixes = []) => {
  *    (the sitter replies with `gh pr comment`, never these);
  *  - `gh api` with a non-GET/POST method (PUT/PATCH/DELETE) or hitting a `/merge`
  *    endpoint — GET reads and POST review-comment replies stay allowed, mirroring
- *    the ADO backstop's "GET or POST-to-/threads only" rule;
+ *    the ADO backstop's "GET or POST-to-/threads only" rule. The method and body
+ *    flags are read in every spelling gh's own parser accepts, ATTACHED shorthand
+ *    included (`-XDELETE`, `-fevent=APPROVE`): pflag treats those exactly as the
+ *    separated form, so matching only the separated one called a DELETE a GET;
  *  - `gh api` with any write method to a `/reviews` or `/requested_reviewers`
  *    resource — a review SUBMISSION (`event=APPROVE|REQUEST_CHANGES|COMMENT`) or a
  *    reviewer change is a POST, so the GET/POST rule above would wave it through;
@@ -232,13 +260,13 @@ export const commandAllowed = (cmd, globs, prefixes = []) => {
  */
 export const isGithubPrMutation = (cmd) => {
   const c = cmd.trim()
-  if (/^gh\s+(?:-\S+\s+)*pr\s+(?:merge|close|ready|edit|lock|unlock|review)\b/.test(c)) return true
-  if (/^gh\s+(?:-\S+\s+)*api\b/.test(c)) {
+  if (GH_PR_MUTATION_RE.test(c)) return true
+  if (GH_API_RE.test(c)) {
     if (/\/merge(?:\b|\/|\?|$)/.test(c)) return true
-    const m = /(?:-X|--method)[ =]+([A-Za-z]+)/.exec(c)
+    const m = GH_METHOD_RE.exec(c)
     // No explicit -X but a body flag (-f/-F/--field/--raw-field/--input) makes
     // gh send POST — `gh api …/reviews -f event=APPROVE` must not read as GET.
-    const impliesBody = /(?:^|\s)(?:-f|-F|--field|--raw-field|--input)(?:[=\s]|$)/.test(c)
+    const impliesBody = GH_BODY_FLAG_RE.test(c)
     const method = m ? m[1].toUpperCase() : impliesBody ? "POST" : "GET"
     // Submitting a review or changing reviewers mutates PR state even via POST.
     if (method !== "GET" && /\/(?:reviews|requested_reviewers)(?:\b|\/|\?|$)/.test(c)) return true
@@ -317,6 +345,11 @@ export const isAdoMcpToolOutOfStageScope = (toolName, allowed) => {
  * `git push origin x:main` or `... --force` slip through the glob. On top of it, reject:
  *  - any force (`-f`, `--force`, `--force-with-lease`) or a delete (`-d`, `--delete`,
  *    `:dst` with empty src), including bundled short-flag clusters (`-fd`);
+ *  - a BULK flag (`--mirror`, `--all`, `--tags`, `--prune`), which acts on refs no
+ *    refspec named — `--mirror` force-updates every ref under `refs/` and deletes
+ *    the ones gone locally. The refspec rules below are blind to them because
+ *    there IS no refspec, so `git push origin --mirror` read as a clean push of
+ *    nothing while matching the pr-sitter's own `git push origin *` glob;
  *  - a `+`-prefixed refspec (a forced ref update);
  *  - a `src:dst` refspec whose destination differs from its source (pushing onto a
  *    DIFFERENT branch — the `x:main` / `x:refs/heads/main` escape);
@@ -332,6 +365,17 @@ export const isAdoMcpToolOutOfStageScope = (toolName, allowed) => {
 export const PROTECTED_BRANCH_FLOOR = ["main", "master", "HEAD"]
 
 /**
+ * git's own options ahead of the subcommand, with `-C <dir>`'s argument allowed to
+ * be QUOTED. A bare `\S+` stopped at the first space, so `git -C "/a b/wt" push
+ * origin main` did not read as a push at all — and that quoted shape is exactly
+ * what the stage prompt hands an agent whose worktree sits under a path with a
+ * space. TWIN of `GIT_LEADING_OPTS` in packages/core/src/task/write-backstop.ts.
+ */
+const GIT_LEADING_OPTS = "(?:-C\\s+(?:\"[^\"]*\"|'[^']*'|\\S+)\\s+|-\\S+\\s+)*"
+
+const GIT_PUSH_RE = new RegExp(`^git\\s+${GIT_LEADING_OPTS}push\\b`)
+
+/**
  * `extra` is the repo's `protectedBranches`, carried on the stage marker because a
  * bundled hook can read neither config nor manifest. Additive only — the floor
  * stands whatever arrives, so a missing or malformed marker field degrades to
@@ -339,8 +383,11 @@ export const PROTECTED_BRANCH_FLOOR = ["main", "master", "HEAD"]
  */
 export const isGitPushViolation = (cmd, extra = []) => {
   const c = cmd.trim()
-  if (!/^git\s+(?:-\S+\s+|-C\s+\S+\s+)*push\b/.test(c)) return false
+  if (!GIT_PUSH_RE.test(c)) return false
   if (/(?:^|\s)(?:--force(?:-with-lease(?:=\S*)?)?|--delete)(?:\s|$)/.test(c)) return true
+  // Bulk flags push (or delete) refs no refspec named, so the refspec walk below
+  // cannot see them at all — see the doc above.
+  if (/(?:^|\s)--(?:mirror|all|tags|prune)(?:\s|$)/.test(c)) return true
   // Short flags are walked per token so the short delete form (`-d`) and
   // bundled clusters (`-fd`, `-df`) are caught, not just a lone `-f`.
   if (c.split(/\s+/).some((t) => /^-[a-zA-Z]+$/.test(t) && /[fd]/.test(t))) return true
