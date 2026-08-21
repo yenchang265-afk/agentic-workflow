@@ -93,7 +93,23 @@ const main = async () => {
   if (host === null) return block(unknownHostMessage(process.env.AGENTIC_WORKFLOW_HOST))
   const d = dialectFor(host)
   const tasksDir = readTasksDir(backlogRoot(cwd))
-  const marker = readMarker(cwd, d.stageMarkerFile)
+  // A marker past its deadline whose writer is gone is a CRASHED run's leftover
+  // — nothing removes the file on a SIGKILL/OOM/poweroff — and every
+  // marker-scoped control below must read it as NO marker: the plan carve-out,
+  // the ADO/gh/git-push backstops, the worktree pins, and the check-stage
+  // allowlist. The deadline-starve block used to be the ONLY gate with this
+  // liveness rule, so a dead marker kept enforcing everything else forever:
+  // every later session's bash starved behind the VERIFY allowlist ("the
+  // VERIFY stage is read-only", addressed to nobody), the human's own `gh pr
+  // merge` blocked, and main-tree edits silently REWRITTEN into a dead
+  // worktree. Same reading `decideSpawnGuard`, the verdict guard and core's
+  // `taskDrivenByStageMarker` already give an expired marker; a marker with no
+  // deadline (an older server) stays trusted, and one whose writer is still
+  // alive keeps enforcing — the loop is genuinely live, however late.
+  const rawMarker = readMarker(cwd, d.stageMarkerFile)
+  const markerIsDead =
+    rawMarker && typeof rawMarker.deadline === "number" && Date.now() > rawMarker.deadline && !markerWriterAlive(rawMarker.pid)
+  const marker = markerIsDead ? null : rawMarker
   const tool = input.tool_name
   const ti = input.tool_input || {}
   const isBash = isBashTool(d, tool)
@@ -183,15 +199,11 @@ const main = async () => {
   }
 
   // (0) stage deadline — a stage past stageTimeoutMinutes is starved of guarded
-  // tools so it returns control; workflow_advance then stops the loop. Gated on
-  // the marker's WRITER still being alive: nothing removes the marker file when
-  // the MCP server dies mid-stage (SIGKILL, OOM, laptop sleep), and blocking
-  // unconditionally ruled the repo forever — every future session's Bash and
-  // writes denied behind a loop nobody could see, with `rm` on the marker the
-  // only way out. A dead or unknowable writer is a crashed run's leftover — the
-  // same reading spawn-guard gives an expired marker — so fall through (fail
-  // open, like every other uncertainty in these hooks).
-  if (typeof marker.deadline === "number" && Date.now() > marker.deadline && markerWriterAlive(marker.pid)) {
+  // tools so it returns control; workflow_advance then stops the loop. A marker
+  // reaching this line with an expired deadline has a LIVE writer by
+  // construction — the dead-marker filter above already read the other case as
+  // no marker at all (fail open, like every other uncertainty in these hooks).
+  if (typeof marker.deadline === "number" && Date.now() > marker.deadline) {
     if (isBash || isWrite) {
       return block(
         `agentic-workflow: the ${String(marker.stage).toUpperCase()} stage exceeded its stageTimeoutMinutes deadline — ` +

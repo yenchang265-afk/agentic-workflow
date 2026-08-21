@@ -55,11 +55,29 @@ export const BY_SOURCE: Readonly<Record<KindBoardInfo["sourceType"], Readonly<Re
 /**
  * Keys core's schema validates itself — not positional knobs, so nothing here
  * can be "silently ignored" and warning about them would be wrong. Object-shaped
- * (`trigger`, the `stageModels` record) or scalar (`maxDiffLines`, the
- * reviewer-role diff ceiling): what they share is that a bad value fails
- * `loadConfig` loudly instead of falling back to a default.
+ * (`trigger`, the `stage*` records) or scalar (`maxDiffLines`, `prBase`,
+ * `discoverChecks`, `planVisualization`): what they share is that a bad value
+ * fails `loadConfig` loudly instead of falling back to a default.
+ *
+ * This list must track every key `ConfigSchema`'s `workflows.<kind>` section
+ * declares (config.ts) minus the positional knobs above: it drifted once to a
+ * three-entry subset, and the Config tab then told operators that seven real,
+ * schema-validated settings (`stageFanout`, `stageChecks`, …) were "unknown …
+ * silently ignored" — manufacturing the exact reads-as-broken failure the lint
+ * exists to prevent. `knobs.test.ts` pins the set against core's schema.
  */
-const STRUCTURED_KEYS: readonly string[] = ["trigger", "stageModels", "maxDiffLines"]
+export const STRUCTURED_KEYS: readonly string[] = [
+  "trigger",
+  "stageModels",
+  "stageContext",
+  "stageFanout",
+  "stageConcurrency",
+  "stageChecks",
+  "discoverChecks",
+  "planVisualization",
+  "prBase",
+  "maxDiffLines",
+]
 
 /** Levenshtein distance, capped: we only care whether it's 1. */
 const isNearMiss = (a: string, b: string): boolean => {
