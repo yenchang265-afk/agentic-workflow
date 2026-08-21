@@ -122,7 +122,7 @@ The loop (`/agentic-workflow:engineering`):
   **scoped to the engineering kind**; claims in the same order as `claim`. Bare
   `watch` uses `workflows.engineering.trigger` (default poll); the argument is a
   per-session override: `poll [interval]` / a bare interval (`30s`, `5m`,
-  `2h`, bare number = minutes; default `watchIntervalMinutes`) claims on idle
+  `2h`, bare number = minutes; default 5m) claims on idle
   events plus the timer, `cron <schedule>` claims only on schedule fires,
   `idle` chains a new claim on every idle. Takes the clone's **watch lease**
   (`runs/.watch-lease/`, heartbeat on a fixed 30s timer) — a second opencode

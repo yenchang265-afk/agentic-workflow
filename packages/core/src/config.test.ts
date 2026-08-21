@@ -5,6 +5,9 @@ import path from "node:path"
 import { test } from "node:test"
 import {
   deprecatedAdoKeys,
+  retiredConfigKeys,
+  RETIRED_CONFIG_KEYS,
+  ConfigSchema,
   bareModel,
   checksFor,
   configuredChecks,
@@ -838,6 +841,42 @@ test("stale ADO transport keys parse, are ignored, and are named by deprecatedAd
   assert.deepEqual(deprecatedAdoKeys(stale), ["ado.access", "ado.customHeaders", "ado.insecureSkipTlsVerify"])
   // No ado section at all (github config) → nothing deprecated.
   assert.deepEqual(deprecatedAdoKeys(DEFAULT_CONFIG), [])
+})
+
+test("retired top-level keys are named from the RAW layer, since parsing strips them", () => {
+  // The structural reason this helper exists: `ado` is a looseObject, so a
+  // stale key inside it survives to be named from a parsed Config. A top-level
+  // key does not — zod strips what the schema does not declare — so a parsed
+  // config can never witness one.
+  const raw = { maxIterations: 2, watchIntervalMinutes: 15 }
+  assert.deepEqual(
+    retiredConfigKeys(raw).map((r) => r.key),
+    ["watchIntervalMinutes"],
+  )
+  assert.equal(
+    (parseConfig(raw) as unknown as Record<string, unknown>)["watchIntervalMinutes"],
+    undefined,
+    "parsing must drop it — that is why the raw layer is read",
+  )
+
+  // The replacement text is the whole point of warning at all: it must name
+  // both rungs that took over, or the message is just "your setting is gone".
+  const replacement = retiredConfigKeys(raw)[0]?.replacement ?? ""
+  assert.match(replacement, /watch <interval>/)
+  assert.match(replacement, /trigger.*intervalMinutes/)
+
+  // Clean configs, and non-objects, are silent.
+  assert.deepEqual(retiredConfigKeys({ maxIterations: 2 }), [])
+  assert.deepEqual(retiredConfigKeys(undefined), [])
+  assert.deepEqual(retiredConfigKeys("not an object"), [])
+})
+
+test("no retired key is also a live schema key", () => {
+  // A key in both lists would warn "this no longer exists" about a setting that
+  // very much does — so retiring one means removing it from the schema.
+  for (const key of Object.keys(RETIRED_CONFIG_KEYS)) {
+    assert.ok(!(key in ConfigSchema.shape), `${key} is retired but still declared in ConfigSchema`)
+  }
 })
 
 test("ado.pat is an accepted optional config field", () => {

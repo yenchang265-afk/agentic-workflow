@@ -1,4 +1,3 @@
-import { z } from "zod"
 import {
   ConfigSchema as CoreConfigSchema,
   loadConfigWith,
@@ -10,21 +9,20 @@ import type { Config as CoreConfig } from "@agentic-workflow/core/workflow/state
 import { cronError } from "./workflow/trigger.js"
 
 /**
- * The OpenCode plugin's config: the shared core schema plus the fields only an
- * autonomous in-process driver can honor (the MCP server has no timers, so
- * `watchIntervalMinutes` lives here, not in core).
+ * The OpenCode plugin's config: the shared core schema, plus the one validation
+ * only this host can perform.
+ *
+ * There are no host-only FIELDS any more. `watchIntervalMinutes` used to live
+ * here — a global default watch cadence — and was retired because two rungs
+ * above it already covered every use: the `watch <interval>` argument
+ * (per session) and `workflows.<kind>.trigger.intervalMinutes` (persistent, per
+ * kind, and in core so every host honors it). A single global cadence applied to
+ * every watched kind at once, which is rarely what anyone wants: a `dep-sitter`
+ * does not need an `engineering` loop's polling rate. The default it carried is
+ * now `DEFAULT_WATCH_INTERVAL_MINUTES` in the driver, and
+ * `RETIRED_CONFIG_KEYS` warns anyone whose config still sets it.
  */
-
-// `safeExtend`: the core schema carries a cross-field refinement (codePlatform
-// "ado" requires the `ado` section), which plain `.extend()` would reject.
-export const ConfigSchema = CoreConfigSchema.safeExtend({
-  /**
-   * Default polling cadence for `/agentic-workflow:engineering watch`: a timer at this interval scans
-   * `in-progress/` for claimable approved tasks while the session is idle.
-   * Overridable per-session via `/agentic-workflow:engineering watch <interval>` (e.g. `30s`, `2h`).
-   */
-  watchIntervalMinutes: z.number().positive().max(1440).default(5),
-}).superRefine((c, ctx) => {
+export const ConfigSchema = CoreConfigSchema.superRefine((c, ctx) => {
   // Core validates trigger shape only; this host actually schedules cron
   // triggers, so misconfig must fail at load, not at `watch` time.
   for (const [kind, section] of Object.entries(c.workflows)) {
@@ -41,9 +39,7 @@ export const ConfigSchema = CoreConfigSchema.safeExtend({
   }
 })
 
-export interface Config extends CoreConfig {
-  readonly watchIntervalMinutes: number
-}
+export type Config = CoreConfig
 
 export const DEFAULT_CONFIG: Config = ConfigSchema.parse({})
 
@@ -53,4 +49,3 @@ export const parseConfig = (raw: unknown): Config => parseConfigWith(ConfigSchem
 /** Load config (user layer under repo layer), falling back to defaults when both files are absent. */
 export const loadConfig = (client: Client, directory: string, opts?: LoadConfigOptions): Promise<Config> =>
   loadConfigWith(ConfigSchema, client, directory, opts)
-

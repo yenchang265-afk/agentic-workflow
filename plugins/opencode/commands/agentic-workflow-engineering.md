@@ -256,7 +256,7 @@ only after seeing the file in its target folder.
   and park. Bare `watch` uses the kind's configured trigger
   (`workflows.engineering.trigger`, default poll); an argument overrides it for
   this session only: `poll [interval]` / a bare interval (`30s`, `5m`, `2h`,
-  or a bare number of minutes; default `watchIntervalMinutes`, 5m; floor:
+  or a bare number of minutes; default 5m; floor:
   10s) claims on idle events plus the timer, `cron <schedule>` claims only
   when the 5-field schedule fires, `idle` chains a new loop the moment the
   session goes idle. The poll timer only claims work

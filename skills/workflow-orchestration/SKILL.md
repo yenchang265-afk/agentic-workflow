@@ -101,7 +101,8 @@ crosses the plan gate automatically when its plan parks and continues into
 BUILD — the human chose that at the task gate; the ship gate is never
 automated. `watch [interval]` turns the
 session into a standing worker firing on its own `session.idle` events plus a
-per-session **polling timer** (default `watchIntervalMinutes`, floor 10s).
+per-session **polling timer** (`workflows.<kind>.trigger.intervalMinutes`,
+else 5m; floor 10s).
 Each tick first asks the server whether the session is actually idle
 (`client.session.status()`) and does nothing otherwise — the timer exists for
 the case idle events miss, a task approved in *another* session while this one
@@ -303,7 +304,6 @@ full set is `docs/configuration.md`.
   "maxIterations": 3,           // shared cap on verify-FAIL + review-FAIL re-builds
   "tasksDir": "docs/tasks",     // root of the task backlog
   "stageTimeoutMinutes": 60,    // wall-clock cap per stage
-  "watchIntervalMinutes": 5,    // default watch cadence (override: watch 30s)
   "worktreesDir": ".workflow-worktrees", // per-task worktree isolation; false = shared-tree
   "taskBranch": "feature/",     // work-branch prefix; false = build on the branch already checked out
   "worktreeSetup": "npm ci",    // OPTIONAL: run in a fresh worktree (deps aren't checked out)

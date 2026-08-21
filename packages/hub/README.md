@@ -298,7 +298,7 @@ happened. It is in-memory and session-scoped; git remains the durable record.
   effective value actually comes from — the merged view is never written back,
   because that would flatten your user layer into the repo file and copy
   `ado.pat` into something you may well commit. Keys core's schema doesn't know
-  (a host-only `watchIntervalMinutes`, the `hub` section) are preserved and
+  (the `hub` section, a host-only key, a retired one) are preserved and
   listed as preserved, since the editor writes raw JSON rather than a parsed
   object. Per-kind knobs get advisory warnings — the loop reads them
   positionally, so a typo is otherwise silently ignored. Saving reloads the hub;

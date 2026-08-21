@@ -103,7 +103,7 @@ FAIL/ERROR 判定，工作階段呼叫 `workflow_blocked`。兩者都會在下�
   相同。裸 `watch` 使用
   `workflows.engineering.trigger`（預設為 poll）；引數是每個 session 的
   覆寫值：`poll [interval]` / 一個裸的間隔值（`30s`、`5m`、`2h`，
-  裸數字代表分鐘；預設為 `watchIntervalMinutes`）會在 idle 事件加上
+  裸數字代表分鐘；預設為 5 分鐘）會在 idle 事件加上
   計時器時認領，`cron <schedule>` 只在排程觸發時認領，`idle` 則在
   每一次 idle 時串連一次新的認領。它會取得這個複本（clone）的
   **watch 租約**（`runs/.watch-lease/`，以固定的 30 秒計時器發送

@@ -16,7 +16,8 @@ import { getConfig, saveConfig } from "./config.js"
  * tests are mostly about what it must NOT do. The two headline cases:
  *
  * - it must not strip keys core's schema doesn't know (parse-then-write would
- *   delete `watchIntervalMinutes` and the hub's own `hub` section);
+ *   delete the hub's own `hub` section, and any retired key a user's file still
+ *   carries);
  * - it must not flatten the user layer into the repo file (which would commit
  *   `ado.pat`).
  */
@@ -87,25 +88,28 @@ const repoFile = (f: Fixture): Record<string, unknown> =>
 // --- Crux A: the strip footgun ----------------------------------------------
 
 test("a save preserves keys core's schema doesn't know — the headline regression", async () => {
-  // watchIntervalMinutes is host-only (the OpenCode plugin adds it via safeExtend);
-  // `hub` is the hub's own section. ConfigSchema.parse() strips BOTH. If this
-  // route ever writes a parsed object, this test goes red — and in production the
-  // hub would delete its own configuration.
+  // `hub` is the hub's own section; `watchIntervalMinutes` is retired
+  // (RETIRED_CONFIG_KEYS) and so is exactly the kind of key an existing user's
+  // file still carries. ConfigSchema.parse() strips BOTH. If this route ever
+  // writes a parsed object, this test goes red — and in production the hub would
+  // delete its own configuration, and silently rewrite a file it does not own
+  // the whole of.
   const f = makeFixture({ maxIterations: 3, watchIntervalMinutes: 5, hub: { repos: ["/a"], port: 4317 } })
   const res = await save(f, { layer: "repo", edits: [{ path: "maxIterations", value: 9 }] })
   assert.equal(res.status, 200)
 
   const after = repoFile(f)
   assert.equal(after["maxIterations"], 9, "the edit applied")
-  assert.equal(after["watchIntervalMinutes"], 5, "host-only key must survive")
   assert.deepEqual(after["hub"], { repos: ["/a"], port: 4317 }, "the hub's own section must survive")
+  assert.equal(after["watchIntervalMinutes"], 5, "a retired key is the user's to delete, not ours")
   cleanup(f)
 })
 
 test("unknown keys are surfaced as passthrough rather than silently preserved", async () => {
   const f = makeFixture({ maxIterations: 3, watchIntervalMinutes: 5, maxIteration: 4 })
   const body = (await get(f)).body as ConfigLayerResponse
-  // A typo shows up here instead of vanishing — same mechanism, honest UX.
+  // A typo shows up here instead of vanishing — same mechanism, honest UX. So
+  // does a retired key, which is how a user finds out their file still sets one.
   assert.deepEqual([...body.passthrough].sort(), ["maxIteration", "watchIntervalMinutes"])
   cleanup(f)
 })

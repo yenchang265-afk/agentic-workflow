@@ -215,11 +215,12 @@ Optional `.agentic-workflow.json` at the repo root, layered over a user-scope
 `~/.config/agentic-workflow/agentic-workflow.json` — honoring `$XDG_CONFIG_HOME`,
 with the legacy `~/.agentic-workflow.json` still read as a fallback (repo wins
 field by field; all fields default) — full
-field reference in [`docs/configuration.md`](../../docs/configuration.md). Same
-schema as the OpenCode plugin **minus** `watchIntervalMinutes` (no watch mode
-here — see below); `workflows.<kind>.trigger` parses but is a no-op on this
-pull-only host (`workflow_claim` stays the manual trigger); the removed
-`gateBeforeBuild`/`interviewBeforePlan` keys are silently ignored.
+field reference in [`docs/configuration.md`](../../docs/configuration.md). The
+schema is now **identical** to the OpenCode plugin's — that host's last field of
+its own, `watchIntervalMinutes`, has been retired, and it adds only a
+cron-syntax check it alone can act on. `workflows.<kind>.trigger` parses but is
+a no-op on this pull-only host (`workflow_claim` stays the manual trigger); the
+removed `gateBeforeBuild`/`interviewBeforePlan` keys are silently ignored.
 `workflows.<kind>.stageModels` and `agentModels` both bind here, and neither
 depends on the orchestrating model cooperating: a `PreToolUse` hook
 (`hooks/stamp-spawn-model.mjs`) rewrites the spawn call's `model` before the tool

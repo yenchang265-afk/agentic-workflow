@@ -11,9 +11,10 @@ import type { HubDeps } from "./deps.js"
  *
  * **Raw is the model; zod is only a linter.** `ConfigSchema` is a plain
  * `z.object`, so zod v4 *strips* keys it doesn't know. Parsing a config and
- * writing the result back would silently delete `watchIntervalMinutes` (host-only,
- * added by the OpenCode plugin via `safeExtend`) and the entire `hub` section —
- * which is how the hub found this repo in the first place. So nothing here ever
+ * writing the result back would silently delete the entire `hub` section — which
+ * is how the hub found this repo in the first place — along with any host-only
+ * key a host adds via `safeExtend`, and any retired key a user's file still
+ * carries (`RETIRED_CONFIG_KEYS`). So nothing here ever
  * writes a parsed object: edits are applied to the raw JSON, and the schema is
  * used to *refuse* a bad write, never to produce the bytes.
  */

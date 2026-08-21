@@ -27,7 +27,7 @@ Dispatch:
   Bare `watch` uses the kind's configured trigger (`workflows.pr-sitter.trigger`,
   default poll); an argument overrides it for this session only:
   `poll [interval]` / a bare interval (`30s`, `5m`, `2h`, or a bare number of
-  minutes; default `watchIntervalMinutes`, 5m; floor: 10s) claims on idle
+  minutes; default 5m; floor: 10s) claims on idle
   ticks plus the timer, `cron <schedule>` claims only on schedule fires,
   `idle` chains claims on every idle. One watcher process per clone (on-disk
   lease, stale leases taken over automatically).
