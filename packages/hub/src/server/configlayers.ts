@@ -15,7 +15,8 @@ import type { ConfigProvenance } from "../shared/api.js"
  *
  * The rule being mirrored (config.ts `mergeConfigLayers`): **only plain objects
  * recurse.** Arrays, scalars and `null` replace wholesale — a repo
- * `reviewLenses: []` masks the user's list entirely rather than merging into it.
+ * `protectedBranches: []` masks the user's list entirely rather than merging
+ * into it.
  */
 
 export const isPlainObject = (v: unknown): v is Record<string, unknown> =>

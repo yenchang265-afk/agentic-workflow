@@ -337,7 +337,7 @@ export const composeStagePrompt = (
   // Defaulted from the stage itself so a config-less caller (the hub's creator
   // preview) shows what the manifest declares. `composePromptWithStats` passes
   // the EFFECTIVE mode instead, because config can turn fan-out on or off and
-  // `reviewLenses` can replace it with lens passes entirely.
+  // a `stageFanout` lens list can replace it with lens passes entirely.
   mode: "single" | "axis" | "lens" = def.fanout === "axis" ? "axis" : "single",
   // Same shape as `mode`: manifest default here, effective value
   // (`planVisualizationFor`) from `composePromptWithStats`, because config can
@@ -420,7 +420,7 @@ export const composePromptWithStats = (
   const git = typeof hooked.git === "object" ? hooked.git : undefined
   const prBase = config ? prBaseFor(config, loaded.manifest.kind) : undefined
   const ctx = git && prBase ? { ...hooked, git: { ...git, prBase } } : hooked
-  // The EFFECTIVE mode, not the manifest's: a configured `reviewLenses` beats a
+  // The EFFECTIVE mode, not the manifest's: a configured lens list beats a
   // declared per-axis fan-out, and the contract must describe the passes that
   // will actually run — otherwise a lens pass is told to report one axis it was
   // never given, or an axis pass is told to report all five.

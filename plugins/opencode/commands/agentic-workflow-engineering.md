@@ -344,8 +344,9 @@ outside this machine. That is the final human gate.
 
 When `worktreesDir` is configured, execution runs in a per-task `git
 worktree` instead of the shared checkout — the stage prompts carry a
-`Worktree:` line pinning all reads/edits/tests there. When `reviewLenses` is
-configured, REVIEW runs once per lens and the loop takes the worst verdict.
+`Worktree:` line pinning all reads/edits/tests there. When
+`workflows.<kind>.stageFanout` is configured for a check stage, it runs once per
+axis (`"axis"`) or per lens (a list) and the loop takes the worst verdict.
 
 <!-- /aw:verb plan|claim|watch|recover -->
 The flow: `new` (interview → draft) → human reviews the draft (reshape with

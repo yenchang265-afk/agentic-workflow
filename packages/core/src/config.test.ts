@@ -33,7 +33,6 @@ import {
   unknownStageModelKeys,
   contextFor,
   fanoutFor,
-  fanoutOverriddenByLenses,
   enforcesAxisCoverage,
   passAxes,
   stagePasses,
@@ -58,7 +57,7 @@ import type { StageDef } from "./manifest/schema.js"
 test("defaults enable worktree isolation and leave review single-pass", () => {
   assert.equal(DEFAULT_CONFIG.worktreesDir, ".workflow-worktrees")
   assert.equal(DEFAULT_CONFIG.worktreeSetup, undefined)
-  assert.deepEqual(DEFAULT_CONFIG.reviewLenses, [])
+  assert.deepEqual(stagePasses(DEFAULT_CONFIG, "engineering", checkStage()), [{ focus: null, mode: "single" }])
 })
 
 test("parseConfig accepts worktree knobs", () => {
@@ -118,16 +117,21 @@ test("the backlog is untracked by git by default; ignoreBacklog: false opts back
   assert.equal(parseConfig({ ignoreBacklog: false }).ignoreBacklog, false)
 })
 
-test("parseConfig accepts review lenses and rejects more than five", () => {
-  assert.deepEqual(parseConfig({ reviewLenses: ["correctness", "security"] }).reviewLenses, [
+const withLenses = (lenses: unknown, stage = "review") => ({ workflows: { engineering: { stageFanout: { [stage]: lenses } } } })
+
+test("stageFanout accepts a lens list beside the two literals, and rejects more than five", () => {
+  assert.deepEqual(parseConfig(withLenses(["correctness", "security"])).workflows["engineering"]?.stageFanout?.["review"], [
     "correctness",
     "security",
   ])
-  assert.throws(() => parseConfig({ reviewLenses: ["a", "b", "c", "d", "e", "f"] }), /Invalid .*reviewLenses/)
+  assert.equal(parseConfig(withLenses("axis")).workflows["engineering"]?.stageFanout?.["review"], "axis")
+  // The cap `reviewLenses` carried moves with the lenses.
+  assert.throws(() => parseConfig(withLenses(["a", "b", "c", "d", "e", "f"])), /Invalid .*stageFanout/)
 })
 
-test("parseConfig rejects an empty lens string", () => {
-  assert.throws(() => parseConfig({ reviewLenses: [""] }), /Invalid .*reviewLenses/)
+test("stageFanout rejects an empty lens string and an unknown literal", () => {
+  assert.throws(() => parseConfig(withLenses([""])), /Invalid .*stageFanout/)
+  assert.throws(() => parseConfig(withLenses("lenses")), /Invalid .*stageFanout/)
 })
 
 test("existing knobs keep their defaults and validation", () => {
@@ -294,26 +298,42 @@ test("stagePasses: config stageFanout wins over the manifest, and none turns a d
   assert.deepEqual(stagePasses(off, "engineering", checkStage({ fanout: "axis" })), [{ focus: null, mode: "single" }])
   assert.equal(fanoutFor(off, "engineering", checkStage({ fanout: "axis" })), undefined)
   const on = parseConfig({ workflows: { engineering: { stageFanout: { review: "axis" } } } })
-  assert.equal(fanoutFor(on, "engineering", checkStage()), "axis")
+  assert.deepEqual(fanoutFor(on, "engineering", checkStage()), { mode: "axis" })
 })
 
-test("stagePasses: reviewLenses wins over a declared per-axis fan-out — an existing lens setup is never reinterpreted", () => {
-  const c = parseConfig({ reviewLenses: ["a hostile attacker", "the next maintainer"] })
+test("stagePasses: a lens list yields one lens pass per entry, in order, and overrides the manifest", () => {
+  const c = parseConfig(withLenses(["a hostile attacker", "the next maintainer"]))
   assert.deepEqual(stagePasses(c, "engineering", checkStage({ fanout: "axis" })), [
     { focus: "a hostile attacker", mode: "lens" },
     { focus: "the next maintainer", mode: "lens" },
   ])
-  assert.equal(fanoutOverriddenByLenses(c, "engineering", checkStage({ fanout: "axis" })), true)
-  assert.equal(fanoutOverriddenByLenses(c, "engineering", checkStage()), false)
-  assert.equal(fanoutOverriddenByLenses(DEFAULT_CONFIG, "engineering", checkStage({ fanout: "axis" })), false)
+  assert.deepEqual(fanoutFor(c, "engineering", checkStage()), { mode: "lens", lenses: ["a hostile attacker", "the next maintainer"] })
 })
 
-test("stagePasses: lenses stay scoped to the stage named review; fanout does not", () => {
-  // A sitter's triage stage is not a code review — lenses must not leak onto it,
-  // which is the hardcode that used to live inside the OpenCode driver.
-  const c = parseConfig({ reviewLenses: ["security"] })
+test("stagePasses: lenses are per stage, so one kind's list cannot leak onto another's", () => {
+  // The retired global `reviewLenses` reached the stage named `review` on every
+  // kind at once; a stageFanout entry names the kind AND the stage, so a
+  // pr-sitter triage stage is untouched by an engineering lens list.
+  const c = parseConfig(withLenses(["security"]))
   const triage = checkStage({ name: "triage", fanout: "axis", requiredAxes: ["correctness"] })
   assert.deepEqual(stagePasses(c, "pr-sitter", triage), [{ focus: "correctness", mode: "axis" }])
+})
+
+test("stagePasses: lenses reach any check stage of any kind, not just one named review", () => {
+  // What the move buys: the retired global key was hardcoded to `review`.
+  const c = parseConfig({ workflows: { "pr-sitter": { stageFanout: { triage: ["a hostile attacker"] } } } })
+  const triage = checkStage({ name: "triage", requiredAxes: ["correctness"] })
+  assert.deepEqual(stagePasses(c, "pr-sitter", triage), [{ focus: "a hostile attacker", mode: "lens" }])
+})
+
+test("stagePasses: an empty lens list is not a fan-out — it falls back to the single pass", () => {
+  const c = parseConfig(withLenses([]))
+  assert.deepEqual(stagePasses(c, "engineering", checkStage()), [{ focus: null, mode: "single" }])
+  assert.equal(fanoutFor(c, "engineering", checkStage()), undefined)
+  // And it OVERRIDES a manifest-declared fan-out rather than falling through to
+  // it: an empty list is an explicit "no focused passes here", same as "none".
+  // `?? def.fanout` must not see it, because `[]` is a present value.
+  assert.deepEqual(stagePasses(c, "engineering", checkStage({ fanout: "axis" })), [{ focus: null, mode: "single" }])
 })
 
 test("stagePasses: fanout with no required axes falls back to one pass", () => {
@@ -417,25 +437,40 @@ const reviewStage = (requiredAxes?: string[]) =>
     platformAllowlist: {},
   platformTools: {},
     ...(requiredAxes ? { requiredAxes } : {}),
-  }) as Parameters<typeof unreviewedAxes>[1]
+  }) as Parameters<typeof unreviewedAxes>[2]
 
-test("unreviewedAxes is empty when lenses are off — enforcement is live, nothing is downgraded", () => {
-  assert.deepEqual(unreviewedAxes(DEFAULT_CONFIG, reviewStage(["correctness", "security"])), [])
+test("unreviewedAxes is empty when no lenses are set — enforcement is live, nothing is downgraded", () => {
+  assert.deepEqual(unreviewedAxes(DEFAULT_CONFIG, "engineering", reviewStage(["correctness", "security"])), [])
 })
 
 test("unreviewedAxes names the required axes no configured lens covers", () => {
-  const c = { ...DEFAULT_CONFIG, reviewLenses: ["correctness", "test-adequacy"] }
-  assert.deepEqual(unreviewedAxes(c, reviewStage(["correctness", "security", "performance"])), ["security", "performance"])
+  const c = parseConfig(withLenses(["correctness", "test-adequacy"]))
+  assert.deepEqual(unreviewedAxes(c, "engineering", reviewStage(["correctness", "security", "performance"])), ["security", "performance"])
+})
+
+/**
+ * The regression that motivated folding lenses into `stageFanout`: a ONE-entry
+ * list is the shape most likely to be hand-written — both installers used to
+ * offer exactly it, described as "extra REVIEW passes" — and it is a coverage
+ * LOSS, not a gain. The single unfocused pass it replaces is admitted against
+ * every required axis; this is admitted against none.
+ */
+test("unreviewedAxes: a single lens leaves every OTHER required axis unreviewed", () => {
+  const c = parseConfig(withLenses(["security"]))
+  assert.deepEqual(unreviewedAxes(c, "engineering", reviewStage(AXES)), ["correctness", "readability", "architecture", "performance"])
+  assert.equal(enforcesAxisCoverage(c, "engineering", checkStage()), false)
+  // Whereas the default — no fan-out at all — enforces all five per pass.
+  assert.deepEqual(passAxes(checkStage(), { focus: null, mode: "single" }), AXES)
 })
 
 test("unreviewedAxes is empty when the lens list already names every required axis", () => {
-  const c = { ...DEFAULT_CONFIG, reviewLenses: ["Correctness", " security "] }
-  assert.deepEqual(unreviewedAxes(c, reviewStage(["correctness", "security"])), [])
+  const c = parseConfig(withLenses(["Correctness", " security "]))
+  assert.deepEqual(unreviewedAxes(c, "engineering", reviewStage(["correctness", "security"])), [])
 })
 
 test("unreviewedAxes is empty for a stage that requires no axes (verify, the sitters)", () => {
-  const c = { ...DEFAULT_CONFIG, reviewLenses: ["correctness"] }
-  assert.deepEqual(unreviewedAxes(c, reviewStage()), [])
+  const c = parseConfig(withLenses(["correctness"]))
+  assert.deepEqual(unreviewedAxes(c, "engineering", reviewStage()), [])
 })
 
 /**
@@ -458,8 +493,8 @@ test("enforcesAxisCoverage: lenses that span every required axis keep the guaran
   // The axes are enforceable here because some lens is expected to report each
   // one — this is how a lens setup opts back into the coverage check, with no
   // new config surface.
-  const c = { ...DEFAULT_CONFIG, reviewLenses: AXES }
-  assert.deepEqual(unreviewedAxes(c, checkStage()), [])
+  const c = parseConfig(withLenses(AXES))
+  assert.deepEqual(unreviewedAxes(c, "engineering", checkStage()), [])
   assert.equal(enforcesAxisCoverage(c, "engineering", checkStage()), true)
 })
 
@@ -467,13 +502,13 @@ test("enforcesAxisCoverage: lenses that do NOT span the axes keep today's docume
   // `["security", "test-adequacy"]` is never going to report `readability`, so
   // demanding it would ERROR every run. The downgrade stands — and the config
   // warning already names the axes being given up.
-  const c = { ...DEFAULT_CONFIG, reviewLenses: ["security", "test-adequacy"] }
-  assert.ok(unreviewedAxes(c, checkStage()).length)
+  const c = parseConfig(withLenses(["security", "test-adequacy"]))
+  assert.ok(unreviewedAxes(c, "engineering", checkStage()).length)
   assert.equal(enforcesAxisCoverage(c, "engineering", checkStage()), false)
 })
 
 test("enforcesAxisCoverage: a stage requiring no axes is never gated", () => {
-  const c = { ...DEFAULT_CONFIG, reviewLenses: AXES }
+  const c = parseConfig(withLenses(AXES))
   assert.equal(enforcesAxisCoverage(c, "engineering", checkStage({ requiredAxes: undefined })), false)
 })
 
@@ -492,14 +527,18 @@ test("concurrencyFor: an axis fan-out runs its passes in parallel by default", (
   assert.equal(concurrencyFor(DEFAULT_CONFIG, "engineering", checkStage({ fanout: "axis" }), 5), 5)
 })
 
-test("concurrencyFor: lens passes stay sequential by default — an existing lens setup is unchanged", () => {
-  // reviewLenses predates fan-out and keeps behaving exactly as it does today;
-  // only a per-axis fan-out is a request to parallelize.
-  const c = { ...DEFAULT_CONFIG, reviewLenses: ["a hostile attacker", "the next maintainer"] }
-  assert.equal(concurrencyFor(c, "engineering", checkStage(), 2), 1)
-  // ...including when the lenses override a declared fan-out: the passes that
-  // actually run are lens passes, so the fan-out's default must not leak in.
-  assert.equal(concurrencyFor(c, "engineering", checkStage({ fanout: "axis" }), 2), 1)
+test("concurrencyFor: lens passes are parallel by default too — one rule for every focused pass", () => {
+  // The serial carve-out went with the key it protected. `reviewLenses` was
+  // kept sequential so a setup predating the fan-out behaved exactly as it had;
+  // lenses are now a stageFanout value, so reaching them means writing that knob
+  // afresh and there is no older behavior left to preserve.
+  const c = parseConfig(withLenses(["a hostile attacker", "the next maintainer"]))
+  assert.equal(concurrencyFor(c, "engineering", checkStage(), 2), 2)
+  // ...and an explicit clamp still takes it back to serial.
+  const clamped = parseConfig({
+    workflows: { engineering: { stageFanout: { review: ["a hostile attacker", "the next maintainer"] }, stageConcurrency: { review: 1 } } },
+  })
+  assert.equal(concurrencyFor(clamped, "engineering", checkStage(), 2), 1)
 })
 
 test("concurrencyFor reads the configured value, clamped to the pass count and floored at 1", () => {
@@ -871,6 +910,26 @@ test("retired top-level keys are named from the RAW layer, since parsing strips 
   assert.deepEqual(retiredConfigKeys("not an object"), [])
 })
 
+test("retired: reviewLenses names the stage knob that absorbed it, and both retired keys report together", () => {
+  const lenses = retiredConfigKeys({ reviewLenses: ["security"] })
+  assert.deepEqual(
+    lenses.map((r) => r.key),
+    ["reviewLenses"],
+  )
+  // Naming `stageFanout` is the whole job: a user reading "reviewLenses is gone"
+  // with no destination has lost the setting, not migrated it. It also points at
+  // "axis", because a hand-written one-entry list is the coverage regression
+  // this retirement exists to end.
+  assert.match(lenses[0]?.replacement ?? "", /stageFanout/)
+  assert.match(lenses[0]?.replacement ?? "", /"axis"/)
+
+  // A config carrying both retired keys reports both, in registry order.
+  assert.deepEqual(
+    retiredConfigKeys({ watchIntervalMinutes: 5, reviewLenses: [] }).map((r) => r.key),
+    ["watchIntervalMinutes", "reviewLenses"],
+  )
+})
+
 test("no retired key is also a live schema key", () => {
   // A key in both lists would warn "this no longer exists" about a setting that
   // very much does — so retiring one means removing it from the schema.
@@ -925,8 +984,8 @@ test("parseConfig rejects an unknown tracker system and a non-URL baseUrl", () =
 test("mergeConfigLayers: scalars and arrays in the override replace wholesale", () => {
   assert.deepEqual(mergeConfigLayers({ maxIterations: 5 }, { maxIterations: 7 }), { maxIterations: 7 })
   assert.deepEqual(
-    mergeConfigLayers({ reviewLenses: ["security", "perf"] }, { reviewLenses: ["correctness"] }),
-    { reviewLenses: ["correctness"] },
+    mergeConfigLayers({ protectedBranches: ["release/2.4", "staging"] }, { protectedBranches: ["develop"] }),
+    { protectedBranches: ["develop"] },
   )
 })
 

@@ -149,14 +149,14 @@ before you advance — and never pass or invent a `model`. Changing
    `{fire, build}` if budget remains, else `{stop}`.
    - **Focused passes.** When the fire action (or a `workflow_stage` response)
      carries a `passes` array, REVIEW runs as **one subagent pass per entry,
-     sequentially** — a per-axis fan-out (`stageFanout`/`fanout: "axis"`) or the
-     configured `reviewLenses`. For each entry, in order:
+     sequentially** — a per-axis fan-out (`stageFanout`/`fanout: "axis"`) or a
+     configured lens list (`stageFanout: {"review": [...]}`). For each entry, in order:
      `workflow_stage({stage:"review", focus:"<entry>"})` — it arms a fresh
      deadline for that pass and returns **that pass's** `prompt`, which you hand
      to the subagent instead of the fire payload's — then spawn the response's
      `agent` (**`workflow-review`**) with that pass's prompt.
      Each pass calls `workflow_verdict` itself — with its own axis under a
-     per-axis fan-out, or with the axes its lens bears on under `reviewLenses`;
+     per-axis fan-out, or with the axes its lens bears on under a lens list;
      you never call it on its behalf. Run them one at a time: the server arms one
      pass at a time. When every entry has run, call `workflow_advance` **once** —
      the server merges the passes worst-wins.

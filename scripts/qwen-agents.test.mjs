@@ -29,8 +29,8 @@ test("a project layer's same-kind section merges field-by-field, project wins", 
 })
 
 test("arrays and scalars replace wholesale, never merge element-wise", () => {
-  const merged = mergeConfigLayers({ reviewLenses: ["a", "b"], shipPublish: "pr" }, { reviewLenses: ["c"], shipPublish: "local" })
-  assert.deepEqual(merged.reviewLenses, ["c"])
+  const merged = mergeConfigLayers({ protectedBranches: ["a", "b"], shipPublish: "pr" }, { protectedBranches: ["c"], shipPublish: "local" })
+  assert.deepEqual(merged.protectedBranches, ["c"])
   assert.equal(merged.shipPublish, "local")
 })
 

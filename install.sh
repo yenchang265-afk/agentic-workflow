@@ -398,7 +398,7 @@ configure() {
 
   # Q0a — scope: user-scope (shared across every repo) or repo-scope (this
   # project only). The runtime layers repo OVER user, so shared settings
-  # (ado org/selfLogin/pat, review lenses) belong in user scope and
+  # (ado org/selfLogin/pat, maxIterations) belong in user scope and
   # project-specific ones (a PR query, worktreesDir) in the repo file.
   local scope="$CONFIG_SCOPE"
   if [ -z "$scope" ]; then
@@ -569,7 +569,7 @@ configure() {
 
   # Advanced (single gate).
   echo
-  if confirm "Configure advanced options (task tracker, review lenses, iterations)?"; then
+  if confirm "Configure advanced options (task tracker, multi-pass review, iterations)?"; then
     local tracker
     echo
     echo "Team task tracker?"
@@ -596,24 +596,17 @@ configure() {
       add_member "\"projectManagement\":{$pm}"
     fi
 
-    local lenses
-    lenses="$(ask "Extra review lenses, comma-separated (max 5, blank = none)" "")"
-    if [ -n "$lenses" ]; then
-      local arr="" item count=0 rest="$lenses"
-      # Split on commas, trim surrounding spaces, drop empties, cap at 5.
-      while [ -n "$rest" ]; do
-        case "$rest" in
-          *,*) item="${rest%%,*}"; rest="${rest#*,}" ;;
-          *)   item="$rest"; rest="" ;;
-        esac
-        item="${item#"${item%%[![:space:]]*}"}"
-        item="${item%"${item##*[![:space:]]}"}"
-        [ -z "$item" ] && continue
-        [ "$count" -ge 5 ] && { echo "note: capping review lenses at 5" >&2; break; }
-        arr="${arr:+$arr,}\"$(json_escape "$item")\""
-        count=$((count + 1))
-      done
-      [ -n "$arr" ] && add_member "\"reviewLenses\":[$arr]"
+    # This used to ask for "extra review lenses" and write the top-level
+    # `reviewLenses`. Both halves were wrong. Lenses REPLACED the single review
+    # pass rather than adding to it, so the one-lens answer this prompt invited
+    # ("security") turned a review admitted against all five axes into one pass
+    # admitted against none — a coverage loss, offered as an enhancement. The key
+    # is retired; the multi-pass review now lives on the stage as
+    # `workflows.engineering.stageFanout.review`, and "axis" is the form that
+    # covers every required axis AND enforces it per pass. Free-text lenses are
+    # still reachable there by hand for anyone who wants them.
+    if confirm "Run REVIEW as one focused pass per axis (5 passes, stronger but ~5x the review cost)?"; then
+      add_workflow "\"engineering\":{\"stageFanout\":{\"review\":\"axis\"}}"
     fi
 
     local iters
@@ -719,7 +712,6 @@ ensure_user_defaults() {
   "codePlatform": "github",
   "worktreesDir": ".workflow-worktrees",
   "taskBranch": "feature/",
-  "reviewLenses": [],
   "workflows": {
     "pr-sitter": { "enabled": false, "query": "is:open author:@me" },
     "review-sitter": { "enabled": false, "query": "is:open review-requested:@me" },
@@ -746,11 +738,12 @@ EOF
   echo "           codePlatform (\"github\")            — or \"ado\" (needs an \"ado\" section)"
   echo "           worktreesDir (\".workflow-worktrees\")   — per-task git worktree isolation; false to opt out"
   echo "           taskBranch (\"feature/\")           — work-branch prefix; false to build on your current branch"
-  echo "           reviewLenses ([])                  — extra REVIEW passes, e.g. [\"security\"]"
   echo "           workflows.pr-sitter    (off) — watches your own open PRs"
   echo "           workflows.review-sitter (off) — comments on PRs awaiting your review"
   echo "           workflows.dep-sitter   (off) — opens draft PRs for vulnerable/outdated deps"
   echo "           workflows.main-sitter  (off) — opens a draft PR when the default branch's CI goes red"
+  echo "         Multi-pass REVIEW is per stage, not global: set"
+  echo "           workflows.engineering.stageFanout.review to \"axis\" (one enforced pass per axis)."
   echo "         See docs/configuration.md for every constraint and the ado/projectManagement sections."
 }
 

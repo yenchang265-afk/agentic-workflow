@@ -34,7 +34,6 @@ import {
   discoverChecksFor,
   enabledWorkflowKinds,
   enforcesAxisCoverage,
-  fanoutOverriddenByLenses,
   modelFor,
   passAxes,
   platformFor,
@@ -623,16 +622,21 @@ const stageModelWarnings = (): string[] =>
           `${unbudgeted.length > 1 ? "those budgets are" : "that budget is"} ignored and the prompt stays unbounded. Valid stages: ${stageNames.join(", ")}.`,
       )
     }
-    // reviewLenses suppresses per-pass axis-coverage enforcement, and the
+    // A lens list suppresses per-pass axis-coverage enforcement, and the
     // stage-wide check only survives when the lenses between them span the
     // stage's axes — so name the axes no lens covers, and say what that costs.
+    // A ONE-entry list is the shape most likely to be hand-written, and it is
+    // the one that costs the most: the unfocused single pass it replaces was
+    // admitted against every axis.
     for (const def of manifestFor(kind).manifest.stages) {
-      const unreviewed = unreviewedAxes(config, def)
+      const unreviewed = unreviewedAxes(config, kind, def)
       if (!unreviewed.length) continue
       warnings.push(
-        `reviewLenses is on and no lens covers ${unreviewed.map((a) => `"${a}"`).join(", ")}, so the ${kind} loop's ` +
-          `${def.name} stage does not enforce axis coverage at all — ${unreviewed.length > 1 ? "those axes go" : "that axis goes"} unreviewed. ` +
-          `Add ${unreviewed.length > 1 ? "those lenses" : "that lens"} to get the coverage check back, or unset reviewLenses.`,
+        `workflows.${kind}.stageFanout.${def.name} is a lens list and no lens covers ` +
+          `${unreviewed.map((a) => `"${a}"`).join(", ")}, so the ${kind} loop's ${def.name} stage does not enforce axis ` +
+          `coverage at all — ${unreviewed.length > 1 ? "those axes go" : "that axis goes"} unreviewed. Add ` +
+          `${unreviewed.length > 1 ? "those lenses" : "that lens"} to get the coverage check back, or set it to "axis" ` +
+          "to cover and enforce every required axis.",
       )
     }
     // Same trap for stageChecks, and a worse one to hit: a typo'd stage runs NO
@@ -670,15 +674,6 @@ const stageModelWarnings = (): string[] =>
       warnings.push(
         `workflows.${kind}.stageFanout names ${unfanned.map((k) => `"${k}"`).join(", ")}, which ${unfanned.length > 1 ? "are" : "is"} not a stage of the ${kind} loop — ` +
           `${unfanned.length > 1 ? "those are" : "that is"} ignored and the stage runs a single pass. Valid stages: ${stageNames.join(", ")}.`,
-      )
-    }
-    // Both multi-pass knobs set on one stage: the lenses run and the declared
-    // per-axis fan-out does not. Silence would make the fan-out look broken.
-    for (const def of manifestFor(kind).manifest.stages) {
-      if (!fanoutOverriddenByLenses(config, kind, def)) continue
-      warnings.push(
-        `reviewLenses is configured, so the ${kind} loop's ${def.name} stage runs the lens passes instead of its declared ` +
-          "per-axis fan-out — and per-pass axis coverage is not enforced. Unset reviewLenses to use the fan-out.",
       )
     }
     return warnings

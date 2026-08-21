@@ -317,8 +317,8 @@ test("workflow_advance routes a twice-rejected verdict on what the stage declare
 
 // A focused pass owes ONE axis. Admitting it against the stage's full
 // requirement rejects every fan-out pass for the axes it was told not to review
-// — and rejects every reviewLenses pass on this host too, which is a bug that
-// predates fan-out.
+// — and rejects every lens pass on this host too, which is a bug that predates
+// fan-out.
 test("workflow_verdict admits a pass against that pass's own axes, not the stage's", () => {
   const body = toolBody(code(source()), "workflow_verdict")
   assert.match(body, /admitVerdict\(rec, passAxes\(def, currentPass\(stage\)\), pending, evidenceCtx, criteriaCtx\)/)
