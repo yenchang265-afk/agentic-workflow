@@ -60,7 +60,6 @@ const baseConfig: Config = {
   ignoreBacklog: true,
   worktreesDir: false,
   taskBranch: "feature/",
-  reviewLenses: [],
   workflows: {},
 }
 

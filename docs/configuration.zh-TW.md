@@ -62,7 +62,7 @@ publish 階段（它們需要一個明確的儲存庫來開 PR），就在 `proj
    覆寫使用者層級**。
 
 合併方式是欄位層級的深度合併：巢狀物件（`ado`、`workflows`、每個
-`workflows.<kind>` 區段）會逐鍵遞迴合併；陣列（`reviewLenses`）和純量則
+`workflows.<kind>` 區段）會逐鍵遞迴合併；陣列（`stageFanout` 的視角清單）和純量則
 整個取代。分層合併發生在驗證**之前**，因此預設值永遠不會蓋掉任一份
 檔案中的明確值，跨欄位的必要條件（例如 `codePlatform: "ado"` 需要
 `ado.selfLogin`）是針對合併後的視圖去檢查的——依此設計，理想的
@@ -129,16 +129,12 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 | `notifyCommand` | 未設定 | 在迴圈終端事件之後觸發的 shell 指令——計畫停泊等待計畫閘門、run 抵達出貨閘門、stop、error——讓閘門不會在沒人看的 scrollback 裡放涼。以 `sh -c <command>` 執行，環境變數帶 `AW_EVENT`（`park`\|`done`\|`stop`\|`error`）、`AW_KIND`、`AW_TASK`、`AW_MESSAGE`；有 10 秒上限且 best-effort——通知器慢或失敗只會記警告，永不改變結果。例如 `notify-send` 或對聊天 webhook 的 `curl`。**含 shell 的鍵——只在使用者層級生效**，見下文。 |
 | `notifyEvents` | 未設定（＝全部） | 哪些終端事件會觸發 `notifyCommand`（`["park","done","stop","error"]` 的子集合）。不含 shell，所以 repo 層可以「收窄」——但永遠不能放寬——貢獻者會被通知的範圍。 |
 | `worktreeSetup` | 未設定 | 在一個剛建立的 worktree 內執行的 shell 指令（例如 `"npm ci"`）。**含 shell——僅限使用者層級**，見下方。 |
-| `reviewLenses` | `[]` | 見下方強化項。最多 5 個視角。 |
 
 三個外掛讀取的都是同一份檔案：結構描述位於共用核心套件
 （`packages/core/src/config.ts`），每個 host 可以用只有自己能支援的
-欄位去擴充它——不過目前沒有任何 host 這麼做。`watchIntervalMinutes`
-（全域的預設 watch 輪詢週期，僅限 OpenCode）是最後一個這類欄位，現已
-**退役**：請改用 `/agentic-workflow:engineering watch <interval>` 依
-session 設定，或用 `workflows.<kind>.trigger.intervalMinutes`（見下文）
-依類型持久化設定。仍然設定了它的設定檔可以正常載入，並會記錄一則指出
-這兩個替代做法的警告。
+欄位去擴充它——不過目前沒有任何 host 這麼做。曾經存在、現已移除的鍵
+列在[已退役的鍵](#已退役的鍵)；仍然設定了其中之一的設定檔可以正常載入，
+並會記錄一則指出替代做法的警告。
 
 ## 工作流程類型（`workflows`）
 
@@ -1043,64 +1039,63 @@ issue 的 key/id 複製進任務裡。
   `ignoreBacklog: false` 可以恢復舊有的提交式待辦行為。無論哪種
   設定，任務檔案本身在磁碟上都不受影響；改變的只是迴圈是否提交
   它們的移動。
-- **`reviewLenses`**——每個視角各跑一次 REVIEW（例如
-  `["correctness", "security", "test-adequacy"]`），取最差的裁定，
-  這樣單一個被提示注入攻擊的審查者就無法讓一項變更蒙混過關。成本
-  約為 N 倍的審查時間；預設關閉。
-
-  每一趟都被要求只專注在自己的視角上，並且**只針對該視角真正涉及的軸**回報
-  逐軸結果——沒有實際檢視的軸要留白，絕不可記成乾淨的 PASS：各趟以最差者勝
-  合併，這裡的臆測會直接變成整個階段在那個沒人審查過的軸上的裁定。因此
-  **逐趟**的軸涵蓋強制檢查是關閉的（不能因為某個視角沒審它被告知不用審的軸
-  就拒絕它）。
-
-  至於該階段的 `requiredAxes` 會怎樣，取決於你的視角清單：
-
-  - **視角合起來涵蓋了每一個必要軸**（例如 engineering 的全部五個）時保有
-    保證：跨各趟**累積**的紀錄仍必須涵蓋每一個軸，有缺口就以 ERROR 停止迴圈，
-    而不是拿一份根本沒跑完的審查去重建。這就是同時取得視角與涵蓋保證的方式，
-    不需要額外設定。
-  - **沒有涵蓋到**時（例如 `["security", "test-adequacy"]`），不能要求它們交出
-    永遠不會回報的軸，所以該階段的涵蓋檢查關閉——沒有任何視角涵蓋的軸就不會被
-    審查。兩個 host 都會在啟動時警告，並明確指出是哪些軸。
-
-  無論哪一種，完全沒有記錄裁定的視角都會變成 ERROR，而不是悄悄消失的意見。
-  如果你要的是逐軸的分趟而不是自由文字的視角，請改用下面的 `stageFanout`。
-- **`workflows.<kind>.stageFanout`**——階段名稱 → `"axis"` 或 `"none"`：讓一個
-  check 階段依它的 `requiredAxes` 各跑一趟，每一趟只被要求審查並
-  回報**一個**軸。各趟以最差者勝合併，而且**在 OpenCode 上它們是平行跑的**——
-  把 fan-out 打開本身就是「我要 N 趟聚焦審查」的請求，不需要再靠
-  `stageConcurrency` 才不會慢。要夾住它請設 `stageConcurrency`（見下）；
-  Claude Code 與 Qwen Code 這兩個 host 不論你怎麼設都是一趟一趟跑。
+- **`workflows.<kind>.stageFanout`**——階段名稱 → `"axis"`、`"none"`，或一份
+  **視角清單**：讓一個 check 階段以數趟聚焦審查取代單獨一趟。各趟以最差者勝
+  合併，而且**在 OpenCode 上它們是平行跑的**——把 fan-out 打開本身就是
+  「我要 N 趟聚焦審查」的請求，不需要再靠 `stageConcurrency` 才不會慢。要夾住
+  它請設 `stageConcurrency`（見下）；Claude Code 與 Qwen Code 這兩個 host
+  不論你怎麼設都是一趟一趟跑。
 
   ```jsonc
+  // 每個必要軸各一趟——涵蓋會被強制檢查
   { "workflows": { "engineering": { "stageFanout": { "review": "axis" } } } }
+  // ……或用你自己的角度，每個角度各一趟
+  { "workflows": { "engineering": { "stageFanout": { "review": ["a hostile attacker", "the next maintainer"] } } } }
   ```
 
-  成本與 `reviewLenses` 相同（約 N 倍），威脅模型上的好處也相同（沒有任何
-  單一審查者能讓變更蒙混過關），但它是在視角模式做不到的層級上強制涵蓋——
-  **逐趟**：每一趟
-  都以自己的軸受到強制檢查，而且只要有任何一個軸沒有結果，這個階段就無法前進
-  ——缺口會讓迴圈以 ERROR 停下，而不是拿一場根本沒發生的審查去重建。預設關閉；
-  兩個旋鈕都沒設的階段與現況逐位元組相同。
+  兩種形式的成本都約為 N 倍，威脅模型上的好處也相同：沒有任何單一個被提示注入
+  攻擊的審查者能讓一項變更蒙混過關。它們的差別在於能**保證**什麼，選擇之前值得
+  先弄清楚：
 
-  `"none"` 可以把清單檔（階段上的 `fanout`）宣告的 fan-out 關掉。設定檔勝過
-  清單檔，與 `stageModels`、`stageContext` 一致——而且這也是你唯一能碰到內建
-  類型的方式，因為它們的清單檔是隨 `@agentic-workflow/core` 套件一起出貨的。
+  - **`"axis"`** 會**逐趟**強制檢查涵蓋——每一趟都被要求交出自己那個軸，而且
+    只要還有軸沒被涵蓋，該階段就無法前進；有缺口就以 ERROR 停止迴圈，而不是拿
+    一份根本沒跑完的審查去重建。
+  - **視角清單**做不到：自由文字的角度對應不到任何軸，所以每個視角只被要求回報
+    它真正涉及的軸，沒有實際檢視的軸要留白，而不是記成乾淨的 PASS（各趟以最差
+    者勝合併，這裡的臆測會直接變成整個階段在那個沒人審查過的軸上的裁定）。整個
+    階段的檢查能不能保住，取決於這份清單：
 
-  在名為 `review` 的階段上，**`reviewLenses` 勝過這個設定**，所以既有的視角
-  設定行為完全不變；當設定好的視角清單覆蓋掉已宣告的 fan-out 時，兩個 host
-  都會警告。命名到不存在階段的鍵會被接受、忽略並警告，與 `stageModels` 相同。
+    - **視角合起來涵蓋了每一個必要軸**（例如 engineering 的全部五個）時保有
+      保證——跨各趟**累積**的紀錄仍必須涵蓋每一個軸。
+    - **沒有涵蓋到**時（例如 `["security", "test-adequacy"]`），不能要求它們交出
+      永遠不會回報的軸，所以該階段的涵蓋檢查關閉。兩個 host 都會在啟動時警告，
+      並明確指出是哪些軸不會被審查。
+
+  > **只有一個項目的視角清單是降級，不是升級。** 完全不做 fan-out 時，單獨那一趟
+  > 審查是針對**每一個**必要軸受檢的。`["security"]` 會把它換成一趟**完全不受檢**
+  > 的審查——少了四個軸，而這個設定看起來卻像是加強了審查。除非你就是要那些軸清單
+  > 表達不了的角度，否則請選 `"axis"`。
+
+  無論哪一種，完全沒有記錄裁定的那一趟都會變成 ERROR，而不是悄悄消失的意見。
+  預設關閉；兩個旋鈕都沒設的階段，行為與單獨一趟未聚焦的審查完全相同。
+
+  `"none"` 會把 manifest 宣告的 fan-out（階段上的 `fanout`）關掉。設定勝過
+  manifest，與 `stageModels`、`stageContext` 相同——而且這也是你能碰到內建類型的
+  唯一方式，因為它們的 manifest 是隨 `@agentic-workflow/core` 套件出貨的。指到不
+  存在階段的鍵會被接受、忽略並警告，與 `stageModels` 完全一樣。
+
+  視角清單吸收了已退役的頂層 `reviewLenses`（見[已退役的鍵](#已退役的鍵)）：它
+  只作用在名為 `review` 的階段上，而且會無聲地勝過已宣告的逐軸 fan-out。
 - **`workflows.<kind>.stageConcurrency`**——階段名稱 → 該階段的分趟最多可以有
   幾趟**同時**進行。沒設的話，逐軸的 `stageFanout` 會把**所有**分趟同時跑掉，
   其他情況則是一趟一趟跑。對上面兩種
-  多趟模式都有效：`stageFanout` 的逐軸分趟，以及 `reviewLenses` 的視角分趟。
+  `stageFanout` 產生的每一趟聚焦審查都適用，不論逐軸或視角。
 
   ```jsonc
   // 把五個軸的 fan-out 夾到同時只有兩趟
   { "workflows": { "engineering": { "stageFanout": { "review": "axis" }, "stageConcurrency": { "review": 2 } } } }
   // ……或是替視角設定開啟平行，它預設不平行
-  { "reviewLenses": ["a hostile attacker", "the next maintainer"], "workflows": { "engineering": { "stageConcurrency": { "review": 2 } } } }
+  { "workflows": { "engineering": { "stageFanout": { "review": ["a hostile attacker", "the next maintainer"] }, "stageConcurrency": { "review": 2 } } } }
   ```
 
   分趟的 check 階段在設計上彼此獨立——每一趟都是對同一個工作樹的唯讀審查，只被
@@ -1111,9 +1106,6 @@ issue 的 key/id 複製進任務裡。
   它仍然是個**成本旋鈕**：同時有 N 趟進行，代表對你的用量
   上限同時開了 N 個模型 session，所以 `1` 就是用量吃緊時把分趟階段拉回依序執行的
   方式。這個值會被夾到該階段的分趟數，所以不管你設多少，單趟的階段都不受影響。
-
-  `reviewLenses` 維持原本依序執行的預設。它比 fan-out 更早存在，所以既有的視角
-  設定——包括覆蓋掉已宣告 fan-out 的那種——在你設這個旋鈕之前，行為完全不變。
 
   **僅限 OpenCode。** 在那裡每一趟都有自己的 session，這正是逐趟的裁定、軸要求
   與證據帳本能夠分開的原因。Claude Code 與 Qwen Code 由編排者去產生分趟的
@@ -1126,6 +1118,19 @@ issue 的 key/id 複製進任務裡。
   `key/secret/token: …` 這類賦值）。
 - 在一個終端事件發生時，執行紀錄會得到一張 **`## Run summary`**
   表格——逐階段的牆鐘時間、裁定歷史，以及用掉的疊代次數。
+
+## 已退役的鍵
+
+曾經移除的鍵，以及各自的替代做法。仍然設定了其中之一的設定檔**可以正常載入**
+——該鍵會被忽略，迴圈會記錄一則指出替代做法的警告。什麼都不會失敗，所以不急著
+改；那則警告的存在，只是為了讓「一個不再生效的設定」不會無聲無息。
+
+| 已退役 | 請改用 |
+|--------|--------|
+| `watchIntervalMinutes` | 用 `/agentic-workflow:engineering watch <interval>` 依 session 設定（例如 `watch 30s`），或用 `workflows.<kind>.trigger` = `{"type":"poll","intervalMinutes":N}` 依類型設定並持久化。舊的鍵是*全域*週期，會一次套用到每一個被 watch 的類型。 |
+| `reviewLenses` | `workflows.<kind>.stageFanout.<stage>`——同一份清單，放到它實際作用的階段上：`{"workflows": {"engineering": {"stageFanout": {"review": ["security"]}}}}`。建議優先用 `"axis"`，它會涵蓋**並強制檢查**每一個必要軸；關於只有一個項目的視角清單，見 [`stageFanout`](#工作流程類型workflows) 的警告。 |
+| `ado.access`、`ado.customHeaders`、`ado.insecureSkipTlsVerify` | 沒有替代——Azure DevOps 只透過它的 MCP server 連線。傳輸層的需求請用 `ado.mcp.env`（例如 `NODE_EXTRA_CA_CERTS`、`HTTPS_PROXY`）。 |
+| `gateBeforeBuild`、`interviewBeforePlan` | 沒有替代——兩者的行為現在都是無條件的。這是 1.0 前的鍵，會被靜靜忽略。 |
 
 ## 環境變數
 

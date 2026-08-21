@@ -103,7 +103,7 @@ Do **not** rebuild this as a slash command that fans out subagents. Subagents ca
 
 ## When *not* to use Agent Teams
 
-- Production-bound verdict on a known diff → use a subagent fan-out (Pattern 3), e.g. the `reviewLenses` review.
+- Production-bound verdict on a known diff → use a subagent fan-out (Pattern 3), e.g. a `stageFanout` review.
 - One specialist perspective on one artifact → direct persona invocation.
 - Sequential lifecycle (plan → build → verify → review) → user-driven slash commands (Pattern 4).
 - Read-heavy research with a small digest → built-in `Explore` subagent.

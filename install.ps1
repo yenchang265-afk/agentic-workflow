@@ -350,7 +350,7 @@ function Invoke-ConfigWizard {
 
     # Q0a — scope: user-scope (shared across every repo) or repo-scope (this
     # project only). The runtime layers repo OVER user, so shared settings
-    # (ado org/selfLogin/pat, review lenses) belong in user scope and
+    # (ado org/selfLogin/pat, maxIterations) belong in user scope and
     # project-specific ones (a PR query, worktreesDir) in the repo file.
     $scope = $ConfigScope
     if (-not $scope) {
@@ -499,7 +499,7 @@ function Invoke-ConfigWizard {
 
     # Advanced (single gate).
     Write-Host ""
-    if (Confirm-Prompt "Configure advanced options (task tracker, review lenses, iterations)?") {
+    if (Confirm-Prompt "Configure advanced options (task tracker, multi-pass review, iterations)?") {
         Write-Host ""
         Write-Host "Team task tracker?"
         Write-Host "  [1] none (default)"
@@ -526,14 +526,16 @@ function Invoke-ConfigWizard {
             $config['projectManagement'] = $pm
         }
 
-        $lenses = Read-Answer "Extra review lenses, comma-separated (max 5, blank = none)" ""
-        if ($lenses) {
-            $items = @($lenses -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-            if ($items.Count -gt 5) {
-                Write-Host "note: capping review lenses at 5"
-                $items = $items[0..4]
-            }
-            if ($items.Count -gt 0) { $config['reviewLenses'] = $items }
+        # This used to ask for "extra review lenses" and write the top-level
+        # reviewLenses. Both halves were wrong. Lenses REPLACED the single review
+        # pass rather than adding to it, so the one-lens answer this prompt
+        # invited ("security") turned a review admitted against all five axes
+        # into one pass admitted against none — a coverage loss, offered as an
+        # enhancement. The key is retired; the multi-pass review now lives on the
+        # stage as workflows.engineering.stageFanout.review, and "axis" is the
+        # form that covers every required axis AND enforces it per pass.
+        if (Confirm-Prompt "Run REVIEW as one focused pass per axis (5 passes, stronger but ~5x the review cost)?") {
+            $workflows['engineering'] = [ordered]@{ stageFanout = [ordered]@{ review = 'axis' } }
         }
 
         $iters = Read-Answer "Max loop iterations" "3"
@@ -631,7 +633,6 @@ function Set-UserDefaults {
         codePlatform        = 'github'
         worktreesDir        = '.workflow-worktrees'
         taskBranch          = 'feature/'
-        reviewLenses        = @()
         workflows           = [ordered]@{
             'pr-sitter'     = [ordered]@{ enabled = $false; query = 'is:open author:@me' }
             'review-sitter' = [ordered]@{ enabled = $false; query = 'is:open review-requested:@me' }
@@ -650,11 +651,12 @@ function Set-UserDefaults {
     Write-Host "           codePlatform (`"github`")            — or `"ado`" (needs an `"ado`" section)"
     Write-Host "           worktreesDir (`".workflow-worktrees`")   — per-task git worktree isolation; false to opt out"
     Write-Host "           taskBranch (`"feature/`")           — work-branch prefix; false to build on your current branch"
-    Write-Host "           reviewLenses ([])                  — extra REVIEW passes, e.g. [`"security`"]"
     Write-Host "           workflows.pr-sitter    (off) — watches your own open PRs"
     Write-Host "           workflows.review-sitter (off) — comments on PRs awaiting your review"
     Write-Host "           workflows.dep-sitter   (off) — opens draft PRs for vulnerable/outdated deps"
     Write-Host "           workflows.main-sitter  (off) — opens a draft PR when the default branch's CI goes red"
+    Write-Host "         Multi-pass REVIEW is per stage, not global: set"
+    Write-Host "           workflows.engineering.stageFanout.review to `"axis`" (one enforced pass per axis)."
     Write-Host "         See docs/configuration.md for every constraint and the ado/projectManagement sections."
 }
 

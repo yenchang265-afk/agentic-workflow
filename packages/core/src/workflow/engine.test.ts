@@ -43,7 +43,6 @@ const config: Config = {
   ignoreBacklog: true,
   worktreesDir: false,
   taskBranch: "feature/",
-  reviewLenses: [],
   workflows: {},
 }
 
@@ -504,14 +503,13 @@ test("composePrompt swaps in the per-axis contract when review fans out, and onl
   )
 })
 
-test("composePrompt: configured reviewLenses beat a fan-out, and the contract follows the passes that will run", () => {
+test("composePrompt: a lens list renders the lens contract, not the axis or single-pass one", () => {
   const state = resumeAtBuild("add foo", task, "PLAN BODY")
-  // Both knobs set: lenses win, so the contract must NOT tell each pass to
-  // report a single axis it was never assigned.
+  // A lens fan-out must NOT tell each pass to report a single axis it was never
+  // assigned.
   const both: Config = {
     ...config,
-    reviewLenses: ["a hostile attacker"],
-    workflows: { engineering: { stageFanout: { review: "axis" } } },
+    workflows: { engineering: { stageFanout: { review: ["a hostile attacker"] } } },
   }
   const review = composePrompt(eng, { ...state, stage: "review" }, "review", both)
   assert.doesNotMatch(review, /exactly ONE/)

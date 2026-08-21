@@ -216,12 +216,6 @@ const BaseConfigSchema = z.object({
    */
   taskBranch: z.union([GitRefNameSchema, z.literal(false)]).default("feature/"),
   /**
-   * Extra REVIEW lenses; each runs the review stage once more focused on that
-   * lens, and the loop takes the worst verdict across all passes. Unset/[] →
-   * a single review (today's behavior). See docs/design/improvements/04.
-   */
-  reviewLenses: z.array(z.string().min(1)).max(5).default([]),
-  /**
    * Per-workflow-kind sections keyed by kind (a `workflows/<kind>/` manifest).
    * Engineering runs unless explicitly disabled; every other kind is opt-in
    * (`enabled: true`). Kind-specific knobs ride along and are validated by
@@ -259,14 +253,33 @@ const BaseConfigSchema = z.object({
         /**
          * Stage name → fan-out strategy, overriding the manifest stage's `fanout`.
          * `"axis"` runs the stage once per required axis; `"none"` turns a
-         * manifest-declared fan-out back off.
+         * manifest-declared fan-out back off; a LIST of focus strings runs the
+         * stage once per entry, each told to focus on that angle alone.
          *
          * This is what makes fan-out reachable at all: the built-in kinds'
          * manifests ship inside the core package (manifest/dir.ts), so a user
          * cannot edit `fanout` there. Same direction as `stageModels`/`stageContext`
-         * — config beats manifest. Value space is two literals: no shell, no path.
+         * — config beats manifest. Value space is two literals or a string list:
+         * no shell, no path.
+         *
+         * The list form absorbed the top-level `reviewLenses`
+         * (`RETIRED_CONFIG_KEYS`). Two mechanisms for "run this check stage as
+         * several focused passes" could not both be right, and the global one
+         * was the weaker: it applied to the stage named `review` alone — one
+         * stage of one kind — and it WON over a declared fan-out, so the better
+         * configuration silently lost and both hosts carried a warning whose only
+         * job was to report that. Here the same lenses reach any check stage of
+         * any kind, and cannot shadow anything.
+         *
+         * Lens passes still buy less than `"axis"` does: a free-text angle maps
+         * to no axis, so per-pass axis coverage cannot be enforced against it
+         * (`passAxes`), and the stage-wide check survives only when the list
+         * between its entries names every required axis (`enforcesAxisCoverage`).
+         * Capped at 5, as `reviewLenses` was.
          */
-        stageFanout: z.record(z.string(), z.enum(["axis", "none"])).optional(),
+        stageFanout: z
+          .record(z.string(), z.union([z.enum(["axis", "none"]), z.array(z.string().min(1)).max(5)]))
+          .optional(),
         /**
          * Stage name → how many of that stage's focused passes may run at once.
          * Absent ⇒ a per-axis fan-out runs all its passes at once, everything
@@ -859,6 +872,8 @@ export const deprecatedAdoKeys = (config: Config): string[] => {
 export const RETIRED_CONFIG_KEYS: Readonly<Record<string, string>> = {
   watchIntervalMinutes:
     'use `watch <interval>` for one session (e.g. `watch 30s`), or "workflows.<kind>.trigger": {"type":"poll","intervalMinutes":N} to set it per kind and persist it',
+  reviewLenses:
+    'move the same list to the stage it applies to — "workflows": {"engineering": {"stageFanout": {"review": ["security", "..."]}}} — or prefer "review": "axis", which covers every required axis and enforces it per pass',
 }
 
 /**
@@ -1066,61 +1081,73 @@ export const agentModel = (config: Config, agent: string): string | undefined =>
   rawAgentModel(config, agent) ?? undefined
 
 /**
- * The stage's `requiredAxes` that no configured review lens names — the axes
- * that go unreviewed once `reviewLenses` is on.
+ * The fan-out strategy a stage runs under, discriminated: config
+ * `workflows.<kind>.stageFanout.<stage>`, else the manifest stage's `fanout`,
+ * else undefined (one unfocused pass). `"none"` in config turns a
+ * manifest-declared fan-out off.
  *
- * Lens mode suppresses per-pass axis-coverage enforcement (a lens is told to
- * focus exclusively on its own lens, so demanding every axis from it would
- * reject every pass), which means turning lenses on downgrades the review's
- * guarantees. This list is also the exact condition `enforcesAxisCoverage` uses:
- * empty ⇒ the lenses between them span the stage's axes, so the stage-wide
- * coverage check is satisfiable and stays on. Like `unknownStageModelKeys`, it
- * can't be checked at parse time — the manifest isn't loaded yet — so hosts
- * surface it as a warning once the kind's stages are known, turning a silent
- * downgrade into a message.
- * Empty when lenses are off, when the stage requires no axes, or when the lens
- * list already names every required axis. Pure.
+ * Returns a TAGGED result rather than the raw value, because the two forms are
+ * not interchangeable downstream: an axis fan-out can be enforced per pass and a
+ * lens list cannot (`passAxes`). This used to return `"axis" | undefined`, and a
+ * caller comparing `=== "axis"` would silently read a lens list as "no fan-out".
+ * Pure.
  */
-export const unreviewedAxes = (config: Config, def: StageDef): string[] => {
-  const lenses = config.reviewLenses
-  if (!lenses.length || !def.requiredAxes?.length) return []
-  const named = new Set(lenses.map((l) => l.trim().toLowerCase()))
-  return def.requiredAxes.filter((axis) => !named.has(axis.trim().toLowerCase()))
+export type FanoutStrategy = { readonly mode: "axis" } | { readonly mode: "lens"; readonly lenses: readonly string[] }
+
+export const fanoutFor = (config: Config, kind: string, def: StageDef): FanoutStrategy | undefined => {
+  const strategy = config.workflows[kind]?.stageFanout?.[def.name] ?? def.fanout
+  if (Array.isArray(strategy)) return strategy.length ? { mode: "lens", lenses: strategy } : undefined
+  return strategy === "axis" ? { mode: "axis" } : undefined
 }
 
 /**
- * The fan-out strategy a stage runs under: config
- * `workflows.<kind>.stageFanout.<stage>`, else the manifest stage's `fanout`,
- * else none. `"none"` in config turns a manifest-declared fan-out off. Pure.
+ * The stage's `requiredAxes` that no configured lens names — the axes that go
+ * unreviewed once a stage's `stageFanout` is a lens list.
+ *
+ * Lens mode suppresses per-pass axis-coverage enforcement (a lens is told to
+ * focus exclusively on its own angle, so demanding every axis from it would
+ * reject every pass), which means choosing lenses over `"axis"` downgrades the
+ * review's guarantees. This list is also the exact condition
+ * `enforcesAxisCoverage` uses: empty ⇒ the lenses between them span the stage's
+ * axes, so the stage-wide coverage check is satisfiable and stays on. Like
+ * `unknownStageModelKeys`, it can't be checked at parse time — the manifest
+ * isn't loaded yet — so hosts surface it as a warning once the kind's stages are
+ * known, turning a silent downgrade into a message.
+ *
+ * That message is the whole reason this is worth computing. A ONE-entry lens
+ * list is the shape most likely to be written by hand, and it is a coverage
+ * REGRESSION rather than the enhancement it reads as: the default single pass is
+ * admitted against all five axes, while `["security"]` is admitted against none.
+ * Both installers used to offer exactly that, described as "extra REVIEW passes".
+ *
+ * Empty when the stage runs no lenses, when it requires no axes, or when the
+ * lens list already names every required axis. Pure.
  */
-export const fanoutFor = (config: Config, kind: string, def: StageDef): "axis" | undefined => {
-  const strategy = config.workflows[kind]?.stageFanout?.[def.name] ?? def.fanout
-  return strategy === "axis" ? "axis" : undefined
+export const unreviewedAxes = (config: Config, kind: string, def: StageDef): string[] => {
+  const strategy = fanoutFor(config, kind, def)
+  if (strategy?.mode !== "lens" || !def.requiredAxes?.length) return []
+  const named = new Set(strategy.lenses.map((l) => l.trim().toLowerCase()))
+  return def.requiredAxes.filter((axis) => !named.has(axis.trim().toLowerCase()))
 }
 
 /**
  * The focused passes a stage runs, in order — the single place both hosts ask
  * "how many times does this stage fire, and what is each pass told to cover?".
  *
- * Precedence, highest first:
- *  1. `reviewLenses`, on the stage named `review`. A config knob that predates
- *     fan-out and WINS, so an existing lens setup keeps behaving exactly as it
- *     does today rather than being silently reinterpreted on upgrade. Its
- *     `review`-only scope used to be hardcoded inside the OpenCode driver; it
- *     lives here now, named and documented, and deliberately does NOT generalize
- *     to other check stages (a sitter's triage stage is not a code review).
- *  2. `fanout: "axis"` (manifest or `stageFanout`) — one pass per `requiredAxes`
- *     entry, on any check stage of any kind.
- *  3. one unfocused pass — today's behavior, byte-identical.
- * Pure.
+ * One knob decides it now. `stageFanout.<stage>` is either `"axis"` (one pass
+ * per `requiredAxes` entry), a list of focus strings (one pass each), or absent
+ * (a single unfocused pass — byte-identical to having no fan-out at all).
+ *
+ * The global `reviewLenses` that used to outrank all of this is retired
+ * (`RETIRED_CONFIG_KEYS`): it reached one stage of one kind, it beat a declared
+ * fan-out, and nothing but a host warning said so. Pure.
  */
 export const stagePasses = (config: Config, kind: string, def: StageDef): readonly StagePass[] => {
   const single: readonly StagePass[] = [{ focus: null, mode: "single" }]
   if (def.kind !== "check") return single
-  if (def.name === "review" && config.reviewLenses.length) {
-    return config.reviewLenses.map((focus) => ({ focus, mode: "lens" as const }))
-  }
-  if (fanoutFor(config, kind, def) === "axis" && def.requiredAxes?.length) {
+  const strategy = fanoutFor(config, kind, def)
+  if (strategy?.mode === "lens") return strategy.lenses.map((focus) => ({ focus, mode: "lens" as const }))
+  if (strategy?.mode === "axis" && def.requiredAxes?.length) {
     return def.requiredAxes.map((focus) => ({ focus, mode: "axis" as const }))
   }
   return single
@@ -1133,7 +1160,7 @@ export const stagePasses = (config: Config, kind: string, def: StageDef): readon
  * be admitted instead of rejected for the four it was told not to review. The
  * stage-wide guarantee does not vanish with it: it moves to the accumulated
  * record, checked with `uncoveredAxes` when the stage advances. A `lens` pass
- * maps to no axis at all, so it is unenforced, exactly as before. Pure.
+ * maps to no axis at all, so it is unenforced. Pure.
  */
 export const passAxes = (def: StageDef, pass: StagePass): readonly string[] | undefined =>
   pass.mode === "axis" && pass.focus ? [pass.focus] : pass.mode === "lens" ? undefined : def.requiredAxes
@@ -1154,28 +1181,20 @@ export const passAxes = (def: StageDef, pass: StagePass): readonly string[] | un
  * That condition is what makes the lens case honest rather than hostile. Lenses
  * are free text: a `["security", "test-adequacy"]` setup is never going to
  * report `readability`, and demanding it would ERROR every run — which is why
- * the enforcement was switched off for lenses wholesale, and why `requiredAxes`
+ * the enforcement is switched off for lenses wholesale, and why `requiredAxes`
  * then stopped being required at every level at once. Tying it to the lens list
  * gives the axes back to anyone whose lenses do span them, costs nothing to
- * anyone whose lenses don't (they keep today's documented trade-off, and the
- * config warning already names the axes they are giving up), and needs no new
- * config surface to opt into. Pure.
+ * anyone whose lenses don't (they keep the documented trade-off, and the host
+ * warning already names the axes they are giving up), and needs no new config
+ * surface to opt into. Pure.
  */
 export const enforcesAxisCoverage = (config: Config, kind: string, def: StageDef): boolean => {
   if (!def.requiredAxes?.length) return false
   const passes = stagePasses(config, kind, def)
   if (passes.some((p) => p.mode === "axis")) return true
   if (!passes.some((p) => p.mode === "lens")) return false
-  return unreviewedAxes(config, def).length === 0
+  return unreviewedAxes(config, kind, def).length === 0
 }
-
-/**
- * True when a configured `reviewLenses` is overriding a declared per-axis
- * fan-out — the user asked for two different multi-pass reviews and got the
- * lenses. Silence would make the `fanout` look broken, so hosts warn. Pure.
- */
-export const fanoutOverriddenByLenses = (config: Config, kind: string, def: StageDef): boolean =>
-  config.reviewLenses.length > 0 && def.name === "review" && fanoutFor(config, kind, def) === "axis"
 
 /**
  * The `stageFanout` keys that name no stage of `kind` — the same silent-default
@@ -1191,20 +1210,24 @@ export const unknownStageFanoutKeys = (config: Config, kind: string, stageNames:
  * `workflows.<kind>.stageConcurrency.<stage>`, else the default for the passes
  * that actually run.
  *
- * That default is `passCount` for a per-axis fan-out and 1 for everything else.
- * A fan-out is a request for N focused passes over one frozen work tree — they
- * are read-only, each told to cover its own axis and not the others, and merged
- * worst-wins — so serializing them buys nothing and costs a five-axis review
- * five reviews of latency. Turning the fan-out on IS the request; making it
- * parallel a second, separate knob meant the feature shipped slow by default.
+ * That default is `passCount` for ANY fan-out — per-axis or lens — and 1 for a
+ * stage that runs a single pass. A fan-out is a request for N focused passes
+ * over one frozen work tree: they are read-only, each told to cover its own axis
+ * or lens and not the others, and merged worst-wins, so serializing them buys
+ * nothing and costs a five-pass review five reviews of latency. Turning the
+ * fan-out on IS the request; making it parallel a second, separate knob meant
+ * the feature shipped slow by default.
  *
- * Two things deliberately keep the old default:
- *  - **Lens passes.** `reviewLenses` predates fan-out, so an existing lens setup
- *    keeps behaving exactly as it does today — including when lenses override a
- *    declared fan-out, since the passes that run are then lens passes.
- *  - **An explicit `stageConcurrency`**, which now clamps as well as opts in:
- *    `1` is how a rate-limited user takes a fanned-out stage back to one pass at
- *    a time, so it must not read as "unset".
+ * Lens passes used to be carved out of that and left serial, so that a setup
+ * predating the fan-out kept behaving exactly as it had. That carve-out went
+ * with the key it protected: lenses are now a `stageFanout` value
+ * (`RETIRED_CONFIG_KEYS`), so reaching them at all means writing the fan-out
+ * knob afresh, and there is no older behavior left to preserve. One rule for
+ * every focused pass beats two that differ only by history.
+ *
+ * An explicit `stageConcurrency` still wins, and now clamps as well as opts in:
+ * `1` is how a rate-limited user takes a fanned-out stage back to one pass at a
+ * time, so it must not read as "unset".
  *
  * Clamped to `passCount` because concurrency beyond the number of passes buys
  * nothing and would make the pool's own bookkeeping lie, and floored at 1 so a
@@ -1212,9 +1235,9 @@ export const unknownStageFanoutKeys = (config: Config, kind: string, stageNames:
  * whatever the config says. Pure.
  */
 export const concurrencyFor = (config: Config, kind: string, def: StageDef, passCount: number): number => {
-  // The passes' MODE, not `fanoutFor` — a declared fan-out that reviewLenses
-  // overrides runs lens passes, and must not inherit the fan-out's default.
-  const fannedOut = stagePasses(config, kind, def).some((p) => p.mode === "axis")
+  // The passes' MODE, not `fanoutFor`: only a stage that actually runs focused
+  // passes should inherit the parallel default.
+  const fannedOut = stagePasses(config, kind, def).some((p) => p.mode !== "single")
   const configured = config.workflows[kind]?.stageConcurrency?.[def.name] ?? (fannedOut ? passCount : 1)
   return Math.max(1, Math.min(configured, passCount))
 }

@@ -240,7 +240,7 @@ export const axisCoverageIssue = (
  * One focused pass of a check stage: what it covers, and under which regime.
  *
  * `single` is the ordinary one-pass stage (`focus: null`). `lens` is config
- * `reviewLenses` — a free-text angle that maps to no axis, so per-pass axis
+ * a `stageFanout` lens list — a free-text angle that maps to no axis, so per-pass axis
  * coverage is not enforced for it. `axis` is a manifest `fanout: "axis"` pass,
  * which covers exactly one of the stage's `requiredAxes` and IS enforced
  * against it.
@@ -689,7 +689,7 @@ export const WORKFLOW_REVIEW_TAG = "WORKFLOW_REVIEW"
  *
  *  - `"single"` — one unfocused pass: cover every required axis in one call.
  *  - `"axis"` — `fanout: "axis"`: cover the ONE axis this pass owns.
- *  - `"lens"` — config `reviewLenses`: cover the axes YOUR LENS bears on.
+ *  - `"lens"` — a `stageFanout` lens list: cover the axes YOUR LENS bears on.
  *
  * The `lens` branch is not cosmetic. Lens passes used to render the `single`
  * contract — "MUST carry an `axes` array covering all 5 axes … a call missing an

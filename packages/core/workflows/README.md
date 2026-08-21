@@ -109,7 +109,7 @@ per-axis payload contract, and `workflow_verdict` **rejects** a verdict whose `a
 array misses any of them, so a multi-axis review cannot silently skip one. The
 recorded verdict is also worsened to match its axes — a declared PASS carrying a
 Critical or Important finding resolves as FAIL. `requiredAxes` on a `work` stage
-is a manifest error (there is no verdict to carry them), and `reviewLenses` mode
+is a manifest error (there is no verdict to carry them), and lens mode
 suppresses the **per-pass** enforcement (see `docs/configuration.md`).
 
 Such a stage may also declare `fanout: "axis"`: it then runs **one focused pass
@@ -123,7 +123,7 @@ was told not to review — and the stage-wide requirement moves to the accumulat
 record, so a fan-out that never reported an axis stops the loop with ERROR rather
 than re-building on an incomplete review.
 
-`reviewLenses` is the free-text sibling: its passes are lenses, not axes, so
+A `stageFanout` LIST is the free-text sibling: its passes are lenses, not axes, so
 per-pass enforcement is off there too, and each pass is asked for per-axis results
 only for the axes its lens actually bears on — an axis it did not examine must be
 left out rather than guessed at, since the passes merge worst-wins and a guessed

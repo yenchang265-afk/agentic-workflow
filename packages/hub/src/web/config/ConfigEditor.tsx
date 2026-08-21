@@ -247,15 +247,6 @@ export const ConfigEditor = () => {
                 onChange={(e) => setOrClear("taskBranch", e.target.value, (s) => (s === "false" ? false : s))}
               />
             </Field>
-            <Field label="review lenses" path="reviewLenses" provenance={prov("reviewLenses")} hint="comma-separated, max 5 — each runs REVIEW again focused on that lens">
-              <input
-                value={(pending("reviewLenses") as string[] | undefined)?.join(", ") ?? ""}
-                onChange={(e) => {
-                  const list = e.target.value.split(",").map((s) => s.trim()).filter(Boolean)
-                  list.length ? set("reviewLenses", list) : clear("reviewLenses")
-                }}
-              />
-            </Field>
           </section>
 
           <section className="cfg-section">

@@ -64,7 +64,7 @@ Config is resolved from two optional layers:
    the user layer field by field**.
 
 The merge is a field-level deep merge: nested objects (`ado`, `workflows`, each
-`workflows.<kind>` section) merge per key recursively; arrays (`reviewLenses`) and
+`workflows.<kind>` section) merge per key recursively; arrays (a `stageFanout` lens list) and
 scalars replace wholesale. Layers merge *before* validation, so defaults never
 clobber an explicit value from either file, and cross-field requirements (like
 `codePlatform: "ado"` needing `ado.selfLogin`) are checked against the
@@ -143,16 +143,12 @@ hand-edited afterward.
 | `notifyCommand` | unset | Shell command fired after a terminal loop event — a plan parking for the plan gate, a run reaching the ship gate, a stop, an error — so gates don't go stale in scrollback nobody is watching. Runs as `sh -c <command>` with `AW_EVENT` (`park`\|`done`\|`stop`\|`error`), `AW_KIND`, `AW_TASK`, `AW_MESSAGE` in the environment; bounded (10s) and best-effort — a slow or failing notifier warns and never changes the outcome. E.g. `"notify-send \"agentic-workflow\" \"$AW_EVENT $AW_TASK: $AW_MESSAGE\""` or a `curl` to a chat webhook. **Shell-bearing — user scope only**, see below. |
 | `notifyEvents` | unset (= all) | Which terminal events fire `notifyCommand` (subset of `["park","done","stop","error"]`). Not shell-bearing, so a repo may narrow — never widen — what its contributors get pinged about. |
 | `taskBranch` | `"feature/"` | Branch-name prefix the engineering loop cuts its work branch with (`<prefix><id>`). Set to `false` to build on the branch you already have checked out — see hardening below. |
-| `reviewLenses` | `[]` | See hardening below. Max 5 lenses. |
 
 All three plugins read the same file: the schema lives in the shared core
 package (`packages/core/src/config.ts`), and a host may extend it with fields
-only it can honor — though none does today. `watchIntervalMinutes` (a global
-default watch cadence, OpenCode-only) was the last such field and has been
-**retired**: set the cadence per session with
-`/agentic-workflow:engineering watch <interval>`, or persistently and per kind
-with `workflows.<kind>.trigger.intervalMinutes` (below). A config that still
-sets it loads fine and logs a warning naming both replacements.
+only it can honor — though none does today. Keys that used to exist and no
+longer do are listed under [Retired keys](#retired-keys); a config that still
+sets one loads fine and logs a warning naming its replacement.
 
 ## Workflow kinds (`workflows`)
 
@@ -1129,72 +1125,71 @@ Impact on the commands:
   `ignoreBacklog: false` to restore the old committed-backlog behavior.
   Either way the task files themselves are unaffected on disk; only whether
   the loop commits their moves changes.
-- **`reviewLenses`** — run REVIEW once per lens (e.g.
-  `["correctness", "security", "test-adequacy"]`) and take the worst verdict,
-  so a single prompt-injected reviewer can't wave a change through. Costs ~N×
-  review time; off by default.
-
-  Each pass is told to focus on its own lens and to report per-axis results
-  **only for the axes that lens actually bears on** — an axis it did not examine
-  is left out, never recorded as a clean PASS, because the passes merge
-  worst-wins and a guess there would become the whole stage's verdict for an
-  axis nobody reviewed. So **per-pass** axis-coverage enforcement is off (a lens
-  cannot be rejected for the axes it was told not to review).
-
-  What happens to the stage's `requiredAxes` then depends on your lens list:
-
-  - **Lenses that between them name every required axis** (e.g. all five of
-    engineering's) keep the guarantee: the *accumulated* record across the
-    passes must still cover every axis, and a gap stops the loop with ERROR
-    rather than re-building on a review that never ran. This is how you get
-    lenses *and* coverage, with no extra config.
-  - **Lenses that don't** (e.g. `["security", "test-adequacy"]`) can't be held
-    to axes they will never report, so the coverage check is off for that stage
-    — the axes no lens covers go unreviewed. Both hosts warn at startup naming
-    exactly which ones.
-
-  Either way a lens that records **no** verdict at all is an ERROR, not a
-  silently missing opinion. If you want per-axis passes rather than free-text
-  lenses, use `stageFanout` below.
-- **`workflows.<kind>.stageFanout`** — stage name → `"axis"` or `"none"`: run a
-  check stage once per entry in its `requiredAxes`, each pass told to review and
-  report exactly one axis. The passes merge worst-wins, and **on OpenCode they
-  run in parallel** — turning the fan-out on is the request for N focused passes,
-  so it does not also need `stageConcurrency` to stop being slow. Set
-  `stageConcurrency` to clamp that (see below); the Claude Code and Qwen Code
-  hosts run the passes one at a time whatever you set.
+- **`workflows.<kind>.stageFanout`** — stage name → `"axis"`, `"none"`, or a
+  **list of lenses**: run a check stage as several focused passes instead of one.
+  The passes merge worst-wins, and **on OpenCode they run in parallel** —
+  turning the fan-out on is the request for N focused passes, so it does not
+  also need `stageConcurrency` to stop being slow. Set `stageConcurrency` to
+  clamp that (see below); the Claude Code and Qwen Code hosts run the passes one
+  at a time whatever you set.
 
   ```jsonc
+  // one pass per required axis — coverage enforced
   { "workflows": { "engineering": { "stageFanout": { "review": "axis" } } } }
+  // ...or your own angles, one pass each
+  { "workflows": { "engineering": { "stageFanout": { "review": ["a hostile attacker", "the next maintainer"] } } } }
   ```
 
-  It is the same ~N× cost as `reviewLenses` and the same threat-model benefit
-  (no single reviewer can wave a change through), but it enforces coverage at
-  the level lenses cannot — **per pass**: each pass is enforced against its own axis, and the
-  stage cannot advance with an axis uncovered — a gap stops the loop with ERROR
-  rather than re-building on a review that never ran. Off by default; a stage
-  with neither knob set is byte-identical to today.
+  Both forms cost ~N× the stage and both buy the same threat-model benefit: no
+  single prompt-injected reviewer can wave a change through. They differ in what
+  they can *guarantee*, and the difference is worth understanding before you
+  pick:
+
+  - **`"axis"`** enforces coverage **per pass** — each pass is held to its own
+    axis, and the stage cannot advance with an axis uncovered; a gap stops the
+    loop with ERROR rather than re-building on a review that never ran.
+  - **A lens list** cannot be: a free-text angle maps to no axis, so a lens is
+    told to report only the axes it actually bears on, and an axis it did not
+    examine is left out rather than recorded as a clean PASS (the passes merge
+    worst-wins, so a guess there would become the stage's verdict for an axis
+    nobody reviewed). Whether the stage-wide check survives depends on the list:
+
+    - **Lenses that between them name every required axis** (all five of
+      engineering's, say) keep the guarantee — the *accumulated* record across
+      the passes must still cover every axis.
+    - **Lenses that don't** (e.g. `["security", "test-adequacy"]`) can't be held
+      to axes they will never report, so the coverage check is off for that
+      stage. Both hosts warn at startup naming exactly which axes go unreviewed.
+
+  > **A one-entry lens list is a downgrade, not an upgrade.** With no fan-out at
+  > all, the single review pass is admitted against *every* required axis.
+  > `["security"]` replaces it with one pass admitted against **none** — four
+  > axes lost, for a setting that reads like added scrutiny. Reach for `"axis"`
+  > unless you specifically want angles the axis list cannot express.
+
+  Either way a pass that records **no** verdict at all is an ERROR, not a
+  silently missing opinion. Off by default; a stage with neither knob set is
+  byte-identical to a single unfocused pass.
 
   `"none"` turns a fan-out declared in the manifest (`fanout` on the stage) back
   off. Config wins over the manifest, as with `stageModels` and `stageContext` —
   and it is how you reach the built-in kinds at all, since their manifests ship
-  inside the `@agentic-workflow/core` package.
-
-  **`reviewLenses` wins over this** on the stage named `review`, so an existing
-  lens setup keeps behaving exactly as it did; both hosts warn when a configured
-  lens list is overriding a declared fan-out. A key naming no stage is accepted,
+  inside the `@agentic-workflow/core` package. A key naming no stage is accepted,
   ignored, and warned about, exactly like `stageModels`.
+
+  The lens list absorbed the retired top-level `reviewLenses`
+  ([Retired keys](#retired-keys)), which reached only the stage named `review`
+  and silently won over a declared per-axis fan-out.
 - **`workflows.<kind>.stageConcurrency`** — stage name → how many of that
   stage's focused passes may run **at once**. Unset, a per-axis `stageFanout`
   runs **all** its passes at once and everything else runs one at a time.
-  Applies to both multi-pass regimes above: `stageFanout`'s per-axis passes and
-  `reviewLenses`' lens passes.
+  Applies to every focused pass `stageFanout` produces, per-axis or lens.
 
   ```jsonc
   // clamp a five-axis fan-out to two passes in flight
   { "workflows": { "engineering": { "stageFanout": { "review": "axis" }, "stageConcurrency": { "review": 2 } } } }
-  // ...or opt a lens setup in, which is not parallel by default
-  { "reviewLenses": ["a hostile attacker", "the next maintainer"], "workflows": { "engineering": { "stageConcurrency": { "review": 2 } } } }
+  // ...or clamp a lens fan-out the same way
+  { "workflows": { "engineering": { "stageFanout": { "review": ["a hostile attacker", "the next maintainer"] }, "stageConcurrency": { "review": 2 } } } }
   ```
 
   A fanned-out check stage's passes are independent by construction — each is a
@@ -1207,10 +1202,6 @@ Impact on the commands:
   sessions against your rate limit, so `1` is how a rate-limited setup takes a
   fanned-out stage back to sequential. The value is clamped to the stage's pass
   count, so a single-pass stage is unaffected whatever you set.
-
-  `reviewLenses` keeps the old sequential default. It predates the fan-out, so
-  an existing lens setup — including one that overrides a declared fan-out —
-  behaves exactly as it did until you set this knob.
 
   **OpenCode only.** Each pass gets its own session there, which is what makes
   the per-pass verdict, axis requirement and evidence ledger separable. The
@@ -1244,6 +1235,20 @@ Impact on the commands:
   before they are written and committed.
 - On a terminal event the run log gets a **`## Run summary`** table — per-stage
   wall-clock, verdict history, and iterations used.
+
+## Retired keys
+
+Keys that were removed, and what replaced each. A config still setting one
+**loads normally** — the key is ignored, and the loop logs a warning naming the
+replacement. Nothing fails, so there is no rush to edit; the warning is there so
+a setting that stopped taking effect never does so silently.
+
+| Retired | Use instead |
+|---------|-------------|
+| `watchIntervalMinutes` | `/agentic-workflow:engineering watch <interval>` for one session (e.g. `watch 30s`), or `workflows.<kind>.trigger` = `{"type":"poll","intervalMinutes":N}` to set it per kind and persist it. The old key was a *global* cadence applied to every watched kind at once. |
+| `reviewLenses` | `workflows.<kind>.stageFanout.<stage>` — the same list, on the stage it applies to: `{"workflows": {"engineering": {"stageFanout": {"review": ["security"]}}}}`. Prefer `"axis"`, which covers **and enforces** every required axis; see the warning under [`stageFanout`](#workflow-kinds-workflows) about one-entry lens lists. |
+| `ado.access`, `ado.customHeaders`, `ado.insecureSkipTlsVerify` | Nothing — Azure DevOps is reached only through its MCP server. Use `ado.mcp.env` (e.g. `NODE_EXTRA_CA_CERTS`, `HTTPS_PROXY`) for transport concerns. |
+| `gateBeforeBuild`, `interviewBeforePlan` | Nothing — both behaviours are now unconditional. Pre-1.0 keys; silently ignored. |
 
 ## Environment
 
