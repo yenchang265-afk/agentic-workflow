@@ -477,6 +477,45 @@ test("a plain approve on a draft still carrying the flag CLEARS it", async () =>
   assert.ok(!/autoPlan/.test(fs["/repo/docs/tasks/queued/t.md"] ?? ""), "the stale flag must be gone from the queued file")
 })
 
+/**
+ * The flag write is a read-modify-write, so WHERE it runs decides whether it can
+ * race. `queued/` is the pool a `watch` worker claims from, and a claimer that
+ * lands between the `cat` and the `rewriteTask` has its `> CLAIMED` note
+ * overwritten — with a backlog `git commit` sitting inside the window on a
+ * tracked repo. `draft/` is touched by no claim walk, so writing there closes the
+ * window by construction (and puts the frontmatter change inside the gate's own
+ * commit). Pinned by ORDER because both spellings leave the same file on disk.
+ */
+/** Where `writeAutoPlanFlag`'s atomic rewrite landed: `writeFileAtomic` renames
+ *  its temp ONTO the file it rewrote, so the destination names the folder the
+ *  read-modify-write actually ran against. */
+const rewriteOnto = (log: readonly string[], path: string): number =>
+  log.findIndex((c) => new RegExp(`^mv \\S+ ${path.replace(/[./]/g, "\\$&")}$`).test(c))
+
+test("approveTask writes the auto-plan flag before the move, out of the claim walk's reach", async () => {
+  const { ctx, log } = makeCtx({ "draft/t.md": task("Do it") })
+  const r = await approveTask(ctx, "t", true)
+  assert.equal(r.ok, true)
+  const move = log.findIndex((c) => c.startsWith("mv -n /repo/docs/tasks/draft/t.md /repo/docs/tasks/queued/t.md"))
+  const write = rewriteOnto(log, "/repo/docs/tasks/draft/t.md")
+  assert.ok(move !== -1, "the task must have moved")
+  assert.ok(write !== -1, "the flag must have been written on the DRAFT file, which no claim walk touches")
+  assert.ok(write < move, `the rewrite must precede the move (write@${write}, move@${move})`)
+})
+
+test("replanTask clears the auto-plan flag before re-queueing it as plan-next", async () => {
+  // Sharper than approve's: this verb stamps the task plan-next, so the next
+  // claim walk takes it FIRST — a rewrite after the move races a live planner.
+  const planned = serializeTask({ title: "Do it", autoPlan: true, body: `${PLAN_HEADING}\n\n1. Step.` })
+  const { ctx, log } = makeCtx({ "plan-review/t.md": planned })
+  const r = await replanTask(ctx, "t", "wrong approach")
+  assert.equal(r.ok, true)
+  const move = log.findIndex((c) => c.startsWith("mv -n /repo/docs/tasks/plan-review/t.md /repo/docs/tasks/queued/t.md"))
+  const write = rewriteOnto(log, "/repo/docs/tasks/plan-review/t.md")
+  assert.ok(move !== -1, "the task must have moved")
+  assert.ok(write !== -1 && write < move, `the rewrite must land on the plan-review file, before the move (write@${write}, move@${move})`)
+})
+
 test("approveTask --auto-plan on an already-queued task arms the flag on retry", async () => {
   const { ctx, fs } = makeCtx({ "queued/t.md": task("Do it") })
   const r = await approveTask(ctx, "t", true)

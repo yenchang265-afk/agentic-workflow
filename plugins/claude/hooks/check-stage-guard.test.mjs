@@ -153,6 +153,20 @@ test("isGithubPrMutation flags a review submission even though it is a POST", ()
   assert.equal(isGithubPrMutation("gh api repos/o/r/issues/7/comments -f body=done"), false)
 })
 
+test("isGithubPrMutation reads gh's attached-shorthand flags, which pflag treats as separated", () => {
+  // Twin of the core vectors: `-XDELETE` IS `-X DELETE` to gh's parser, so a
+  // separated-only match reported a mutation as a plain GET read.
+  assert.equal(isGithubPrMutation("gh api repos/o/r/pulls/comments/9 -XDELETE"), true)
+  assert.equal(isGithubPrMutation("gh api repos/o/r/pulls/comments/9 -X=DELETE"), true)
+  assert.equal(isGithubPrMutation("gh api -XPATCH repos/o/r/pulls/7"), true)
+  assert.equal(isGithubPrMutation("gh api --method=DELETE repos/o/r/issues/7/comments/9"), true)
+  assert.equal(isGithubPrMutation("gh api repos/o/r/pulls/7/reviews -fevent=APPROVE"), true)
+  assert.equal(isGithubPrMutation("gh api repos/o/r/pulls/7/requested_reviewers -Freviewers[]=x"), true)
+  // Token-anchored: a URL that merely contains the letters is not a method.
+  assert.equal(isGithubPrMutation("gh api repos/o/r/contents/a-Xb"), false)
+  assert.equal(isGithubPrMutation("gh api repos/o/r/issues/7/comments -XPOST -fbody=done"), false)
+})
+
 // --- S1: the write backstops must match per chain/pipe segment, not whole-command ---
 
 test("chainedGithubPrMutation catches a merge hidden behind an allowlisted read", () => {
@@ -193,6 +207,31 @@ test("isGitPushViolation blocks a refspec onto a different branch, force, and de
   assert.equal(isGitPushViolation("git push origin main:main"), true)
   assert.equal(isGitPushViolation("git push origin HEAD"), true) // statically unresolvable
   assert.equal(isGitPushViolation("git -C /repo push origin main"), true)
+})
+
+test("isGitPushViolation blocks bulk pushes, which move refs no refspec named", () => {
+  // Twin of the core vectors: the refspec rules above cannot see these (there is
+  // no refspec), and each matches the publish glob `git push origin *`.
+  assert.equal(isGitPushViolation("git push origin --mirror"), true)
+  assert.equal(isGitPushViolation("git push --mirror origin"), true)
+  assert.equal(isGitPushViolation("git push origin --all"), true)
+  assert.equal(isGitPushViolation("git push origin --tags"), true)
+  assert.equal(isGitPushViolation("git push origin --prune feature/x"), true)
+  assert.equal(chainedGitPushViolation("rtk git push origin --mirror", ["rtk"]), true)
+})
+
+test("the classifiers still find the subcommand behind git's and gh's own options", () => {
+  // Twin of the core vectors. A QUOTED `-C` argument is what the stage prompt
+  // hands an agent whose worktree sits under a path with a space; a bare `\S+`
+  // stopped at the space, so the whole push classifier was skipped.
+  assert.equal(isGitPushViolation(`git -C "/mnt/c/Claude Code/wt" push origin main`), true)
+  assert.equal(isGitPushViolation(`git -C '/mnt/c/Claude Code/wt' push --force origin x`), true)
+  assert.equal(isGitPushViolation(`git -C "/mnt/c/Claude Code/wt" push origin feature/x`), false)
+  // gh's value-taking global flags: `--repo o/r` used to swallow the subcommand.
+  assert.equal(isGithubPrMutation("gh --repo o/r pr merge 3"), true)
+  assert.equal(isGithubPrMutation("gh -R o/r pr close 3"), true)
+  assert.equal(isGithubPrMutation("gh --repo o/r api repos/o/r/pulls/3 -X PATCH"), true)
+  assert.equal(isGithubPrMutation("gh --repo o/r pr comment 3 --body ok"), false)
 })
 
 test("isGitPushViolation allows a plain fast-forward push of the loop's own head", () => {

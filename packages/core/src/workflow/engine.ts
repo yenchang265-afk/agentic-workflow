@@ -9,6 +9,7 @@ import { anyFailed, checksBlock, type CheckResult } from "./checks.js"
 import { contextFor, planVisualizationFor, prBaseFor, stagePasses } from "../config.js"
 import { checkDiscoveryBlock, discoveringStage, noMachineChecksBlock } from "./discovered-checks.js"
 import { dependencyContractBlock } from "./declared-deps.js"
+import { shellQuote } from "./worktree-guard.js"
 import {
   planContractBlock,
   planVisualizationBlock,
@@ -171,9 +172,16 @@ export const promptContextWithStats = (
   // existed. `failed` lets a template phrase itself differently on a red run.
   const ran = state.checks?.[state.stage]
   const checks = ran?.length ? { block: checksBlock(ran), failed: anyFailed(ran) } : undefined
+  // Shell-quoted, for the reason `shellQuote` documents: this string is COPIED
+  // INTO a shell by the stage agent, and a worktree under `/mnt/c/Claude Code/…`
+  // otherwise hands it `git -C /mnt/c/Claude Code/… diff` — which git reads as
+  // `-C /mnt/c/Claude` plus two stray paths. Same quoter the worktree pin's own
+  // rewrite uses, so the guard's `unquote` reads back exactly what is written
+  // here; an ordinary path is returned untouched, so nothing else changes.
+  const quotedWt = wt ? shellQuote(wt) : ""
   const diffCmd = state.git
     ? wt
-      ? `git -C ${wt} diff ${state.git.base}...${state.git.branch}`
+      ? `git -C ${quotedWt} diff ${state.git.base}...${state.git.branch}`
       : `git diff ${state.git.base}...${state.git.branch}`
     : ""
   const goal = clampWithStats(stripPlanAndAuditTail(state.goal), budgets["goal"] ?? Number.POSITIVE_INFINITY)
@@ -274,11 +282,14 @@ export const promptContextWithStats = (
           // ran was refused. Inspection has a pinned form that needs no prefix
           // (`git -C`, absolute paths); only a command that must RUN in the
           // worktree does.
+          // The two SHELL forms are quoted (`quotedWt`); the prose naming the
+          // directory is not — it is a path for a human/agent to read and for
+          // the file tools, which take a path argument rather than a shell word.
           instructions:
             `Worktree: this loop's isolated checkout is ${wt} — every file you read, edit, or ` +
             `test lives THERE, not in the repo root. Use absolute paths under it for edit/read and ` +
-            `\`git -C ${wt} …\` for git; prefix a command that must RUN inside it (test/build/install ` +
-            `runners) with \`cd ${wt} && \`. Never modify anything outside it.`,
+            `\`git -C ${quotedWt} …\` for git; prefix a command that must RUN inside it (test/build/install ` +
+            `runners) with \`cd ${quotedWt} && \`. Never modify anything outside it.`,
         }
       : undefined,
   }

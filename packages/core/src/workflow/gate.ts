@@ -373,6 +373,25 @@ export const approveTask = async (ctx: GateCtx, id: string, autoPlan?: boolean):
       ? ` Note: it has no acceptance criteria — VERIFY will have nothing objective to check and the plan's ### Verification has nothing to map; use retask to add some if this task should have them.`
       : ""
   const actor = await gitActor($, directory)
+  // The approval is authoritative about auto-plan: `--auto-plan` arms it, and a
+  // plain approve on a draft that still carries the flag CLEARS it — a stale
+  // opt-in from an earlier approve (retask sent it back to draft/) must not
+  // silently skip a gate the human did not choose to skip this time.
+  //
+  // Written BEFORE the move, while the file is still in `draft/`. It is a
+  // read-modify-write (`cat` → parse → `rewriteTask`), and `queued/` is the pool
+  // a `watch` worker claims from: run one there and a claimer that lands between
+  // the `cat` and the rewrite has its `> CLAIMED` note silently overwritten —
+  // exactly the lost update the `alreadyDone` arm above refuses on `heldByPlanner`,
+  // and with a `git commit` sitting inside the window on a tracked backlog. No
+  // claim walk touches `draft/`, so there is no window here at all. It also puts
+  // the frontmatter change INSIDE the gate's own backlog commit, where writing it
+  // afterwards left it uncommitted.
+  const autoNote = autoPlan
+    ? await writeAutoPlanFlag(ctx, draft, true)
+    : draft.autoPlan
+      ? await writeAutoPlanFlag(ctx, draft, false)
+      : ""
   // The note leads with `TASK_APPROVED_MARKER` (`Task approved`), which is what
   // retires the park gate's contract-refusal strikes — keep that prefix if this
   // text is reworded, or a task the park gate returned for triage gets one PLAN
@@ -382,15 +401,6 @@ export const approveTask = async (ctx: GateCtx, id: string, autoPlan?: boolean):
   if (!moved.ok) return moved.result
   const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): task approved — queued for planning`)
-  // The approval is authoritative about auto-plan: `--auto-plan` arms it, and a
-  // plain approve on a draft that still carries the flag CLEARS it — a stale
-  // opt-in from an earlier approve (retask sent it back to draft/) must not
-  // silently skip a gate the human did not choose to skip this time.
-  const autoNote = autoPlan
-    ? await writeAutoPlanFlag(ctx, { id, path: newPath }, true)
-    : draft.autoPlan
-      ? await writeAutoPlanFlag(ctx, { id, path: newPath }, false)
-      : ""
   const autoMessage = autoPlan
     ? autoNote || " Auto-plan armed — when its plan parks, the plan gate is crossed automatically and BUILD follows (replan or a fresh approve clears it; the ship gate stays yours)."
     : draft.autoPlan
@@ -912,6 +922,19 @@ export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Pro
   // tasks have no stopped run, so nothing fuses there.
   const stopContext = statusFolder(task) === "in-progress" ? extractStopContext(task) : undefined
   const fused = [oneLineReason(reason), stopContext ? `prior run: ${stopContext}` : undefined].filter(Boolean).join(" — ")
+  // A human who rejected one plan wants eyes on the revision: a task that opted
+  // into auto-plan at its task gate has that opt-in withdrawn here, or the
+  // revised plan would cross the gate this rejection just closed.
+  //
+  // Cleared BEFORE the move, for `approveTask`'s reason and more sharply: this
+  // verb lands the task in `queued/` AND stamps it plan-next, so the very next
+  // claim walk takes it FIRST — running a `cat`→parse→`rewriteTask` after that
+  // races a planner that may already hold the file, and the loser's write is
+  // silently lost. `plan-review/` and `in-progress/` are claim-checked a few
+  // lines above and neither is a pool this verb leaves claimable, so there is no
+  // window on this side.
+  const autoNote = task.autoPlan ? await writeAutoPlanFlag(ctx, task, false) : ""
+  const autoMessage = task.autoPlan ? autoNote || " Auto-plan cleared — the revised plan parks for your review." : ""
   // One formatter (`planRejectedNote`) for every HUMAN rejection note — the
   // park gate's own mechanical contract refusal writes the same shape via the
   // TAGGED sibling `contractRejectedNote`, so `extractReplanReason` parses
@@ -924,11 +947,6 @@ export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Pro
   const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): plan rejected — re-queued for planning`)
   await markPlanNext(ctx, id, actor)
-  // A human who rejected one plan wants eyes on the revision: a task that
-  // opted into auto-plan at its task gate has that opt-in withdrawn here, or
-  // the revised plan would cross the gate this rejection just closed.
-  const autoNote = task.autoPlan ? await writeAutoPlanFlag(ctx, { id, path: newPath }, false) : ""
-  const autoMessage = task.autoPlan ? autoNote || " Auto-plan cleared — the revised plan parks for your review." : ""
   return {
     ok: true,
     // The id rides in the MESSAGE, not just `data` — on the Claude host the

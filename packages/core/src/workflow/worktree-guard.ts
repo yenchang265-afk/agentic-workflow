@@ -87,14 +87,31 @@ const underWorktree = (worktree: string, target: string): boolean => {
   return !rel.startsWith("..") && !path.isAbsolute(rel)
 }
 
-/** The `git -C <dir>` target of a segment, or null when it isn't that shape. */
+/**
+ * The `git -C <dir>` target of a segment, or null when it isn't that shape.
+ *
+ * The target is matched as a QUOTED run or a bare word, in that order — a
+ * worktree under a path with a space reaches here as `git -C "/a b/wt" add -A`,
+ * and a bare `\S+` captured `"/a` instead, resolved it outside the tree, and
+ * blocked a command that was pinned correctly. Same shape `words` uses, and the
+ * inverse of the `shellQuote` the prompt text and the rewrite both apply.
+ */
 const gitCDir = (segment: string): string | null => {
-  const m = /^git\s+-C\s+(\S+)\s+/.exec(segment.trim())
+  const m = /^git\s+-C\s+("[^"]*"|'[^']*'|\S+)\s+/.exec(segment.trim())
   return m ? unquote(m[1]!) : null
 }
 
-/** Quote a path for the shell when it needs it — worktree roots live under paths with spaces. */
-const shellQuote = (p: string): string => (/[\s"'\\$`]/.test(p) ? `"${p.replace(/(["\\$`])/g, "\\$1")}"` : p)
+/**
+ * Quote a path for the shell when it needs it — worktree roots live under paths
+ * with spaces (`/mnt/c/Claude Code/...` is the everyday shape).
+ *
+ * Exported because the pin's rewrite is only half the pairing: `engine.ts`
+ * renders the same path INTO the stage prompt's `git -C <wt> …` and
+ * `cd <wt> && …` instructions, and an unquoted one there hands the agent a
+ * command the shell splits on the space. One quoter, so what the prompt writes
+ * is exactly what `unquote` above reads back. Pure.
+ */
+export const shellQuote = (p: string): string => (/[\s"'\\$`]/.test(p) ? `"${p.replace(/(["\\$`])/g, "\\$1")}"` : p)
 
 /** Split a segment into shell words, keeping quoted runs intact. */
 const words = (segment: string): string[] => segment.match(/"[^"]*"|'[^']*'|\S+/g) ?? []

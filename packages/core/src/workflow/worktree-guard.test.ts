@@ -101,6 +101,17 @@ test("worktree paths containing spaces are quoted in the rewrite", () => {
   assert.deepEqual(v, { action: "rewrite", value: `cd "${spaced}" && npm test` })
 })
 
+test("a quoted `git -C` target is read as one word — the form the prompt now hands the agent", () => {
+  // `\S+` captured `"/mnt/c/Claude` here, resolved it outside the worktree, and
+  // blocked a mutation that was pinned exactly as instructed. The prompt quotes
+  // this path (engine.ts `shellQuote`), so the guard has to unquote it.
+  const spaced = "/mnt/c/Claude Code/repo/.workflow-worktrees/t1"
+  assert.deepEqual(pinBash(`git -C "${spaced}" add -A`, spaced), { action: "allow" })
+  assert.deepEqual(pinBash(`git -C '${spaced}' commit -m x`, spaced), { action: "allow" })
+  // And a quoted target OUTSIDE it is still blocked, not waved through.
+  assert.equal(pinBash(`git -C "/mnt/c/Claude Code/repo" add -A`, spaced).action, "block")
+})
+
 // --- unconditional escapes: still blocked ---
 
 test("cd outside the worktree blocks the chain", () => {
