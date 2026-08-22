@@ -788,7 +788,9 @@ var main = async () => {
   if (host === null) return block2(unknownHostMessage(process.env.AGENTIC_WORKFLOW_HOST));
   const d = dialectFor(host);
   const tasksDir = readTasksDir(backlogRoot(cwd));
-  const marker = readMarker(cwd, d.stageMarkerFile);
+  const rawMarker = readMarker(cwd, d.stageMarkerFile);
+  const markerIsDead = rawMarker && typeof rawMarker.deadline === "number" && Date.now() > rawMarker.deadline && !markerWriterAlive(rawMarker.pid);
+  const marker = markerIsDead ? null : rawMarker;
   const tool = input.tool_name;
   const ti = input.tool_input || {};
   const isBash = isBashTool(d, tool);
@@ -830,7 +832,7 @@ var main = async () => {
       `agentic-workflow: the loop must never push a branch other than its own head, force-push, or delete \u2014 this git push is blocked. Push only your own feature/* (or <kind>/*) branch fast-forward with no ':dst' refspec, no --force, no --delete; the watched and default branches stay a human call.`
     );
   }
-  if (typeof marker.deadline === "number" && Date.now() > marker.deadline && markerWriterAlive(marker.pid)) {
+  if (typeof marker.deadline === "number" && Date.now() > marker.deadline) {
     if (isBash || isWrite) {
       return block2(
         `agentic-workflow: the ${String(marker.stage).toUpperCase()} stage exceeded its stageTimeoutMinutes deadline \u2014 stop working, summarize what you have, and return control so the loop can stop cleanly.`

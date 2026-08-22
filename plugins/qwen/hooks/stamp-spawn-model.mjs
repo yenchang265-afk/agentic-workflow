@@ -264,7 +264,7 @@ var main = async () => {
   if (!agent) return allow();
   const cwd = input.cwd || process.cwd();
   const marker = readMarker(cwd, d.stageMarkerFile);
-  const model = modelFor(marker, readRawConfigLayers(cwd), agent);
+  const model = modelFor(marker, readRawConfigLayers(backlogRoot(cwd)), agent);
   if (!model) return allow();
   if (ti.model === model) return allow();
   return rewriteInput({ ...ti, model });

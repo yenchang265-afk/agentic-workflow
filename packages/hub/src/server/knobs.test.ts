@@ -3,8 +3,9 @@ import fs from "node:fs"
 import path from "node:path"
 import { test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { ConfigSchema } from "@agentic-workflow/core/config"
 import type { KindBoardInfo } from "../shared/api.js"
-import { BY_SOURCE, lintWorkflowKnobs } from "./knobs.js"
+import { BY_SOURCE, STRUCTURED_KEYS, lintWorkflowKnobs } from "./knobs.js"
 
 const board = (kind: string, sourceType: KindBoardInfo["sourceType"]): KindBoardInfo => ({
   kind,
@@ -77,6 +78,40 @@ test("valid knobs, universal keys, and the structured trigger/stageModels produc
     "main-sitter": { branch: "main" },
   })
   assert.deepEqual(w, [])
+})
+
+test("every schema-validated per-kind knob lints clean — no false 'unknown knob' warnings", () => {
+  // The regression this pins: STRUCTURED_KEYS drifted to a three-entry subset
+  // of core's `workflows.<kind>` schema, so the Config tab told operators that
+  // real, working settings (`stageFanout`, `stageChecks`, …) were "unknown …
+  // silently ignored".
+  const w = lint({
+    engineering: {
+      prBase: "release/2.4",
+      stageContext: { build: { plan: 24000 } },
+      stageFanout: { review: "axis" },
+      stageConcurrency: { review: 3 },
+      stageChecks: { verify: [{ name: "tests", command: "npm test" }] },
+      discoverChecks: true,
+      planVisualization: true,
+    },
+  })
+  assert.deepEqual(w, [])
+})
+
+test("drift alarm: every STRUCTURED_KEY really is validated by core's schema", () => {
+  // A key that belongs in the list is exactly one whose bad value FAILS
+  // `ConfigSchema` — `workflows.<kind>` is a looseObject, so an undeclared key
+  // with the same bad value passes straight through. The control key proves the
+  // probe discriminates.
+  const parses = (section: Record<string, unknown>): boolean => ConfigSchema.safeParse({ workflows: { engineering: section } }).success
+  assert.ok(parses({ ["not-a-real-knob"]: 7 }), "the looseObject must pass an undeclared key — otherwise this probe proves nothing")
+  for (const key of STRUCTURED_KEYS) {
+    // `maxDiffLines` is a number, so probe it with a string; everything else
+    // rejects a bare number.
+    const bad = key === "maxDiffLines" ? "not-a-number" : 7
+    assert.equal(parses({ [key]: bad }), false, `"${key}" is in STRUCTURED_KEYS but core's schema does not validate it — remove it, or the lint goes blind to its typos`)
+  }
 })
 
 test("linting is total — a non-object workflows section or member never throws", () => {

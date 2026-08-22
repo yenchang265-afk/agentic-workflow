@@ -144,7 +144,17 @@ export const upgradeCandidates = (
     if (typeof v.fixAvailable === "boolean" || v.fixAvailable.name !== pkg || !v.fixAvailable.version) continue
     const current = installed[pkg] ?? ""
     const target = v.fixAvailable.version
-    const impact = v.fixAvailable.isSemVerMajor ? "major" : semverImpact(current || target, target)
+    // An UNKNOWN current version (the `npm ls` parse failed, or the package is
+    // missing from the depth-0 listing) reads as "minor", never as
+    // `semverImpact(target, target)` — that self-comparison always says
+    // "patch", the LEAST conservative class, so a patch-only `autoFix` policy
+    // silently claimed bumps nobody classified. npm's own `isSemVerMajor:
+    // false` already bounds the unknown at minor (npm knows the installed
+    // tree even when our parse of it failed), so "minor" is the worst honest
+    // answer — under the default `["patch","minor"]` policy nothing changes,
+    // and a patch-only policy now parks it for a human, matching this module's
+    // "unknown reads conservative" rule (`semverImpact` on unparsable).
+    const impact = v.fixAvailable.isSemVerMajor ? "major" : current ? semverImpact(current, target) : "minor"
     const candidate: UpgradeCandidate = { pkg, current, target, impact, severity: v.severity }
     if (impact === "major" || !policy.autoFix.includes(impact)) majors.push(candidate)
     else byPkg.set(pkg, candidate)

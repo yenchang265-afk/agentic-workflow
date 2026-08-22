@@ -37,7 +37,7 @@
  */
 import { rawAgentModel, readRawConfigLayers, spawnAlias } from "@agentic-workflow/core/config-layers"
 import { dialectFor, hostFor } from "./dialect.mjs"
-import { readMarker } from "./marker.mjs"
+import { backlogRoot, readMarker } from "./marker.mjs"
 import { allow, readStdin, rewriteInput } from "./pretooluse.mjs"
 // Shared with the spawn-stage guard, which reads the same `subagent_type` off the
 // same tool call: one copy of the prefix-stripping, so a host that changes how it
@@ -97,7 +97,13 @@ const main = async () => {
 
   const cwd = input.cwd || process.cwd()
   const marker = readMarker(cwd, d.stageMarkerFile)
-  const model = modelFor(marker, readRawConfigLayers(cwd), agent)
+  // The config resolves from the BACKLOG root, exactly as the marker does: the
+  // marker path honors AGENTIC_WORKFLOW_DIR (marker.mjs's documented fix for
+  // resolution mismatches), and reading the config from the session cwd
+  // reintroduced the same class one input over — with the env var pointing
+  // elsewhere, `agentModels` in the repo's own .agentic-workflow.json silently
+  // never bound while the server reported the setting as valid.
+  const model = modelFor(marker, readRawConfigLayers(backlogRoot(cwd)), agent)
   if (!model) return allow()
   // Already correct — emitting an envelope would only add noise to the transcript.
   if (ti.model === model) return allow()

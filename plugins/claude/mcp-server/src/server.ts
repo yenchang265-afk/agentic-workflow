@@ -1382,6 +1382,25 @@ server.registerTool(
       // anyway, so this is the fix for PLAN and a harmless no-op for them.
       const entryMarkerError = writeStageMarker(state.stage)
       if (entryMarkerError) {
+        // PLAN is spawned straight off this claim with no workflow_stage call
+        // (firePayload emits no such instruction for plan), so a failed arm
+        // DOOMS the run rather than merely un-scoping it: the {stage:"plan",
+        // taskId} carve-out never exists, the plan author's one legal write
+        // (queued/<id>.md) is blocked by the always-on backlog guard, and the
+        // stage burns a whole run to "the PLAN stage wrote no ## Implementation
+        // Plan" — a misleading diagnosis for an unwritable runs/. Refuse
+        // upfront and hand back everything the claim took, exactly as
+        // `startPlan` does for the identical failure (the backlog source's
+        // release() also restores a spent plan request).
+        if (state.stage === "plan") {
+          await claim.source.release(claim.item)
+          await emitSchedEvent({ type: "release", kind: claim.item.workflowKind, id: claim.item.id })
+          activeClaim = null
+          active = null
+          return fail(`Could not arm the PLAN stage marker — ${entryMarkerError}. Check that ${config.tasksDir}/runs/ is writable.`)
+        }
+        // A sitter's entry stage re-arms via workflow_stage, which reports the
+        // same failure actionably before anything is spawned — a warn suffices.
         await log("warn", `could not arm the ${state.stage} stage marker — ${entryMarkerError}; the guard will not scope this stage`)
       }
     }
@@ -1959,8 +1978,14 @@ server.registerTool(
       // axis name IS a lens name. Only a gap naming no pass (a partial lens
       // overlap) still goes straight to ERROR: there is no targeted pass to
       // re-run, and re-firing every lens would re-review what already reported.
-      const passFoci = new Set(gatePasses.map((p) => p.focus).filter((f): f is string => f !== null))
-      const retryableByFocus = gatePasses.some((p) => p.mode === "axis") || (gaps.length > 0 && gaps.every((g) => passFoci.has(g)))
+      // Through `focusKey`, matching every other focus/axis comparison
+      // (`enforcesAxisCoverage` → `unreviewedAxes` normalizes, and
+      // workflow_stage resolves `focus` case-insensitively): an exact-string
+      // test here silently skipped the targeted retry for a lens list that
+      // spells the axes with different casing — the coverage gate was on, the
+      // retry would have worked, and the stage went straight to the ERROR stop.
+      const passFoci = new Set(gatePasses.map((p) => (p.focus === null ? null : focusKey(p.focus))).filter((f): f is string => f !== null))
+      const retryableByFocus = gatePasses.some((p) => p.mode === "axis") || (gaps.length > 0 && gaps.every((g) => passFoci.has(focusKey(g))))
       if (gaps.length && retryableByFocus && !verdictRetried) {
         // Same rule as every other arm: a re-run the guard cannot scope must not
         // be handed out as if it were scoped. And the marker write must succeed
@@ -2983,11 +3008,39 @@ server.registerTool(
  * as one JSON line to stdout (stdout is otherwise reserved for the MCP protocol;
  * in gate mode it carries only this result — logs still go to stderr).
  */
+/**
+ * Whether `pid` is a live process on this machine — the gate CLI's twin of the
+ * hooks' `markerWriterAlive` (EPERM proves existence, so it counts as alive; a
+ * missing or malformed pid reads dead, which for a marker judged by its
+ * deadline is the fail-open direction).
+ */
+const markerPidAlive = (pid: unknown): boolean => {
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return (err as NodeJS.ErrnoException | undefined)?.code === "EPERM"
+  }
+}
+
 const readStageTaskId = (): string | null => {
   try {
     const raw = fs.readFileSync(stageMarkerPath(), "utf8")
-    const marker = JSON.parse(raw) as { taskId?: unknown }
-    return typeof marker.taskId === "string" ? marker.taskId : null
+    const marker = JSON.parse(raw) as { taskId?: unknown; deadline?: unknown; pid?: unknown }
+    if (typeof marker.taskId !== "string") return null
+    // A crashed server's leftover marker must not read as "a live loop is
+    // driving": nothing removes the file on a SIGKILL/OOM, and this feeds
+    // `isDriving` for the typed replan/retask/abandon/remove verbs — core then
+    // refuses the task with "stop it first", advice nobody can act on (the
+    // restarted server's workflow_stop answers "no active loop" and leaves the
+    // marker), wedging the task for good. Same liveness rule as the hooks and
+    // core's `taskDrivenByStageMarker`: an expired deadline whose writer pid
+    // is gone is a dead run; a marker with no deadline (an older server) stays
+    // trusted, and an expired one with a live writer still counts as driving.
+    const expired = typeof marker.deadline === "number" && marker.deadline <= Date.now()
+    if (expired && !markerPidAlive(marker.pid)) return null
+    return marker.taskId
   } catch {
     return null
   }

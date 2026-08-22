@@ -1,6 +1,7 @@
 import path from "node:path"
 import { staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
-import { commitPaths, gitActor } from "@agentic-workflow/core/workflow/git"
+import { gitActor } from "@agentic-workflow/core/workflow/git"
+import { commitBacklog } from "@agentic-workflow/core/workflow/gate"
 import { auditBacklog, formatAnomalies } from "@agentic-workflow/core/task/audit"
 import {
   appendNote,
@@ -186,7 +187,15 @@ const doctorFix = async (deps: HubDeps): Promise<JsonResponse> => {
   const revokedRequests = await revokeStrayPlanRequests(deps.sh, deps.directory, deps.tasksDir, confirmedStrays)
 
   if (rescued.length > 0) {
-    await commitPaths(deps.sh, deps.directory, [deps.tasksDir], `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
+    // Through core's `commitBacklog`, never raw `commitPaths`: that helper is the
+    // single home of the `ignoreBacklog` policy ("callers must not re-derive
+    // it"), and under the default `ignoreBacklog: true` it re-asserts the
+    // `info/exclude` entry instead of committing — a raw commit here could land
+    // the whole backlog (task files plus runs/ machine state) into the user's
+    // history on a clone whose exclude entry was never asserted. Both CLI
+    // hosts' doctors and the hub's own task editor already route through the
+    // policy; this was the one writer that drifted.
+    await commitBacklog(deps.sh, deps.directory, deps.config, `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
   }
 
   const response: DoctorFixResponse = {

@@ -304,6 +304,43 @@ test("startPlan hands the claim back when the PLAN stage marker cannot be armed"
   )
 })
 
+test("workflow_claim's PLAN entry refuses a failed marker arm and hands the claim back", () => {
+  // A PLAN entry is spawned straight off the claim with no workflow_stage call,
+  // so a failed arm dooms the run: the {stage:"plan"} carve-out never exists,
+  // the plan author's one legal write is blocked, and the stage burns to "wrote
+  // no ## Implementation Plan". A warn-and-proceed here was the bug; the arm
+  // must mirror startPlan's refusal, claim handback included.
+  const body = flat(toolBody(code(source()), "workflow_claim"))
+  assert.match(body, /const entryMarkerError = writeStageMarker\(state\.stage\)/, "the slice must be the no-isolation entry arm")
+  assert.match(
+    body,
+    /if \(state\.stage === "plan"\).*?claim\.source\.release\(claim\.item\).*?activeClaim = null.*?active = null.*?return fail\(`Could not arm the PLAN stage marker/,
+    "a doomed PLAN entry must refuse and hand back everything the claim took",
+  )
+  assert.match(body, /the guard will not scope this stage/, "a sitter's entry stage keeps the warn — workflow_stage reports the same failure actionably")
+})
+
+test("the gate CLI's stage-marker liveness matches the hooks — a crashed run's leftover drives nothing", () => {
+  // readStageTaskId feeds isDriving for the typed replan/retask/abandon/remove
+  // verbs; without the liveness rule a SIGKILLed server's leftover marker
+  // wedged those verbs forever behind "stop it first" — advice nobody can act
+  // on, since the restarted server's workflow_stop answers "no active loop".
+  const src = flat(code(source()))
+  const body = src.slice(src.indexOf("const readStageTaskId ="), src.indexOf("async function runGate"))
+  assert.match(body, /marker\.deadline/, "the marker's deadline must be consulted")
+  assert.match(body, /markerPidAlive\(marker\.pid\)/, "an expired deadline defers to the writer pid, exactly as the hooks do")
+})
+
+test("the gap-pass retry predicate matches focus names the way workflow_stage resolves them", () => {
+  // enforcesAxisCoverage normalizes (unreviewedAxes trims + lowercases) and
+  // workflow_stage resolves `focus` through focusKey — an exact-string test
+  // here silently skipped the targeted retry for a lens list that spells the
+  // axes with different casing.
+  const body = flat(toolBody(code(source()), "workflow_advance"))
+  assert.match(body, /passFoci\.has\(focusKey\(g\)\)/, "gap membership must be tested through focusKey")
+  assert.doesNotMatch(body, /passFoci\.has\(g\)\)/, "the raw-spelling test is the regression")
+})
+
 test("workflow_advance routes a twice-rejected verdict on what the stage declared", () => {
   const body = flat(toolBody(code(source()), "workflow_advance"))
   assert.match(body, /const salvaged = rejectedFallback\(verdictRejected\)/)
@@ -381,10 +418,11 @@ test("workflow_advance gates a fan-out on the accumulated axis coverage, and a g
   assert.match(flat(body), /pending = salvagedFail \?/, "a salvaged FAIL must survive the coverage gate as FAIL")
   assert.match(flat(body), /gaps\.length && retryableByFocus && !verdictRetried/, "the missing passes get one retry before the stage errors")
   // Retryable whenever the gap names a resolvable focus: axis passes by
-  // construction, and a lens set naming the axes verbatim (the only lens shape
+  // construction, and a lens set naming the axes (matched through focusKey,
+  // the way workflow_stage resolves a focus — the only lens shape
   // enforcesAxisCoverage turns the gate on for). A gap naming no pass still
   // goes straight to ERROR.
-  assert.match(flat(body), /gatePasses\.some\(\(p\) => p\.mode === "axis"\) \|\| \(gaps\.length > 0 && gaps\.every\(\(g\) => passFoci\.has\(g\)\)\)/)
+  assert.match(flat(body), /gatePasses\.some\(\(p\) => p\.mode === "axis"\) \|\| \(gaps\.length > 0 && gaps\.every\(\(g\) => passFoci\.has\(focusKey\(g\)\)\)\)/)
   assert.match(flat(body), /enforcesAxisCoverage\(config, activeManifest\(\)\.manifest\.kind, gateDef\)/, "the gate is the shared predicate, not an inline mode test")
   assert.match(flat(body), /passes: gaps/, "the retry must name exactly the passes that recorded nothing")
   assert.match(flat(body), /armedPass = null/, "the retry arms its own pass; the finished one is already sampled")
