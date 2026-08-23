@@ -2,8 +2,8 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { DEFAULT_CONFIG } from "../config.js"
 import { PLAN_HEADING, TASK_APPROVED_MARKER } from "../task/store.js"
-import { serializeTask } from "../task/schema.js"
-import { abandonTask, approveAllTasks, approveAny, approvePlan, approveTask, oneLineReason, rejectAny, removeTask, replanTask, REPLAN_REASON_MAX, retaskTask, shipAny, shipTask, type GateCtx, type GateResult } from "./gate.js"
+import { parseTask, serializeTask } from "../task/schema.js"
+import { abandonTask, approveAllTasks, approveAny, approvePlan, approveTask, oneLineReason, planCaveats, rejectAny, removeTask, replanTask, REPLAN_REASON_MAX, retaskTask, shipAny, shipTask, type GateCtx, type GateResult } from "./gate.js"
 
 /**
  * The shared gate moves, driven against a tiny in-memory backlog. A fake shell
@@ -986,6 +986,17 @@ test("approvePlan warns on a plan with no ### Verification, and on stacked plan 
   const r3 = await approvePlan(ctx3, "t")
   assert.ok(r3.ok && r3.data.caveats === undefined)
   assert.ok(!r3.message.includes("Note:"), "a contract-clean plan approves without caveats")
+})
+
+test("planCaveats is the pure seam the auto-plan crossings judge before approving", () => {
+  // Same list approvePlan renders — exported so an automatic crossing can
+  // check that the manual gate would have had nothing to warn about.
+  const dirty = parseTask("t.md", task("Do it", `${PLAN_HEADING}\n\n1. step`), "docs/tasks/plan-review/t.md")
+  const caveats = planCaveats(dirty)
+  assert.equal(caveats.length, 1)
+  assert.match(caveats[0] ?? "", /no ### Verification/)
+  const clean = parseTask("t.md", task("Do it", `${PLAN_HEADING}\n\n1. step\n\n### Verification\n\n- test: npm test`), "docs/tasks/plan-review/t.md")
+  assert.deepEqual(planCaveats(clean), [])
 })
 
 test("approvePlan warns when the plan rests on a dependency it could not establish", async () => {

@@ -88,7 +88,7 @@ import {
 import type { AdoGateway } from "@agentic-workflow/core/source/ado-gateway"
 import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
 import { clearState, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
-import { abandonTask, approveAny, approvePlan, rejectAny, removeTask, retaskTask, type GateCandidate, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
+import { abandonTask, approveAny, approvePlan, planCaveats, rejectAny, removeTask, retaskTask, type GateCandidate, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
 import { runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
@@ -3897,6 +3897,24 @@ export const autoAdvanceParkedPlan = async (
   try {
     const parked = await findByIdIn(deps.$, deps.directory, config.tasksDir, "plan-review", id)
     if (parked?.autoPlan !== true) return { crossed: false, chained: false }
+    // --auto-plan means "skip the question when there is nothing to ask". The
+    // manual gate shows these caveats at the exact moment the approval is
+    // still the human's to withhold; crossing past them automatically would
+    // mean the one plan defect whose cost is paid an iteration later (no
+    // ### Verification subsection — so no discovered checks will run) is seen
+    // by NO ONE. Fail toward human review: the plan stays parked, the flag
+    // stays on the file, and a manual approve still crosses anyway.
+    const caveats = planCaveats(parked)
+    if (caveats.length > 0) {
+      const summary = caveats.join("; ")
+      await deps.log("warn", `auto-plan: declined to auto-approve "${id}" — ${summary}`)
+      void toast(
+        deps.client,
+        `Auto-plan: "${id}" stays parked in plan-review/ — ${summary}. Review the plan, then approve ${id} to cross anyway, or replan ${id} <reason>.`,
+        "warning",
+      )
+      return { crossed: false, chained: false }
+    }
     const r = await approvePlan(gateCtx(deps, config), id)
     if (!r.ok) {
       await deps.log("warn", `auto-plan: could not approve the parked plan for "${id}": ${r.message}`)

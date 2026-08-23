@@ -85,6 +85,7 @@ import {
   approveAny as coreApproveAny,
   approvePlan as coreApprovePlan,
   approveTask as coreApproveTask,
+  planCaveats,
   findAnyStatus as coreFindAnyStatus,
   rejectAny as coreRejectAny,
   abandonTask as coreAbandonTask,
@@ -2269,6 +2270,26 @@ const runPark = async (
   // ordinary parked descriptor plus the failure, which the human gate handles.
   const parkedTask = await findByIdIn(sh, directory, config.tasksDir, "plan-review", id)
   if (parkedTask?.autoPlan === true) {
+    // --auto-plan means "skip the question when there is nothing to ask". The
+    // manual gate shows these caveats at the exact moment the approval is
+    // still the human's to withhold; crossing past them automatically would
+    // mean the one plan defect whose cost is paid an iteration later (no
+    // ### Verification subsection — so no discovered checks will run) is seen
+    // by NO ONE. Fail toward human review — same shape as the failed-approve
+    // degrade below: the plan stays parked, the flag stays on the file, and a
+    // manual approve still crosses anyway.
+    const caveats = planCaveats(parkedTask)
+    if (caveats.length > 0) {
+      return {
+        action: { kind: "park", message: action.message },
+        path: report.path,
+        gate: { kind: "plan", id },
+        next:
+          `auto-plan declined to cross the plan gate: ${caveats.join("; ")}. ` +
+          `Fall back to the human gate: show the user the plan summary and these caveats, then ask with ${dialect.askTool} — ` +
+          `Approve anyway (workflow_plan_approve("${id}") then workflow_start("${id}")), Replan with a reason (workflow_replan("${id}", reason)), or Park for later.`,
+      }
+    }
     const gateResult = await approvePlan(id)
     if (gateResult.ok) {
       return {
