@@ -2,12 +2,12 @@
 
 # Agentic loop —— 工程（engineering）工作流程改進計畫
 
-**本頁每一份計畫（01–32）都已實作並測試完成**，存放於共用的
+**本頁每一份計畫（01–35）都已實作並測試完成**，存放於共用的
 `@agentic-workflow/core` 套件（`packages/core/`）中，供 OpenCode 外掛和 Claude
 MCP 伺服器共同使用。這些文件保留作為這些功能的設計紀錄，而非待辦的
 backlog。計畫 10–13 已於 2026-08-02 落地；計畫 14 於 2026-08-03；計畫 15 於
 2026-08-07；計畫 16–18 於 2026-08-08；計畫 24–27 於 2026-08-11；計畫 32 於
-2026-08-17。
+2026-08-17；計畫 33–35 於 2026-08-23。
 
 來源：目前的程式碼（所有引用的路徑與函式名稱均已對照撰寫當下的原始碼驗證
 過）、[`../threat-model.md`](../threat-model.md) 中列出的殘餘風險，以及
@@ -50,6 +50,10 @@ backlog。計畫 10–13 已於 2026-08-02 落地；計畫 14 於 2026-08-03；�
 | 31 | [終端事件可以推播通知](./31-terminal-notifications.zh-TW.md) | 沒人看終端機時閘門就靜音：停泊只是 scrollback 裡的 toast，watch worker 默默堆積完成的 run，停掉的迴圈等著不知情的人。`notifyCommand`（使用者層級、含 shell——repo 層以既有的按鍵警告丟棄）在每個終端事件後以 `sh -c <command>` 觸發，環境變數帶 `AW_EVENT`/`AW_KIND`/`AW_TASK`/`AW_MESSAGE`，每個值都是逸出後的插值；`notifyEvents` 收窄集合（四個字面值，repo 可設）。單一咽喉點——`notifyTerminal` 包住每個 host 與 kind 本就經過的 `runTerminal`——10 秒上限且 best-effort：通知器慢或失敗只記警告，永不改變結果 | `packages/core/src/config.ts` 與 `workflow/state.ts` 的 `notifyCommand`/`notifyEvents`、`config-layers.ts` 的 `SHELL_BEARING_KEYS`、`workflow/terminal.ts` 的 `notifyTerminal`/`NOTIFY_TIMEOUT_MS`；`terminal.test.ts` |
 
 | 32 | [計畫不得指名一個它沒讀過的相依](./32-plan-verified-dependencies.zh-TW.md) | PLAN 在任何 host 上都沒有 shell、沒有網路（`bash: deny`；Claude/Qwen 只給 Read/Grep/Glob/Write），所以計畫裡每個版本都來自**公開** registry 的記憶——在指向內部鏡像的 repo 上，那是對另一個問題的答案，而 BUILD 要到安裝時才發現，已經遲了一次迭代。組合上去的 `dependencyContractBlock` 要求：先重用的排序（lockfile → 標準函式庫 → 新的）、版本必須是**讀到**並以 `file:line` 引用而非回想、指出這個 repo 實際解析的 registry（讀 `.npmrc`/`settings.xml`/`pip.conf`，而不是列表），以及對無法確立者明確說出「未能確立」；機器可讀的那一半是條件性 `### Dependencies` 小節裡的 `agentic-deps` 圍欄，並預報到 park 註記、park 訊息與 `approvePlan` 的 caveats。沒有任何東西會去探測——由 driver 執行的 registry 檢查設計過後放棄（PLAN 的 `bashAllowlist` 不是只管准入：`[]` 代表不受限，而非空的 marker 清單會收窄人類自己 session 裡的每一個 Bash 呼叫；`runPark` 沒有有界 shell；park 時期的綠燈會把人類的互動環境洗成事實）。BUILD 從另一端收尾：計畫指名而無法解析的相依是**計畫**缺陷，導向 `build.onError`，絕不自行替換 | `packages/core/src/workflow/declared-deps.ts`、`workflow/engine.ts` 的組合尾段、`workflow/terminal.ts` 的 park 預報、`workflow/gate.ts` 的 caveat、`prompts/agents/workflow-plan-author/body.md` + `skills/planning-and-task-breakdown/SKILL.md`、`workflows/engineering/stages/build.md`；`declared-deps.test.ts`、`terminal.test.ts`、`gate.test.ts`、`engine.test.ts` |
+
+| 33 | [Ship gate 以它所把關的 diff 開場](./33-ship-gate-diff-aid.zh-TW.md) | 這個 gate 的整個契約是「審閱分支 diff」，卻沒有任何地方算過它：done note 只寫分支名，Claude host 要 MODEL 自己推導摘要，hub 沒有 diff 檢視，產品程式碼裡不存在任何 `--shortstat`。現在 `runDone` 在 run 還記得自己範圍時計算經驗證的 `git diff --shortstat <base>...<branch>`，並串到三處：done note 尾端的 `; diff: …` 子句（放最後，它的逗號才動不了前面以逗號截值的 branch/base 欄位）、`TerminalReport` 上的 `diffstat`/`diffCmd`（OpenCode toast 與 Claude ship-gate descriptor 以數字和字面指令開場）、以及 `extractRunDiffstat` 讀回給 hub 的 review 卡。每種失敗都退化成 clause 之前的 note，逐位元組相同 | `packages/core/src/workflow/git.ts` 的 `diffShortstat`、`runDone`（`workflow/terminal.ts`）的探測與子句、`task/store.ts` 的 `RUN_DIFF_PREFIX`/`extractRunDiffstat`、`plugins/opencode/src/workflow/driver.ts` 的 toast、`plugins/claude/mcp-server/src/server.ts` 的 descriptor、`packages/hub/src/shared/api.ts` + `server/routes/review.ts` + `web/review/ReviewQueue.tsx` 的 `ReviewItem.branch`/`diffstat`；`git.test.ts`、`store.test.ts`、`terminal.test.ts` |
+| 34 | [通過的 review 的建議會到達人類手上](./34-review-suggestions-to-ship-gate.zh-TW.md) | `verdictFeedbackBlock` 刻意把 findings 過濾到 blocking（一條建議不該燒掉一次 rebuild），但那個過濾器是 check stage 唯一的出口——通過的 REVIEW 的非阻斷 findings 只在 metrics sidecar 裡存活，那是個沒人在 ship gate 讀的跨 run 彙總。`suggestionFindings`（過濾器的精確補集，上限 10）搭 done ACTION——絕不進 state：它只在這個 terminal 有意義，持久化欄位需要 schema key 否則被 zod 剝掉——`runDone` 在 done note 之前寫一條打碼截斷的 `Review suggestions (N) — …` audit note（done note 維持 trail 最新一行），report 原樣攜帶給兩個 host 轉述，明確標為非阻斷。BUILD 的 feedback seam 保持乾淨，由測試釘住 | `packages/core/src/workflow/verdict.ts` 的 `suggestionFindings`、`workflow/engine.ts` `advance` 的 done arm + `workflow/state.ts` 的 `Action`、`runDone`（`workflow/terminal.ts`）的 note 與 report、`plugins/opencode/src/workflow/driver.ts` + `plugins/claude/mcp-server/src/server.ts` 的 toast/descriptor；`verdict.test.ts`、`engine.test.ts`、`terminal.test.ts` |
+| 35 | [Status 直接說下一步要打什麼](./35-status-next-actions.zh-TW.md) | `summarizeBacklog` 把 backlog 彙總成七個可行動的 id 清單，host 們渲染計數卻吞掉動詞——OpenCode 只提示七個中的兩個，Claude host 一個都沒有，而且那個 host 呼叫 `summarizeBacklog` 時沒帶 claim id，`claimHeld` 永遠是空的、被 claim 的 task 誤報成 claimable。`nextActions` 是緊鄰 summary 的一個純 renderer——每個非空清單一行帶動詞的提示、人類等待的 gate 優先、id 超過 5 個省略、指令前綴是參數——由兩個 host 共用，狀態→動詞的對應不可能漂移；Claude host 的 status 現在傳入 `listClaimIds` 並回傳 `nextActions` 陣列 | `packages/core/src/task/store.ts` 的 `nextActions`、status 動詞的提示迴圈（`plugins/opencode/src/workflow/driver.ts`）、`workflow_status` 的 `claimedIds` 修正 + `nextActions` 欄位（`plugins/claude/mcp-server/src/server.ts`）；`store.test.ts` |
 
 仍未解決的殘留事項：跨行程的 `index.lock` 競速與遮罩選項。（本清單原本列出的
 另外兩項已經完成——bash 工作樹釘選在 `packages/core/src/workflow/worktree-guard.ts`，

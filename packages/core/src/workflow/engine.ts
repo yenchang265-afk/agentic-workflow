@@ -13,6 +13,7 @@ import { shellQuote } from "./worktree-guard.js"
 import {
   planContractBlock,
   planVisualizationBlock,
+  suggestionFindings,
   verdictContractBlock,
   verdictFeedbackBlock,
   workScopeBlock,
@@ -533,8 +534,21 @@ export const advance = (
     }
     case "park":
       return { state: s, action: { kind: "park", message: effect.message, toStatus: effect.toStatus } }
-    case "done":
-      return { state: s, action: { kind: "done", message: effect.message, toStatus: effect.toStatus } }
+    case "done": {
+      // A check stage's PASS may still carry `suggestion` findings — filtered
+      // out of the rebuild seam above on purpose, so this action is their only
+      // route to the human who reviews the diff (see the Action arm's doc).
+      const suggestions = def.kind === "check" ? suggestionFindings(record) : []
+      return {
+        state: s,
+        action: {
+          kind: "done",
+          message: effect.message,
+          toStatus: effect.toStatus,
+          ...(suggestions.length ? { suggestions } : {}),
+        },
+      }
+    }
     case "stop":
       // A stop reached via a CHECK stage's ERROR verdict is an `onError` transition — a
       // transient environment/tooling failure the manifest asks to retry on the next poll,

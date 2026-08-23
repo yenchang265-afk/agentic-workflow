@@ -66,6 +66,10 @@ export interface ReviewItem {
   readonly lastEvent: string | null
   /** Opening of the plan, when there is one — enough to decide or to know to open it. */
   readonly planExcerpt: string | null
+  /** The branch the last completed run built on (in-review items) — where the diff to review lives. */
+  readonly branch: string | null
+  /** That run's one-line `git diff --shortstat` summary, read off the done note — the size of what a ship approves. */
+  readonly diffstat: string | null
   readonly lastRun: ReviewRunContext | null
   readonly claimed: boolean
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { addWorktree, branchExists, commitAll, defaultBranchName, headSha, listWorktrees, pushBranch, worktreeForBranch } from "./git.js"
+import { addWorktree, branchExists, commitAll, defaultBranchName, diffShortstat, headSha, listWorktrees, pushBranch, worktreeForBranch } from "./git.js"
 
 /**
  * git.ts shells out via Bun's `$` (redirections, quoting) which the node+tsx
@@ -199,4 +199,25 @@ test("defaultBranchName prefers origin/HEAD, then init.defaultBranch, then null 
   assert.equal(await defaultBranchName(makeShell(() => ({ exitCode: 1 })), "/repo"), null)
   // It gates every fresh BUILD, so it must never pay a round trip.
   assert.ok(!log.some((c) => c.includes("gh ")), log.join(" | "))
+})
+
+test("diffShortstat returns the validated one-line summary of base...branch", async () => {
+  const $ = makeShell((cmd) =>
+    cmd === "git -C /repo diff --shortstat main...feature/x"
+      ? { stdout: " 3 files changed, 40 insertions(+), 2 deletions(-)\n" }
+      : { exitCode: 1 },
+  )
+  assert.equal(await diffShortstat($, "/repo", "main", "feature/x"), "3 files changed, 40 insertions(+), 2 deletions(-)")
+})
+
+test("diffShortstat reads an empty diff, a failure, and git chatter all as null", async () => {
+  // Null degrades to "no stat clause on the note" — the pre-clause behavior —
+  // so anything that is not the shortstat shape must land there, never ride
+  // into an audit line downstream parsers anchor on.
+  assert.equal(await diffShortstat(makeShell(() => ({ stdout: "" })), "/repo", "a", "b"), null)
+  assert.equal(await diffShortstat(makeShell(() => ({ exitCode: 1, stdout: "1 file changed" })), "/repo", "a", "b"), null)
+  assert.equal(await diffShortstat(makeShell(() => ({ stdout: "warning: refname 'b' is ambiguous" })), "/repo", "a", "b"), null)
+  // Singular forms and a missing insertions/deletions half are all real git output.
+  assert.equal(await diffShortstat(makeShell(() => ({ stdout: " 1 file changed, 1 insertion(+)" })), "/repo", "a", "b"), "1 file changed, 1 insertion(+)")
+  assert.equal(await diffShortstat(makeShell(() => ({ stdout: " 2 files changed, 3 deletions(-)" })), "/repo", "a", "b"), "2 files changed, 3 deletions(-)")
 })

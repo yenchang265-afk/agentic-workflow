@@ -1,12 +1,13 @@
 import type { Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { resolveValidateHook } from "../manifest/registry.js"
-import { appendNote, auditNote, contractRejectedNote, extractPlan, findByIdIn, moveTask, planHeadingCount, releaseClaim, stopContextNote, unaddressedRejectionCount } from "../task/store.js"
+import { appendNote, auditNote, contractRejectedNote, extractPlan, findByIdIn, moveTask, planHeadingCount, releaseClaim, RUN_DIFF_PREFIX, stopContextNote, unaddressedRejectionCount } from "../task/store.js"
+import { redact } from "../task/redact.js"
 import { clampedChecksDetail, previewDiscoveredChecks } from "./discovered-checks.js"
 import { depsSummaryLine, previewDeclaredDeps } from "./declared-deps.js"
 import { hasVerificationSection } from "./verdict.js"
 import type { TaskStatus } from "../task/statuses.js"
-import { ensureExcluded } from "./git.js"
+import { diffShortstat, ensureExcluded } from "./git.js"
 import { clearState } from "./persist.js"
 import { workflowId, releaseCurrentBranchLock, releaseWorktreeAt, rivalHoldsCurrentBranchLock, teardownIsolation } from "./isolate.js"
 import type { Action, AttemptRecord, Config, WorkflowState } from "./state.js"
@@ -87,7 +88,19 @@ export type TerminalReport =
   | { readonly kind: "park"; readonly taskId: string; readonly path: string; readonly message: string }
   | { readonly kind: "park-free"; readonly message: string }
   | { readonly kind: "error"; readonly message: string; readonly taskId?: string }
-  | { readonly kind: "done"; readonly message: string; readonly taskId?: string; readonly moved: boolean; readonly branch?: string }
+  | {
+      readonly kind: "done"
+      readonly message: string
+      readonly taskId?: string
+      readonly moved: boolean
+      readonly branch?: string
+      /** One-line `git diff --shortstat` of the run's work — what the diff review is signing up for. Absent when it could not be computed. */
+      readonly diffstat?: string
+      /** The exact command that shows the reviewed range (`git diff <base>...<branch>`), for the host to hand the human verbatim. */
+      readonly diffCmd?: string
+      /** The final check stage's non-blocking findings, for the human at the diff review (see `Action`'s done arm). */
+      readonly suggestions?: readonly string[]
+    }
   | { readonly kind: "stop"; readonly message: string; readonly taskId?: string; readonly branch?: string; readonly retryable?: boolean }
 
 /**
@@ -358,6 +371,11 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
   return { kind: "park", taskId: id, path: newPath, message: `${action.message}${checksLine}${depsLine}` }
 }
 
+/** The most a suggestions audit note may carry. Same spirit as `STOP_DIGEST_MAX`:
+ *  bounded by construction (the engine caps the list), clamped anyway — one line
+ *  in a file humans read, and the engine's cap is not this module's to assume. */
+const SUGGESTIONS_NOTE_MAX = 800
+
 /** done: the loop finished — park the task in in-review/ for human diff review. */
 const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" }>): Promise<TerminalReport> => {
   const { $, directory, config, state, actor, log } = ctx
@@ -374,6 +392,13 @@ const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" 
   if (!state.task && state.isolated && state.git?.worktree) {
     await releaseWorktreeAt($, log, directory, state.git.worktree, state.git.branch)
   }
+  // The diff review's own numbers, computed while the run still knows its
+  // range: the ship gate runs later from a fresh process, and the human
+  // deciding whether to open the diff should not have to run git to learn its
+  // size. Best-effort and by REF from the main checkout, so it works whether
+  // the branch sits in a worktree, on this tree, or checked out nowhere.
+  const diffstat = state.git ? await diffShortstat($, directory, state.git.base, state.git.branch) : null
+  const diffCmd = state.git ? `git diff ${state.git.base}...${state.git.branch}` : null
   let moved = false
   let moveError: string | null = null
   if (state.task) {
@@ -395,9 +420,23 @@ const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" 
         // commit SHA (see `GitRef`), and `gh pr create --base <sha>` is not a
         // thing, so recording it would turn today's wrong-but-working platform
         // default into a hard ship failure.
+        // The reviewer's non-blocking notes, surfaced where the human will
+        // actually look (this file + the done report) rather than only in the
+        // metrics sidecar. One line per the audit-note contract, redacted like
+        // every model-authored text that lands on the task file, and appended
+        // BEFORE the done note so that note stays the trail's newest line
+        // (the hub's lastEvent reads the last note).
+        if (action.suggestions?.length) {
+          const flat = redact(action.suggestions.join("; ")).text.replace(/\s*\n\s*/g, " ")
+          const clamped = flat.length > SUGGESTIONS_NOTE_MAX ? `${flat.slice(0, SUGGESTIONS_NOTE_MAX)}…` : flat
+          await appendNote($, cur, auditNote(`Review suggestions (${action.suggestions.length}) — ${clamped}`, new Date(), actor), log)
+        }
         const runBase = state.git && !state.git.onCurrentBranch ? `, base ${state.git.base}` : ""
+        // The diff-stat clause goes LAST (see RUN_DIFF_PREFIX's doc for why its
+        // commas cannot disturb the branch/base fields ahead of it).
+        const runDiff = diffstat ? `${RUN_DIFF_PREFIX}${diffstat}` : ""
         const doneNote = state.git
-          ? `Loop done — review passed on branch ${state.git.branch}${runBase}, awaiting human diff review`
+          ? `Loop done — review passed on branch ${state.git.branch}${runBase}, awaiting human diff review${runDiff}`
           : "Loop done — review passed, awaiting human diff review"
         await appendNote($, cur, auditNote(doneNote, new Date(), actor), log)
         await moveTask($, cur, (action.toStatus ?? "in-review") as TaskStatus)
@@ -441,7 +480,16 @@ const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" 
   }
   await ctx.writeMetrics("done", "review passed")
   if (state.task) await clearState($, directory, config.tasksDir, state.task.id)
-  return { kind: "done", message: action.message, moved, ...(state.task ? { taskId: state.task.id } : {}), ...(state.git ? { branch: state.git.branch } : {}) }
+  return {
+    kind: "done",
+    message: action.message,
+    moved,
+    ...(state.task ? { taskId: state.task.id } : {}),
+    ...(state.git ? { branch: state.git.branch } : {}),
+    ...(diffstat ? { diffstat } : {}),
+    ...(diffCmd ? { diffCmd } : {}),
+    ...(action.suggestions?.length ? { suggestions: action.suggestions } : {}),
+  }
 }
 
 /** The most a stop's attempts digest may carry onto its audit note. Bounded by

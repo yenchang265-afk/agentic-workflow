@@ -665,6 +665,30 @@ export const verdictFeedbackBlock = (record: VerdictRecord | null): string => {
   return lines.join("\n")
 }
 
+/** The most suggestion findings a done action carries — a reviewer that emits
+ *  dozens is padding, and the human surface these feed is a toast + one audit
+ *  line, not a report. */
+const SUGGESTIONS_MAX = 10
+
+/**
+ * The record's non-blocking (`suggestion`) findings, formatted one string per
+ * finding — the exact set `verdictFeedbackBlock` deliberately drops from the
+ * rebuild seam. These are for the HUMAN at the diff review, not for the next
+ * BUILD: a passing review's "consider…" notes otherwise survive only in the
+ * metrics sidecar, which nobody reads at the ship gate. Capped, order kept
+ * (axis order is the reviewer's own emphasis). Pure.
+ */
+export const suggestionFindings = (record: VerdictRecord | null): readonly string[] => {
+  const out: string[] = []
+  for (const axis of record?.axes ?? []) {
+    for (const f of (axis.findings ?? []).filter((f) => !isBlocking(f))) {
+      out.push(`${axis.axis}: ${f.detail}${f.location ? ` (${f.location})` : ""}`)
+      if (out.length >= SUGGESTIONS_MAX) return out
+    }
+  }
+  return out
+}
+
 /** The verdict tags emitted by the loop's check stages. */
 export const WORKFLOW_VERIFY_TAG = "WORKFLOW_VERIFY"
 export const WORKFLOW_REVIEW_TAG = "WORKFLOW_REVIEW"

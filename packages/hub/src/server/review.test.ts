@@ -109,6 +109,8 @@ const item = (id: string, lastEventAt: string | null): ReviewItem => ({
   lastEventAt,
   lastEvent: null,
   planExcerpt: null,
+  branch: null,
+  diffstat: null,
   lastRun: null,
   claimed: false,
 })

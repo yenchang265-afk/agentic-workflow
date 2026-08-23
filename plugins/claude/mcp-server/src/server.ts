@@ -114,6 +114,7 @@ import {
   isRecoverable,
   listByStatus,
   listClaimIds,
+  nextActions,
   markClaimed,
   moveTask,
   pairingCoverage,
@@ -2137,19 +2138,36 @@ server.registerTool(
         ? { kind: action.kind, message: (action as { message: string }).message }
         : { kind: "stop", message: report?.message ?? (action as { message: string }).message },
       ...(action.kind === "done" && parked && taskId
-        ? {
-            taskId,
-            gate: { kind: "ship", id: taskId },
-            next:
-              `ship gate: show the user the loop branch's diff summary, then ask with ${dialect.askTool} — ` +
-              `Ship (workflow_ship("${taskId}")), Replan with a reason (workflow_replan("${taskId}", reason)), ` +
-              `or Leave in in-review (stop here; /agentic-workflow:engineering approve ${taskId} ships it later). ` +
-              // The publish choice belongs to THIS ask and no later one: the ship
-              // gate blocks its own turn, so once the task is completed there is
-              // no turn left to ask in.
-              `If they choose Ship, offer the publish choice too — open a draft PR, push the branch only, or keep it local — ` +
-              `and pass it as workflow_ship's publish argument ("pr" | "push" | "local"). Omit publish if they have no preference.`,
-          }
+        ? (() => {
+            const done = report?.kind === "done" ? report : null
+            // The diff summary used to be a model-run errand ("show the user the
+            // loop branch's diff summary"); with core computing the stat at
+            // runDone, the prose leads with the deterministic numbers and the
+            // exact command instead of asking the model to derive the range.
+            const diffLine = done?.diffstat
+              ? `the run's diff is ${done.diffstat}${done.diffCmd ? ` (\`${done.diffCmd}\`)` : ""} — show the user that summary`
+              : `show the user the loop branch's diff summary`
+            const suggLine = done?.suggestions?.length
+              ? ` Relay the reviewer's ${done.suggestions.length} non-blocking suggestion${done.suggestions.length === 1 ? "" : "s"} too (this result's \`suggestions\`; also on the task's audit note) — they inform the diff review, they block nothing.`
+              : ""
+            return {
+              taskId,
+              gate: { kind: "ship", id: taskId },
+              ...(done?.diffstat ? { diffstat: done.diffstat } : {}),
+              ...(done?.diffCmd ? { diffCmd: done.diffCmd } : {}),
+              ...(done?.suggestions?.length ? { suggestions: done.suggestions } : {}),
+              next:
+                `ship gate: ${diffLine}, then ask with ${dialect.askTool} — ` +
+                `Ship (workflow_ship("${taskId}")), Replan with a reason (workflow_replan("${taskId}", reason)), ` +
+                `or Leave in in-review (stop here; /agentic-workflow:engineering approve ${taskId} ships it later). ` +
+                // The publish choice belongs to THIS ask and no later one: the ship
+                // gate blocks its own turn, so once the task is completed there is
+                // no turn left to ask in.
+                `If they choose Ship, offer the publish choice too — open a draft PR, push the branch only, or keep it local — ` +
+                `and pass it as workflow_ship's publish argument ("pr" | "push" | "local"). Omit publish if they have no preference.` +
+                suggLine,
+            }
+          })()
         : {}),
     }))
   },
@@ -2391,13 +2409,18 @@ server.registerTool(
     await loadCfg()
     const byStatus = {} as Record<TaskStatus, Task[]>
     for (const s of STATUSES) byStatus[s] = await listByStatus(fsClient, directory, config.tasksDir, s, log)
-    const summary = summarizeBacklog(byStatus)
+    // The claim markers are what split body-claimable tasks into claimable vs
+    // claim-held; without them every held task misreports as "ready" here (the
+    // OpenCode host has always passed them — this one silently didn't).
+    const summary = summarizeBacklog(byStatus, await listClaimIds(sh, directory, config.tasksDir))
+    const hints = nextActions(summary, "/agentic-workflow:engineering")
     const anomalies = await auditBacklog(fsClient, directory, config.tasksDir)
     const pm = config.projectManagement
     return ok({
       active: active ? { stage: active.stage, iteration: active.iteration + 1, task: active.task?.id ?? active.goal } : null,
       backlog: summary,
       kinds: kindsReport(),
+      ...(hints.length ? { nextActions: hints } : {}),
       ...(pm ? { pairing: { system: pm.system, ...pairingCoverage(byStatus) } } : {}),
       ...(hasAnomalies(anomalies) ? { anomalies: formatAnomalies(anomalies, config.tasksDir).map((l) => `${l} (workflow_doctor repairs)`) } : {}),
     })

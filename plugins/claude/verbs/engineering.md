@@ -301,7 +301,9 @@
 <!-- /aw:verb stop|abort -->
 <!-- aw:verb status -->
 - **`status`** (or bare) — call `mcp__agentic-workflow__workflow_status` and report
-  the active loop plus the backlog roll-up and the workflow kinds. When a
+  the active loop plus the backlog roll-up and the workflow kinds. Relay the
+  result's `nextActions` lines as given — each names the exact command a
+  waiting task needs, so they are the actionable half of the report. When a
   `projectManagement` tracker is configured, the result also carries a
   `pairing` block (tracker system, paired count, unpaired task ids) —
   surface which active tasks still need to be paired to a Jira/ADO item.

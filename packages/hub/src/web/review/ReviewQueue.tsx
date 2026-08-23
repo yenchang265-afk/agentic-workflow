@@ -89,6 +89,12 @@ const ReviewRow = ({ item, now }: { item: ReviewItem; now: number }) => {
 
       <div className="review__meta">
         <RunContext item={item} />
+        {(item.branch !== null || item.diffstat !== null) && (
+          <span className="muted review__diff">
+            {item.diffstat ?? "diff"}
+            {item.branch !== null ? ` on ${item.branch}` : ""}
+          </span>
+        )}
         {item.lastEvent && <span className="muted review__event">{item.lastEvent}</span>}
         {item.card.acceptance.length > 0 && (
           <span className="muted">

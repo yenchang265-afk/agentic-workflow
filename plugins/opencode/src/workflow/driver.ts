@@ -55,6 +55,7 @@ import {
   listQueued,
   markClaimed,
   moveTask,
+  nextActions,
   refreshWorkClaim,
   releaseClaim,
   releaseOrphanedClaims,
@@ -2408,12 +2409,19 @@ const driveChain = async (
       } else {
         // "Done" for the loop is not "completed" for the task: a human still has to
         // look at the diff. The task parks in in-review/; moving it to completed/
-        // (e.g. when the PR merges) is the human's call.
+        // (e.g. when the PR merges) is the human's call. The stat and the exact
+        // diff command ride along so that call starts from numbers, not from
+        // reconstructing the range by hand.
         const where = report.branch ? ` on branch ${report.branch}` : ""
+        const stat = report.diffstat ? ` (${report.diffstat})` : ""
+        const cmd = report.diffCmd ? ` — ${report.diffCmd}` : ""
+        const sugg = report.suggestions?.length
+          ? ` Review left ${report.suggestions.length} suggestion${report.suggestions.length === 1 ? "" : "s"} — noted on the task file.`
+          : ""
         const next = report.taskId
-          ? ` Review the diff${where}, then /agentic-workflow:engineering approve when it ships.`
+          ? ` Review the diff${where}${stat}${cmd}, then /agentic-workflow:engineering approve when it ships.${sugg}`
           : where
-            ? ` Review the diff${where}.`
+            ? ` Review the diff${where}${stat}${cmd}.${sugg}`
             : ""
         await toast(client, `${report.message}${next}`, "success")
       }
@@ -4409,11 +4417,11 @@ export const handleCommand = async (
     // backlog folders). Detailed flag lists go to the log.
     const summary = engineering ? await backlogSummary(deps, config).catch(() => null) : null
     if (summary) {
-      if (summary.interrupted.length) {
-        await deps.log("warn", `interrupted (run ${ECMD} recover <id>): ${summary.interrupted.join(", ")}`)
-      }
-      if (summary.awaitingReview.length) {
-        await deps.log("info", `awaiting diff review (run ${ECMD} approve <id>): ${summary.awaitingReview.join(", ")}`)
+      // One shared renderer (core's nextActions) instead of hand-picked hints:
+      // this host used to name the verb for exactly two of the summary's seven
+      // actionable lists and leave the rest as bare counts.
+      for (const line of nextActions(summary, ECMD)) {
+        await deps.log(line.startsWith("interrupted") || line.startsWith("claim held") ? "warn" : "info", line)
       }
     }
     const backlogLine = summary ? ` · ${formatBacklog(summary)}` : ""

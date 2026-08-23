@@ -17,6 +17,8 @@ import {
   extractPlan,
   extractRunBase,
   extractRunBranch,
+  extractRunDiffstat,
+  nextActions,
   extractReplanReason,
   extractStopContext,
   NO_REASON_FALLBACK,
@@ -221,8 +223,8 @@ const rejectionNote = (reason?: string, stamp = "2026-01-02T00:00:00.000Z by dev
 // The exact note shape `runDone` writes. The branch is recorded here because
 // nothing else survives to the ship gate — the state snapshot is cleared by
 // `runDone` itself, and `shipTask` runs later from a fresh process.
-const doneNote = (branch?: string, stamp = "2026-01-02T00:00:00.000Z by dev", base?: string): string =>
-  `\n> Loop done — review passed${branch ? ` on branch ${branch}` : ""}${base ? `, base ${base}` : ""}, awaiting human diff review [${stamp}]\n`
+const doneNote = (branch?: string, stamp = "2026-01-02T00:00:00.000Z by dev", base?: string, diff?: string): string =>
+  `\n> Loop done — review passed${branch ? ` on branch ${branch}` : ""}${base ? `, base ${base}` : ""}, awaiting human diff review${diff ? `; diff: ${diff}` : ""} [${stamp}]\n`
 
 test("extractRunBranch reads the branch the completed run built on", () => {
   assert.equal(extractRunBranch(task("a", 0, `Body.\n${doneNote("claude/my-feature")}`)), "claude/my-feature")
@@ -284,6 +286,34 @@ test("extractRunBase ignores an unstamped line and rejects a non-ref base", () =
   assert.equal(extractRunBase(task("a", 0, quoted)), undefined)
   assert.equal(extractRunBase(task("a", 0, doneNote("feature/x", "2026-01-02T00:00:00.000Z by dev", "--upload-pack=evil"))), undefined)
   assert.equal(extractRunBase(task("a", 0, doneNote("feature/x", "2026-01-02T00:00:00.000Z by dev", "$(whoami)"))), undefined)
+})
+
+const STAT = "3 files changed, 40 insertions(+), 2 deletions(-)"
+
+test("extractRunDiffstat reads the shortstat off the done note, and the branch/base beside it are unmoved", () => {
+  // The regression that matters: the stat's own commas must not shift what the
+  // comma-terminated fields ahead of it read.
+  const t = task("a", 0, doneNote("claude/my-feature", "2026-01-02T00:00:00.000Z by dev", "release/2.4", STAT))
+  assert.equal(extractRunDiffstat(t), STAT)
+  assert.equal(extractRunBranch(t), "claude/my-feature")
+  assert.equal(extractRunBase(t), "release/2.4")
+})
+
+test("extractRunDiffstat returns undefined pre-clause, unstamped, or off-shape", () => {
+  assert.equal(extractRunDiffstat(task("a", 0, doneNote("feature/x"))), undefined)
+  assert.equal(extractRunDiffstat(task("a", 0, "Just a description.")), undefined)
+  // Unstamped quoting proves nothing, same rule as the refs beside it.
+  const quoted = `\n> Loop done — review passed on branch x, awaiting human diff review; diff: ${STAT}\n`
+  assert.equal(extractRunDiffstat(task("a", 0, quoted)), undefined)
+  // A hand-edited note carrying prose where the stat was reads as "no stat".
+  assert.equal(extractRunDiffstat(task("a", 0, doneNote("feature/x", undefined, undefined, "see the PR for details"))), undefined)
+})
+
+test("extractRunDiffstat lets the newest run win, like the fields beside it", () => {
+  const body =
+    doneNote("feature/first", "2026-01-02T00:00:00.000Z by dev", "main", "1 file changed, 1 insertion(+)") +
+    doneNote("feature/second", "2026-01-03T00:00:00.000Z by dev", "main", STAT)
+  assert.equal(extractRunDiffstat(task("a", 0, body)), STAT)
 })
 
 test("extractReplanReason reads the reason off a pending rejection note", () => {
@@ -723,6 +753,38 @@ test("summarizeBacklog flags queued, gated plan-review, and in-progress/in-revie
   assert.deepEqual(s.claimable, ["ready"])
   assert.deepEqual(s.interrupted, ["crashed"])
   assert.deepEqual(s.awaitingReview, ["shipme"])
+})
+
+test("nextActions renders one verb-bearing line per non-empty list, human gates first", () => {
+  const byStatus = empty()
+  byStatus["queued"] = [task("planme", 0, "just an idea")]
+  byStatus["plan-review"] = [task("gated", 0, `${PLAN_HEADING}\n\n1. Go.`)]
+  byStatus["in-progress"] = [
+    task("ready", 0, `${PLAN_HEADING}\n\n1. Go.`),
+    task("held", 0, `${PLAN_HEADING}\n\n1. Go.`),
+    task("crashed", 0, `${PLAN_HEADING}\n\n1. Go.\n\n> BUILD started (iteration 1)`),
+  ]
+  byStatus["in-review"] = [task("shipme", 0, "")]
+  byStatus["draft"] = [task("draftee", 0, "an idea")]
+  const lines = nextActions(summarizeBacklog(byStatus, ["held"]), "/agentic-workflow:engineering")
+  assert.equal(lines.length, 7)
+  // The two human wait-gates lead — they are what the loop is blocked on.
+  assert.match(lines[0]!, /^plan awaiting review: gated — \/agentic-workflow:engineering approve <id>/)
+  assert.match(lines[1]!, /^awaiting diff review: shipme — .*approve <id> ships$/)
+  assert.match(lines[2]!, /^drafts awaiting approval: draftee/)
+  assert.match(lines[3]!, /^queued, not yet planned: planme — .*plan <id>/)
+  assert.match(lines[4]!, /^build-ready: ready — .*claim \[id\]$/)
+  assert.match(lines[5]!, /^interrupted: crashed — .*recover <id>$/)
+  assert.match(lines[6]!, /^claim held .*: held — .*doctor/)
+})
+
+test("nextActions renders nothing for an empty backlog, and elides a long id list", () => {
+  assert.deepEqual(nextActions(summarizeBacklog(empty()), "cmd"), [])
+  const byStatus = empty()
+  byStatus["in-review"] = Array.from({ length: 7 }, (_, i) => task(`t${i}`, 0, ""))
+  const lines = nextActions(summarizeBacklog(byStatus), "cmd")
+  assert.equal(lines.length, 1)
+  assert.match(lines[0]!, /t0, t1, t2, t3, t4 \+2 more/)
 })
 
 test("summarizeBacklog flags approvable drafts and excludes the never-approve tracking epic", () => {

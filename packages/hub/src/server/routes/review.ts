@@ -1,4 +1,4 @@
-import { extractPlan, listByStatus, listClaimIds } from "@agentic-workflow/core/task/store"
+import { extractPlan, extractRunBranch, extractRunDiffstat, listByStatus, listClaimIds } from "@agentic-workflow/core/task/store"
 import { parseRunLog } from "@agentic-workflow/core/workflow/runlog"
 import type { ReviewItem, ReviewResponse } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
@@ -64,6 +64,11 @@ export const getReview = async (deps: HubDeps): Promise<JsonResponse> => {
           card: toCard(task),
           ...stamps,
           planExcerpt: planExcerpt(extractPlan(task)),
+          // Both read off the done note the run already wrote — no extra IO.
+          // Null everywhere but a completed run's in-review park, and the UI
+          // simply omits the line.
+          branch: extractRunBranch(task) ?? null,
+          diffstat: extractRunDiffstat(task) ?? null,
           lastRun: log === null ? null : runContext(task.id, parseRunLog(log)),
           claimed: claimed.has(task.id),
         })
