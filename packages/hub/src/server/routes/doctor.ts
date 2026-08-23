@@ -17,6 +17,10 @@ import {
 } from "@agentic-workflow/core/task/store"
 import { revokeStrayPlanRequests } from "@agentic-workflow/core/task/plan-request"
 import { taskDrivenByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
+import { aggregateDenials, clearDenyLog, formatDenyFindings, readDenyLog, type DenyFinding } from "@agentic-workflow/core/workflow/deny-log"
+import { platformFor, stageBashGlobs } from "@agentic-workflow/core/config"
+import { stageDef } from "@agentic-workflow/core/manifest/schema"
+import { loadManifest } from "@agentic-workflow/core/manifest/load"
 import type { DoctorReport, DoctorFixResponse, HeldClaim } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { auditStatuses } from "../kindboard.js"
@@ -36,6 +40,24 @@ import { ok, type JsonResponse } from "../http.js"
  */
 
 const claimPools = (deps: HubDeps): string[] => [...new Set(deps.boards.flatMap((b) => b.pools))]
+
+/**
+ * Allowlist deny telemetry, aggregated with the config change that would admit
+ * each refused command — judged against the same glob composition the stage
+ * marker wrote (manifest globs + platform + prefix twins), so the suggestion
+ * matches the list that actually refused it. The CLI doctors carry the same
+ * report; before this the hub was the one surface that never showed it, so a
+ * hub-only operator could run into the log's size cap without ever hearing a
+ * command had been refused.
+ */
+const denyFindingsFor = (deps: HubDeps): DenyFinding[] =>
+  aggregateDenials(readDenyLog(deps.directory, deps.tasksDir), (kind: string, stage: string) => {
+    try {
+      return stageBashGlobs(stageDef(loadManifest(deps.workflowsDir, kind).manifest, stage), platformFor(deps.config, kind), deps.config)
+    } catch {
+      return null
+    }
+  })
 
 /** GET /api/doctor — read-only: what the sweep finds, plus which claims are held. */
 export const getDoctor = async (deps: HubDeps): Promise<JsonResponse> => {
@@ -66,6 +88,7 @@ export const getDoctor = async (deps: HubDeps): Promise<JsonResponse> => {
     deps.log,
   )
 
+  const denyFindings = denyFindingsFor(deps)
   const report: DoctorReport = {
     findings,
     strayRequests,
@@ -77,6 +100,7 @@ export const getDoctor = async (deps: HubDeps): Promise<JsonResponse> => {
     // claim→marker window — surfaced so /fix can explain why it skipped claim release.
     watcherLive: oracle.watcherLive,
     ...(oracle.watcherLive && oracle.leasePid !== null ? { watcherPid: oracle.leasePid } : {}),
+    ...(denyFindings.length ? { deniedCommands: formatDenyFindings(denyFindings) } : {}),
   }
   return ok(report)
 }
@@ -186,6 +210,11 @@ const doctorFix = async (deps: HubDeps): Promise<JsonResponse> => {
   )
   const revokedRequests = await revokeStrayPlanRequests(deps.sh, deps.directory, deps.tasksDir, confirmedStrays)
 
+  // Deny telemetry is acknowledged by a fix, exactly as the CLI doctors do:
+  // the GET report carried the aggregate, so the raw log is cleared rather
+  // than re-reported forever.
+  const denyLogCleared = denyFindingsFor(deps).length > 0 ? clearDenyLog(deps.directory, deps.tasksDir) : false
+
   if (rescued.length > 0) {
     // Through core's `commitBacklog`, never raw `commitPaths`: that helper is the
     // single home of the `ignoreBacklog` policy ("callers must not re-derive
@@ -207,6 +236,7 @@ const doctorFix = async (deps: HubDeps): Promise<JsonResponse> => {
     // Duplicates are reported, never fixed — echoed back so the UI keeps showing them.
     duplicates: anomalies.duplicates.map((d) => ({ id: d.id, statuses: [...d.statuses] })),
     ...(failed.length > 0 ? { failed } : {}),
+    ...(denyLogCleared ? { denyLogCleared } : {}),
   }
   return ok(response)
 }

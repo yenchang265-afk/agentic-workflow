@@ -1837,6 +1837,9 @@ server.registerTool(
         iteration: active.iteration,
         ms: Date.now() - lastFireAt,
         startedAt: new Date(lastFireAt).toISOString(),
+        // Same lens attribution as the ordinary arm below — the pass that hung
+        // is precisely the one a metrics reader wants named.
+        ...(armedPass?.stage === stage && armedPass.pass.focus ? { lens: armedPass.pass.focus } : {}),
         ...promptSizeFields(),
       })
       await runTerminal(action)

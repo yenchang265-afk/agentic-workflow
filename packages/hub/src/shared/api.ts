@@ -522,6 +522,12 @@ export interface DoctorReport {
   /** An OpenCode watcher lease is live with no stage marker — idle-polling or mid-claim, so /fix can't tell which task it drives. */
   readonly watcherLive: boolean
   readonly watcherPid?: number
+  /**
+   * Allowlist deny telemetry (core's formatDenyFindings lines): what the
+   * enforcement seams refused, with the config change that would admit each.
+   * Same report the CLI doctors carry; /fix clears the underlying log.
+   */
+  readonly deniedCommands?: readonly string[]
 }
 
 export interface DoctorFixResponse {
@@ -540,6 +546,8 @@ export interface DoctorFixResponse {
   readonly duplicates: readonly DuplicateTask[]
   /** Strays that couldn't be rescued (e.g. a draft/<id>.md collision) — left for a human. */
   readonly failed?: readonly { readonly path: string; readonly reason: string }[]
+  /** True when the fix acknowledged the deny telemetry by clearing the raw log. */
+  readonly denyLogCleared?: boolean
 }
 
 // --- config editor -----------------------------------------------------------

@@ -2588,6 +2588,9 @@ const forgetWatching = (sessionID: string): boolean => {
   const was = watching.delete(sessionID)
   stopWatchTimer(sessionID)
   lastSkipReason.delete(sessionID)
+  // Cleared with the reason, or an unwatch → re-watch dedupes its fresh
+  // watch's first skip event against the dead watch's last one.
+  lastSkipEventKey.delete(sessionID)
   watchKindFilter.delete(sessionID)
   return was
 }
@@ -4066,7 +4069,11 @@ export const handleCommand = async (
     return report(client, `Claiming the next ${kind} item — it starts when this turn settles.`, "info")
   }
 
-  if ((verb === "stop" || verb === "abort") && !rest) {
+  // `rest` is deliberately ignored: `stop now`, `stop the loop`, or a pasted
+  // trailing word must still stop — this is the verb a user reaches for when a
+  // loop has run away, and bouncing it to the usage message is hostile exactly
+  // then.
+  if (verb === "stop" || verb === "abort") {
     // EVERY mutation ahead of EVERY await, exactly as `onInterrupt` orders its
     // own. The stage may settle inside any of the awaits below, so the halt has
     // to be visible before the first one — and the pass aborts further down

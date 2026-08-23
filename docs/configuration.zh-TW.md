@@ -12,18 +12,19 @@
 設定通常用不到。
 
 **GitHub**（預設平台——空檔案，或完全沒有 `.agentic-workflow.json`，就已經
-給你 `engineering`、`pr-sitter` 和 `review-sitter`）：
+給你 `engineering`；各 sitter 屬實驗性功能，維持關閉，須以
+`"enabled": true` 明確啟用）：
 
 ```json
 {
   "workflows": {
-    "pr-sitter": { "query": "is:open author:@me" }
+    "pr-sitter": { "enabled": true, "query": "is:open author:@me" }
   }
 }
 ```
 
 把 `query` 換成你想讓 sitter 監看的 PR 搜尋條件，或者想全部採用預設值
-就整段刪掉 `workflows` 區塊。
+（只有 `engineering`）就整段刪掉 `workflows` 區塊。
 
 **Azure DevOps：**
 
@@ -36,7 +37,7 @@
     "selfLogin": "<your-login-or-service-account-email>"
   },
   "workflows": {
-    "pr-sitter": { "query": "is:open author:@me" }
+    "pr-sitter": { "enabled": true, "query": "is:open author:@me" }
   }
 }
 ```

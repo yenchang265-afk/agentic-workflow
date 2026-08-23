@@ -13,19 +13,19 @@ placeholders, done — everything else keeps its default. The rest of this
 page is the field-by-field reference; you shouldn't need it for a first setup.
 
 **GitHub** (the default platform — an empty file, or no
-`.agentic-workflow.json` at all, already gives you `engineering`, `pr-sitter`,
-and `review-sitter`):
+`.agentic-workflow.json` at all, already gives you `engineering`; the sitters
+are experimental and stay off until you opt in with `"enabled": true`):
 
 ```json
 {
   "workflows": {
-    "pr-sitter": { "query": "is:open author:@me" }
+    "pr-sitter": { "enabled": true, "query": "is:open author:@me" }
   }
 }
 ```
 
 Replace `query` with the PR search you want the sitter to watch, or delete the
-whole `workflows` block to take every default.
+whole `workflows` block to take every default (`engineering` only).
 
 **Azure DevOps:**
 
@@ -38,7 +38,7 @@ whole `workflows` block to take every default.
     "selfLogin": "<your-login-or-service-account-email>"
   },
   "workflows": {
-    "pr-sitter": { "query": "is:open author:@me" }
+    "pr-sitter": { "enabled": true, "query": "is:open author:@me" }
   }
 }
 ```

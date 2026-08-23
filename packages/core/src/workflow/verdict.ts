@@ -392,6 +392,9 @@ const CRITERIA_MESSAGE_MAX = 8
  *     `requiredAxes` this is a completeness check, not an honesty check, and
  *     text-matching a paraphrasing model rejects sound PASSes whose retry
  *     budget ends in an ERROR stop (`rejectedFallback` never salvages a PASS).
+ *     The count is of DISTINCT entries (normalized text): five copies of
+ *     criterion 1 is not five criteria accounted for, and the pad is exactly
+ *     the lazy shape a completeness check exists to catch.
  *
  * Only PASS is gated, the same asymmetry as `evidenceIssue`: the dangerous
  * direction is the unearned PASS, and a FAIL already has `failFeedbackIssue`.
@@ -409,13 +412,14 @@ export const criteriaIssue = (record: VerdictRecord, ctx: CriteriaContext | unde
       "call workflow_verdict again with verdict FAIL and a reason, or — if the criterion IS actually met — correct its `pass` flag."
     )
   }
-  if (criteria.length >= ctx.acceptance.length) return null
+  const distinct = new Set(criteria.map((c) => c.criterion.trim().replace(/\s+/g, " ").toLowerCase())).size
+  if (distinct >= ctx.acceptance.length) return null
   const shown = ctx.acceptance.slice(0, CRITERIA_MESSAGE_MAX)
   const elided = ctx.acceptance.length - shown.length
   return (
     `Verdict NOT recorded — this ${ctx.stage.toUpperCase()} stage was given ${ctx.acceptance.length} acceptance ` +
-    `${ctx.acceptance.length === 1 ? "criterion" : "criteria"} and your call carried ${criteria.length} criteria ` +
-    `${criteria.length === 1 ? "entry" : "entries"}. A PASS must account for each one. Call workflow_verdict again with a ` +
+    `${ctx.acceptance.length === 1 ? "criterion" : "criteria"} and your call carried ${distinct} distinct criteria ` +
+    `${distinct === 1 ? "entry" : "entries"}. A PASS must account for each one. Call workflow_verdict again with a ` +
     "`criteria` array holding one { criterion, pass } entry per criterion, in the order given" +
     `: ${shown.map((c) => `"${c}"`).join("; ")}${elided > 0 ? `; …and ${elided} more (see the Acceptance criteria section of your prompt)` : ""}. ` +
     "Mark a criterion you could not verify as { pass: false } and record FAIL instead of PASS."
