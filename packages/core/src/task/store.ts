@@ -647,6 +647,31 @@ export interface BacklogSummary {
   readonly interrupted: readonly string[]
   /** in-review tasks awaiting a human diff review (/agentic-workflow:engineering approve). */
   readonly awaitingReview: readonly string[]
+  /**
+   * Per-epic slice progress, one entry per tracking draft that still has linked
+   * children on the board. Omitted (not empty) when the backlog has none, so a
+   * slice-set-free repo's summary is unchanged — the same omit-when-absent rule
+   * every `epic`/`siblings` key follows.
+   */
+  readonly epics?: readonly EpicProgress[]
+}
+
+/**
+ * One tracking epic's slice progress, derived purely from the `epic:` links —
+ * never from the tracker's body prose (that is LLM-authored and drifts).
+ * `total` excludes abandoned children on purpose: abandoning a slice is the
+ * documented way to shrink a set, and a set whose every LIVE child shipped is
+ * done regardless of what was cancelled along the way.
+ */
+export interface EpicProgress {
+  /** The tracking draft's id — what `abandon <id>` closes. */
+  readonly id: string
+  /** Children now in completed/. */
+  readonly shipped: number
+  /** Children still anywhere active (draft/queued/plan-review/in-progress/in-review). */
+  readonly open: readonly string[]
+  /** shipped + open — the live set. */
+  readonly total: number
 }
 
 /**
@@ -663,6 +688,7 @@ export const summarizeBacklog = (
   const ids = (tasks: readonly Task[]): string[] => tasks.map((t) => t.id)
   const inProgress = byStatus["in-progress"] ?? []
   const held = new Set(claimedIds)
+  const epics = epicProgress(byStatus)
   return {
     counts,
     awaitingTask: ids((byStatus["draft"] ?? []).filter((t) => !isEpicType(t.type))),
@@ -672,7 +698,29 @@ export const summarizeBacklog = (
     claimHeld: ids(inProgress.filter((t) => isClaimable(t) && held.has(t.id))),
     interrupted: ids(inProgress.filter(wasInterrupted)),
     awaitingReview: ids(byStatus["in-review"] ?? []),
+    ...(epics.length ? { epics } : {}),
   }
+}
+
+/**
+ * Slice progress for every tracking epic still on the board (a tracker lives in
+ * `draft/` un-approved for good — `abandon` is how it closes). A tracker with
+ * NO linked live-or-shipped children yields no entry: its set was emptied by
+ * removes/abandons, and a "0/0 shipped" row is noise with no next action. Pure.
+ */
+const epicProgress = (byStatus: Readonly<Record<TaskStatus, readonly Task[]>>): EpicProgress[] => {
+  const trackers = (byStatus["draft"] ?? []).filter((t) => isEpicType(t.type))
+  if (!trackers.length) return []
+  const out: EpicProgress[] = []
+  for (const tracker of trackers) {
+    const children = (status: TaskStatus): Task[] =>
+      (byStatus[status] ?? []).filter((t) => t.epic === tracker.id && !isEpicType(t.type))
+    const shipped = children("completed").length
+    const open = selectOrder(ACTIVE_STATUSES.flatMap(children)).map((t) => t.id)
+    if (shipped + open.length === 0) continue
+    out.push({ id: tracker.id, shipped, open, total: shipped + open.length })
+  }
+  return out
 }
 
 /** How many ids a next-action line names before eliding — the line is a hint, not a listing. */
@@ -703,11 +751,18 @@ export const nextActions = (s: BacklogSummary, cmd: string): readonly string[] =
   if (s.claimable.length) out.push(`build-ready: ${idList(s.claimable)} — ${cmd} claim [id]`)
   if (s.interrupted.length) out.push(`interrupted: ${idList(s.interrupted)} — ${cmd} recover <id>`)
   if (s.claimHeld.length) out.push(`claim held (a loop is driving it, or the claim is stale): ${idList(s.claimHeld)} — ${cmd} doctor reports; doctor fix releases provably-dead holders`)
+  // A fully-shipped set is actionable too: the tracker never leaves draft/ on
+  // its own, and "close it by hand" was documented but never surfaced anywhere.
+  for (const e of s.epics ?? []) {
+    if (e.open.length === 0 && e.shipped > 0) {
+      out.push(`epic ${e.id}: all ${e.shipped} slice${e.shipped === 1 ? "" : "s"} shipped — ${cmd} abandon ${e.id} closes the tracker`)
+    }
+  }
   return out
 }
 
-/** The active statuses whose tasks ought to be paired to a tracker item. */
-const ACTIVE_STATUSES: readonly TaskStatus[] = ["draft", "queued", "plan-review", "in-progress", "in-review"]
+/** The statuses a task is still live in — everything but completed/abandoned. */
+export const ACTIVE_STATUSES: readonly TaskStatus[] = ["draft", "queued", "plan-review", "in-progress", "in-review"]
 
 /**
  * Pairing coverage across the active backlog (everything but completed/abandoned):

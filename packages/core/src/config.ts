@@ -1,4 +1,3 @@
-import path from "node:path"
 import { z } from "zod"
 import type { Client } from "./host.js"
 import { CODE_PLATFORMS, SHIP_PUBLISH_MODES, type Config, type ShipPublish, type WorkflowTrigger } from "./workflow/state.js"
@@ -7,15 +6,16 @@ import type { StagePass } from "./workflow/verdict.js"
 import { TRACKER_SYSTEMS, type TrackerSystem } from "./task/schema.js"
 import {
   CONFIG_FILE,
-  SHELL_BEARING_KEYS,
   bashAllowlistExtras,
   bashAllowlistPrefixes,
+  droppedRepoKeys,
   ignoredUserConfigPaths,
   isPlainObject,
   mergeConfigLayers,
   rawAgentModel,
   readUserLayer,
   resolveUserConfigPath,
+  sanitizeRepoLayer,
   spawnAlias,
   withCommandPrefixes,
 } from "./config-layers.js"
@@ -27,27 +27,33 @@ import {
  * Re-exported here so every existing import site keeps working unchanged.
  */
 export {
+  ADO_USER_LAYER_ONLY_KEYS,
   CD_TWIN_PREFIX,
   CONFIG_FILE,
+  SHELL_BEARING_WORKFLOW_KEYS,
   SPAWN_ALIASES,
   USER_CONFIG_ENV,
   bareModel,
   bashAllowlistExtras,
   bashAllowlistPrefixes,
+  droppedRepoKeys,
+  effectiveConfigReport,
   ignoredUserConfigPaths,
   isPlainObject,
+  maskConfigSecrets,
   mergeConfigLayers,
   rawAgentModel,
   readRawConfigLayers,
   readUserLayer,
   resolveAgentModels,
   resolveUserConfigPath,
+  sanitizeRepoLayer,
   spawnAlias,
   stripCommandPrefix,
   withCdTwins,
   withCommandPrefixes,
 } from "./config-layers.js"
-export type { KindStages, SpawnAlias } from "./config-layers.js"
+export type { DroppedRepoKey, EffectiveConfigReport, KindStages, SpawnAlias } from "./config-layers.js"
 
 /**
  * Loop configuration, layered from two optional files: a user-scope
@@ -1311,134 +1317,6 @@ export interface LoadConfigOptions {
   readonly userConfigPath?: string | null
 }
 
-/** Drop shell-bearing keys from the repo layer, warning loudly per key. */
-const dropShellBearingRepoKeys = async (repoRaw: unknown, client: Client): Promise<unknown> => {
-  if (!isPlainObject(repoRaw)) return repoRaw
-  let out = repoRaw
-  for (const key of SHELL_BEARING_KEYS) {
-    if (!(key in out)) continue
-    const { [key]: _dropped, ...rest } = out
-    out = rest
-    try {
-      await client.app.log({
-        body: {
-          service: "agentic-workflow",
-          level: "warn",
-          message: `${CONFIG_FILE} sets "${key}" — ignored: shell-bearing keys are honored from the user-scope config only. Move it to your user config (~/.agentic-workflow.json).`,
-        },
-      })
-    } catch {
-      /* the drop matters, the log is best-effort */
-    }
-  }
-  return out
-}
-
-/**
- * Keys INSIDE a `workflows.<kind>` section whose value is shell the loop
- * executes verbatim — the nested sibling of SHELL_BEARING_KEYS, same rule and
- * same reason. `dropShellBearingRepoKeys` deletes whole TOP-LEVEL keys and
- * cannot see one level down, so this is a sibling rather than a generalization
- * into a path walker: two small obviously-correct functions beat one clever one.
- */
-const SHELL_BEARING_WORKFLOW_KEYS = ["scannerCommand", "stageChecks"] as const
-
-/**
- * Drop shell-bearing keys from each `workflows.<kind>` section of the repo
- * layer, warning per (kind, key). Never mutates its input.
- *
- * Only sound because `mergeConfigLayers` merges `workflows.<kind>` per key: a
- * repo section setting `severityFloor` beside a dropped `scannerCommand` keeps
- * its severityFloor AND the user layer's scannerCommand. A shallow merge would
- * silently eat one of them.
- */
-const dropShellBearingWorkflowKeys = async (repoRaw: unknown, client: Client): Promise<unknown> => {
-  if (!isPlainObject(repoRaw)) return repoRaw
-  const workflows = repoRaw["workflows"]
-  if (!isPlainObject(workflows)) return repoRaw
-
-  const cleanedKinds: Record<string, unknown> = {}
-  let dropped = false
-  for (const [kind, section] of Object.entries(workflows)) {
-    if (!isPlainObject(section)) {
-      cleanedKinds[kind] = section
-      continue
-    }
-    let out = section
-    for (const key of SHELL_BEARING_WORKFLOW_KEYS) {
-      if (!(key in out)) continue
-      const { [key]: _dropped, ...rest } = out
-      out = rest
-      dropped = true
-      try {
-        await client.app.log({
-          body: {
-            service: "agentic-workflow",
-            level: "warn",
-            message: `${CONFIG_FILE} sets "workflows.${kind}.${key}" — ignored: shell-bearing keys are honored from the user-scope config only. Move it to your user config (~/.agentic-workflow.json).`,
-          },
-        })
-      } catch {
-        /* the drop matters, the log is best-effort */
-      }
-    }
-    cleanedKinds[kind] = out
-  }
-  return dropped ? { ...repoRaw, workflows: cleanedKinds } : repoRaw
-}
-
-/**
- * Keys inside the `ado` section that decide WHERE an authenticated request goes
- * and HOW it is secured. The third sibling of the two drops above, same rule for
- * a different asset: not shell the repo can run, but the user's Personal Access
- * Token it can aim.
- *
- * `adoMcpSpawn` resolves the PAT as `env AZURE_DEVOPS_EXT_PAT ?? ado.pat` and
- * hands it to the Azure DevOps MCP server it launches against
- * `ado.organization`. Because layers merge per key, a cloned repo supplying
- * only `organization` keeps the user's PAT underneath it — and
- * `pr-sitter`/`review-sitter` poll on the first watch tick, so nobody has to
- * run anything for the token to leave. `mcp` is dropped for the same reason
- * one step further along: it names the COMMAND that gets spawned, so a repo
- * that could set it could run anything with the token in its environment.
- *
- * `project`, `repository` and `selfLogin` are NOT here: they describe this repo
- * and nothing else, and dropping them would make the rule unusable rather than
- * safe. An ADO user who kept `organization` in their repo file gets a loud
- * warning naming the move; the section is experimental and says so.
- */
-// `mcp` names the command that gets SPAWNED, so a cloned repo must not be able
-// to choose it — that would be arbitrary code execution from a config file.
-const ADO_USER_LAYER_ONLY_KEYS = ["organization", "pat", "mcp"] as const
-
-/** Drop destination/credential keys from the repo layer's `ado` section, warning per key. Never mutates its input. */
-const dropAdoRepoKeys = async (repoRaw: unknown, client: Client): Promise<unknown> => {
-  if (!isPlainObject(repoRaw)) return repoRaw
-  const ado = repoRaw["ado"]
-  if (!isPlainObject(ado)) return repoRaw
-
-  let out = ado
-  let dropped = false
-  for (const key of ADO_USER_LAYER_ONLY_KEYS) {
-    if (!(key in out)) continue
-    const { [key]: _dropped, ...rest } = out
-    out = rest
-    dropped = true
-    try {
-      await client.app.log({
-        body: {
-          service: "agentic-workflow",
-          level: "warn",
-          message: `${CONFIG_FILE} sets "ado.${key}" — ignored: the Azure DevOps destination and credentials are honored from the user-scope config only, so a cloned repo cannot aim your PAT at a host it chooses. Move it to your user config (~/.agentic-workflow.json).`,
-        },
-      })
-    } catch {
-      /* the drop matters, the log is best-effort */
-    }
-  }
-  return dropped ? { ...repoRaw, ado: out } : repoRaw
-}
-
 /**
  * Load a host config by layering the user-scope file (if any) under the repo's
  * `.agentic-workflow.json` (repo wins field by field), falling back to the
@@ -1480,9 +1358,21 @@ export const loadConfigWith = async <T>(
       throw new Error(`Invalid ${CONFIG_FILE}: not valid JSON (${(err as Error).message})`)
     }
   }
-  repoRaw = await dropShellBearingRepoKeys(repoRaw, client)
-  repoRaw = await dropShellBearingWorkflowKeys(repoRaw, client)
-  repoRaw = await dropAdoRepoKeys(repoRaw, client)
+  // One shared list decides what the repo layer loses (`droppedRepoKeys`), one
+  // pure function applies it (`sanitizeRepoLayer`) — the same pair the hub's
+  // effective view and `doctor config` read, so a key this warns about can
+  // never show as "in effect" on another surface. The drop matters, each log
+  // is best-effort.
+  for (const d of droppedRepoKeys(repoRaw)) {
+    const message =
+      d.family === "ado"
+        ? `${CONFIG_FILE} sets "${d.path}" — ignored: the Azure DevOps destination and credentials are honored from the user-scope config only, so a cloned repo cannot aim your PAT at a host it chooses. Move it to your user config (~/.agentic-workflow.json).`
+        : `${CONFIG_FILE} sets "${d.path}" — ignored: shell-bearing keys are honored from the user-scope config only. Move it to your user config (~/.agentic-workflow.json).`
+    await client.app.log({ body: { service: "agentic-workflow", level: "warn", message } }).catch(() => {
+      /* the drop matters, the log is best-effort */
+    })
+  }
+  repoRaw = sanitizeRepoLayer(repoRaw)
 
   if (userRaw === undefined && repoRaw === undefined) return schema.parse({}) // both absent/empty → defaults
   const label = userRaw === undefined ? CONFIG_FILE : `${CONFIG_FILE} (merged with ${userPath})`

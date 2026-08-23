@@ -1079,6 +1079,40 @@ test("shipTask moves an in-review task to completed (no branch → no PR)", asyn
   assert.ok(r.ok && typeof r.data.completed === "string")
   assert.ok(!("pr" in (r.ok ? r.data : {})), "no PR attempted without a feature branch")
   assert.ok("/repo/docs/tasks/completed/t.md" in fs)
+  assert.ok(!("epic" in (r.ok ? r.data : { epic: 1 })), "no epic keys on a slice-less ship — the omit-when-absent rule")
+})
+
+test("shipTask reports the epic's slice progress while siblings stay open", async () => {
+  const { ctx } = makeCtx({
+    "draft/epic-1.md": serializeTask({ title: "The set", body: "tracker", type: "epic" }),
+    "in-review/a.md": serializeTask({ title: "Slice A", body: "x", epic: "epic-1" }),
+    "queued/b.md": serializeTask({ title: "Slice B", body: "y", epic: "epic-1" }),
+  })
+  const r = await shipTask(ctx, "a")
+  assert.ok(r.ok)
+  assert.match(r.message, /Epic epic-1: 1\/2 slices shipped; still open: b\./)
+  assert.equal(r.ok ? r.data.epic : "", "epic-1")
+  assert.equal(r.ok ? r.data.epicShipped : 0, 1)
+  assert.equal(r.ok ? r.data.epicTotal : 0, 2)
+  assert.deepEqual(r.ok ? r.data.epicOpen : [], ["b"])
+  assert.ok(!(r.ok && "epicDone" in r.data))
+})
+
+test("shipTask's last slice suggests closing the tracker, ignoring abandoned siblings", async () => {
+  // "Close the epic by hand once every child has shipped" was documented and
+  // surfaced nowhere. The abandoned slice is excluded from the total on
+  // purpose: abandoning is the documented way to shrink a set.
+  const { ctx } = makeCtx({
+    "draft/epic-1.md": serializeTask({ title: "The set", body: "tracker", type: "epic" }),
+    "completed/a.md": serializeTask({ title: "Slice A", body: "x", epic: "epic-1" }),
+    "abandoned/c.md": serializeTask({ title: "Slice C", body: "z", epic: "epic-1" }),
+    "in-review/b.md": serializeTask({ title: "Slice B", body: "y", epic: "epic-1" }),
+  })
+  const r = await shipTask(ctx, "b")
+  assert.ok(r.ok)
+  assert.match(r.message, /Epic epic-1: all 2 slices shipped — abandon epic-1 closes the tracker\./)
+  assert.equal(r.ok ? r.data.epicDone : false, true)
+  assert.ok(!(r.ok && "epicOpen" in r.data))
 })
 
 // Ship is the ONLY point that removes a task's worktree: it is kept across every

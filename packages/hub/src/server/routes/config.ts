@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { ConfigSchema, mergeConfigLayers } from "@agentic-workflow/core/config"
+import { ConfigSchema, droppedRepoKeys, mergeConfigLayers, sanitizeRepoLayer } from "@agentic-workflow/core/config"
 import { REDACTED, type ConfigEdit, type ConfigIssue, type ConfigLayer, type ConfigLayerResponse, type ConfigProvenance, type SaveConfigRequest, type SaveConfigResponse } from "../../shared/api.js"
 import { isGitIgnored, knownTopLevelKeys, layerPath, readRawLayer, redactSecrets, SECRET_PATHS, writeRawLayer } from "../configfile.js"
 import { deleteAt, isPlainObject, isSafeConfigPath, leafPaths, provenanceOf, setAt, valueAt } from "../configlayers.js"
@@ -57,7 +57,16 @@ export const getConfig = async (deps: HubDeps, req: ParsedRequest): Promise<Json
   const user = await readRawLayer(deps, "user")
   const self = layer === "repo" ? repo : user
 
-  const merged = mergeConfigLayers(user.raw ?? {}, repo.raw ?? {})
+  // The runtime drops user-layer-only keys from the repo layer BEFORE merging
+  // (`loadConfigWith`), so the effective/provenance views must merge the same
+  // sanitized layer — this route used to merge RAW, showing a repo-layer
+  // `stageChecks`/`worktreeSetup`/`ado.organization` as "in effect" when the
+  // loop ignores it. The per-layer `raw` view stays unsanitized on purpose:
+  // it shows the FILE, and `droppedRepoKeys` is what says which of its keys
+  // the runtime discards.
+  const dropped = droppedRepoKeys(repo.raw ?? {}).map((d) => d.path)
+  const repoSanitized = sanitizeRepoLayer(repo.raw ?? {})
+  const merged = mergeConfigLayers(user.raw ?? {}, repoSanitized)
   const parsed = ConfigSchema.safeParse(merged)
   const { raw: redacted, redactedPaths } = self.raw ? redactSecrets(self.raw) : { raw: null, redactedPaths: [] }
 
@@ -67,7 +76,8 @@ export const getConfig = async (deps: HubDeps, req: ParsedRequest): Promise<Json
     raw: redacted,
     // Display only. Never written back — see the header comment.
     effective: parsed.success ? (redactSecrets(parsed.data as unknown as Record<string, unknown>).raw as Record<string, unknown>) : null,
-    provenance: provenanceMap(user.raw, repo.raw),
+    provenance: provenanceMap(user.raw, repoSanitized),
+    droppedRepoKeys: dropped,
     issues: issuesOf(merged),
     warnings: lintWorkflowKnobs(valueAt(merged, ["workflows"]), deps.boards),
     passthrough: passthroughOf(self.raw),

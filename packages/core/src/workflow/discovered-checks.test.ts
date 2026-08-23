@@ -319,7 +319,7 @@ test("resolveStageChecks: a non-empty manifest checks list beats discovery — a
 test("resolveStageChecks discovers only when the stage opts in, and only with a plan to read", async () => {
   const plan = fence('[{ "name": "tests", "command": "npm run test:all" }]')
   const noFlag = await resolveStageChecks({ $: makeShell(ALL_PRESENT), config: CONFIG, kind: "engineering", def: stage(), plan, dir: "/wt" })
-  assert.deepEqual(noFlag, { defs: [], source: "none", warnings: [] })
+  assert.deepEqual(noFlag, { defs: [], source: "none", warnings: [], refused: [] })
 
   const noPlan = await resolveStageChecks({ $: makeShell(ALL_PRESENT), config: CONFIG, kind: "engineering", def: stage({ discoverChecks: true }), plan: undefined, dir: "/wt" })
   assert.equal(noPlan.source, "none")
@@ -339,6 +339,10 @@ test("resolveStageChecks admits a discovered command reachable only through bash
   const plan = fence('[{ "name": "proxied", "command": "rtk npm test" }]')
   const withoutExtra = await resolveStageChecks({ $: makeShell(ALL_PRESENT), config: CONFIG, kind: "engineering", def: stage({ discoverChecks: true }), plan, dir: "/wt" })
   assert.equal(withoutExtra.source, "none")
+  // Design 38: the refusal is STRUCTURED too (command included), so the hosts
+  // can feed the deny log — the warn line alone was the whole telemetry.
+  assert.equal(withoutExtra.refused.length, 1)
+  assert.equal(withoutExtra.refused[0]?.command, "rtk npm test")
   assert.match(withoutExtra.warnings.join("\n"), /not on this stage's bash allowlist/)
 
   const withExtra = await resolveStageChecks({

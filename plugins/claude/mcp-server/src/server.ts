@@ -18,7 +18,7 @@ import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
 import { effectivePlatformTools, stageDef, stageRequiresCriteria, type LoadedManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
 import { pollOnce } from "@agentic-workflow/core/scheduler/scheduler"
 import { appendSchedulerEvents, skipSetKey, type SchedulerEvent } from "@agentic-workflow/core/scheduler/events-log"
-import { aggregateDenials, clearDenyLog, formatDenyFindings, readDenyLog } from "@agentic-workflow/core/workflow/deny-log"
+import { aggregateDenials, appendDenyEntry, clearDenyLog, formatDenyFindings, readDenyLog } from "@agentic-workflow/core/workflow/deny-log"
 import {
   buildEntryState,
   buildWorkSources,
@@ -41,6 +41,7 @@ import {
   stagePasses,
   unbindableAgentModels,
   unknownAgentModelKeys,
+  effectiveConfigReport,
   unknownStageCheckKeys,
   unknownStageConcurrencyKeys,
   unknownStageContextKeys,
@@ -1121,7 +1122,7 @@ const claimWarnings = async (): Promise<string[]> => {
  */
 const runStageChecks = async (state: WorkflowState, stage: string): Promise<WorkflowState> => {
   const dir = state.git?.worktree ?? directory
-  const { defs, source, warnings } = await resolveStageChecks({
+  const { defs, source, warnings, refused } = await resolveStageChecks({
     $: sh,
     config,
     kind: activeManifest().manifest.kind,
@@ -1137,11 +1138,28 @@ const runStageChecks = async (state: WorkflowState, stage: string): Promise<Work
   // below): the log line alone made a fully-refused fence indistinguishable,
   // on disk, from a plan that never declared one.
   for (const w of warnings) await log("warn", `${stage}: ${w}`)
+  // Admission refusals reach the deny log too (source "check"), so doctor's
+  // one telemetry view covers BOTH starvation seams — plan-named commands the
+  // stage refused used to live only in warn lines and a conflated metric.
+  for (const r of refused) {
+    if (r.command) {
+      appendDenyEntry(directory, config.tasksDir, {
+        ts: new Date().toISOString(),
+        host: HOST,
+        kind: activeManifest().manifest.kind,
+        stage,
+        command: r.command,
+        source: "check",
+      })
+    }
+  }
   const prior = checksInfo.get(stage)
   const info = {
     source,
     ran: defs.length,
-    refused: warnings.length,
+    // Admission refusals alone — parse issues and missing binaries stay in
+    // `detail`, where they always were; they used to be conflated in here.
+    refused: refused.length,
     detail: clampedChecksDetail(warnings),
     noted: prior?.noted ?? false,
   }
@@ -2432,10 +2450,34 @@ server.registerTool(
   {
     description:
       "Audit the backlog for structural damage a confused agent can cause: stray folders (not a status folder), task files outside every status folder, duplicate ids across status folders, and held claim markers — plus the allowlist deny log (bash commands the check stages refused, aggregated with the config change that would admit each). With fix:true, performs only the unambiguous repairs — rescue stray .md files back to draft/ (audited note + commit), remove now-empty stray folders, release stale orphaned claim markers, and clear the reported deny log. Duplicates are always flagged for a human, never auto-resolved.",
-    inputSchema: { fix: z.boolean().optional().describe("Apply the unambiguous repairs instead of only reporting.") },
+    inputSchema: {
+      fix: z.boolean().optional().describe("Apply the unambiguous repairs instead of only reporting."),
+      config: z
+        .boolean()
+        .optional()
+        .describe(
+          "Return the effective-config report instead of the backlog audit: the layer file paths, which repo-layer keys the runtime ignores (user-layer-only), and the config actually in force with secrets masked.",
+        ),
+    },
   },
-  async ({ fix }) => {
+  async ({ fix, config: wantConfig }) => {
     await loadCfg()
+    // A different question than the audit — "what configuration is actually in
+    // force, and why isn't my repo key taking effect" — answered from the same
+    // seam the load-time drops and the hub's effective view read.
+    if (wantConfig) {
+      const cfgReport = effectiveConfigReport(directory, config)
+      return ok({
+        configReport: cfgReport,
+        ...(cfgReport.droppedRepoKeys.length
+          ? {
+              note:
+                `${cfgReport.droppedRepoKeys.length} repo-layer key(s) are ignored at runtime (honored from the user-scope config only): ` +
+                `${cfgReport.droppedRepoKeys.join(", ")} — move them to the user config to take effect.`,
+            }
+          : {}),
+      })
+    }
     const anomalies = await auditBacklog(fsClient, directory, config.tasksDir)
     const heldClaims: Record<string, string[]> = {}
     for (const status of ["queued", "in-progress"] as const) {

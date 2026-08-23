@@ -322,6 +322,12 @@
   `deniedCommands` lines verbatim; the config edit is the human's call, never
   yours); with `fix` it applies the unambiguous repairs and clears the
   reported deny log. Never repair the backlog by hand.
+  - **`doctor config`** answers a different question — "what configuration is
+    actually in force, and why isn't my key taking effect": call
+    `mcp__agentic-workflow__workflow_doctor({config: true})` and relay the
+    report as given — the layer file paths, the repo-layer keys the runtime
+    IGNORES (they are honored from the user-scope config only; moving them
+    there is the fix to name), and the effective config with secrets masked.
 <!-- /aw:verb doctor -->
 <!-- aw:verb unknown -->
 - **anything else** (including a free-text goal) — do not run it. Show this

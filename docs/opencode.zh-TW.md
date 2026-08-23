@@ -113,13 +113,16 @@ FAIL/ERROR 判定，工作階段呼叫 `workflow_blocked`。兩者都會在下�
   （包括計時器）。在執行中途按下 **ESC** 也會做這件事*並且*中斷
   正在執行的迴圈（見 `recover`）；`unwatch` 只清除 watch 旗標，並
   讓一個進行中的迴圈跑完
-- `/agentic-workflow:engineering doctor [fix]`——稽核待辦中的雜散資料夾
+- `/agentic-workflow:engineering doctor [fix|config]`——稽核待辦中的雜散資料夾
   /檔案、重複的 id，以及卡住的認領標記，並回報 allowlist 拒絕紀錄
   （`<tasksDir>/runs/.deny-log.jsonl`）：每一個被檢查階段拒絕的 bash
-  指令，彙整後附上能放行它的設定變更（被包裹的指令原本就允許時建議
+  指令——agent 端的拒絕與計畫發現的 check 拒絕都在內——彙整後附上能放行
+  它的設定變更（被包裹的指令原本就允許時建議
   `bashAllowlistPrefix`，否則建議一個窄的 `bashAllowlistExtra` glob）；
   `fix` 會套用沒有歧義的修復（把雜散項目搶救到 `draft/`、丟棄清空的
-  資料夾、釋放陳舊標記、清除已回報的拒絕紀錄）
+  資料夾、釋放陳舊標記、清除已回報的拒絕紀錄）。`doctor config` 改為回報
+  實際生效的設定：各層檔案路徑、執行期忽略的 repo 層鍵（僅 user 層生效）、
+  以及遮蔽機密後的生效設定
 - `/agentic-workflow:engineering recover <id>`——從狀態快照（或其已持久化
   的計畫）恢復一個提早停止的進行中任務——不論是崩潰/重啟，還是使用者
   **中斷（ESC）**——從它抵達的確切階段接續

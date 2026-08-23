@@ -596,6 +596,13 @@ export interface ConfigLayerResponse {
    * anything — shows up here instead of vanishing.
    */
   readonly passthrough: readonly string[]
+  /**
+   * Repo-layer keys the RUNTIME ignores (user-layer-only: shell-bearing keys
+   * and the ADO destination/credentials), as dotted paths. The `effective`
+   * view above already excludes them — this list is what says the file sets
+   * something the loop will never honor.
+   */
+  readonly droppedRepoKeys: readonly string[]
   /** Dotted paths whose values were redacted on the way out. */
   readonly redactedPaths: readonly string[]
   /** Set when the file exists but isn't valid JSON — rendered, not thrown. */

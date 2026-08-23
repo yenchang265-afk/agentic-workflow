@@ -1,7 +1,7 @@
 ---
 name: agentic-workflow:engineering
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix|config] | stop | status
 ---
 
 The engineering agentic loop — one command for authoring, the human gates,
@@ -312,7 +312,7 @@ only after seeing the file in its target folder.
   `/agentic-workflow:<kind>` command.
 <!-- /aw:verb kinds -->
 <!-- aw:verb doctor -->
-- **`doctor [fix]`** — audit the backlog for structural damage (stray folders
+- **`doctor [fix|config]`** — audit the backlog for structural damage (stray folders
   like `run/`, task files outside every status folder, duplicate ids, held
   claim markers, stray plan-request markers) and report the allowlist deny
   log — bash commands the check stages refused, aggregated with the config
@@ -321,6 +321,11 @@ only after seeing the file in its target folder.
   rescues strays to `draft/`, removes emptied stray folders, releases stale
   claim markers, drops stray plan requests, and clears the reported deny log.
   Duplicates are always left for you.
+  - **`doctor config`** answers a different question — "what configuration is
+    actually in force, and why isn't my key taking effect": the plugin logs
+    the layer file paths, the repo-layer keys the runtime IGNORES (honored
+    from the user-scope config only; moving them there is the fix), and the
+    effective config with secrets masked.
 <!-- /aw:verb doctor -->
 
 ## The pipeline

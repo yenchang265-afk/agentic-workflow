@@ -127,6 +127,7 @@ import {
   ignoredUserConfigPaths,
   modelFor,
   parseGateOptions,
+  effectiveConfigReport,
   passAxes,
   resolveUserConfigPath,
   stagePasses,
@@ -142,7 +143,7 @@ import {
   stageBashGlobs,
   platformFor,
 } from "@agentic-workflow/core/config"
-import { aggregateDenials, clearDenyLog, formatDenyFindings, readDenyLog } from "@agentic-workflow/core/workflow/deny-log"
+import { aggregateDenials, appendDenyEntry, clearDenyLog, formatDenyFindings, readDenyLog } from "@agentic-workflow/core/workflow/deny-log"
 import { boundedShell } from "../bounded-shell.ts"
 import type { Config } from "../config.ts"
 import { splitVerb } from "../verb.ts"
@@ -1102,7 +1103,7 @@ const runStageChecks = async (
   stage: Stage,
 ): Promise<{ state: WorkflowState; source: ChecksSource; ran: number; refused: number; detail: string }> => {
   const dir = workTree(deps, state)
-  const { defs, source, warnings } = await resolveStageChecks({
+  const { defs, source, warnings, refused } = await resolveStageChecks({
     $: deps.$,
     config,
     kind: loaded.manifest.kind,
@@ -1118,8 +1119,25 @@ const runStageChecks = async (
   // drive records it durably — sample fields and, when the outcome would
   // otherwise be silent, an audit note; the log line alone was invisible.
   for (const w of warnings) await deps.log("warn", `${stage}: ${w}`)
+  // Admission refusals reach the deny log too (source "check"), so `doctor`'s
+  // one telemetry view covers BOTH starvation seams — plan-named commands the
+  // stage refused used to live only in warn lines and a conflated metric.
+  for (const r of refused) {
+    if (r.command) {
+      appendDenyEntry(deps.directory, config.tasksDir, {
+        ts: new Date().toISOString(),
+        host: "opencode",
+        kind: loaded.manifest.kind,
+        stage,
+        command: r.command,
+        source: "check",
+      })
+    }
+  }
   const detail = clampedChecksDetail(warnings)
-  const provenance = { source, ran: defs.length, refused: warnings.length, detail }
+  // `refused` counts admission refusals alone — parse issues and missing
+  // binaries stay in `warnings`/`detail`, where they always were.
+  const provenance = { source, ran: defs.length, refused: refused.length, detail }
   // A zero-defs iteration must clear any PRIOR iteration's results for this
   // stage, not merely skip writing new ones — `state` here is the carried-over
   // WorkflowState, and leaving `state.checks[stage]` untouched lets a stale
@@ -3908,7 +3926,7 @@ export const autoAdvanceParkedPlan = async (
 const USAGE =
   `Usage: ${ECMD} new <idea> · retask <id> [note] · approve [id] [--base=<branch>] [--pr|--push|--local] · replan [id] [reason] · ` +
   "abandon <id> [reason] · remove <id> --force · plan <id> · " +
-  "claim [id] · watch [interval] · unwatch · recover <id> · kinds · doctor [fix] · stop · status"
+  "claim [id] · watch [interval] · unwatch · recover <id> · kinds · doctor [fix|config] · stop · status"
 const kindUsage = (kind: string): string => `Usage: /agentic-workflow:${kind} claim · watch [interval] · unwatch · stop · status`
 
 /**
@@ -4284,6 +4302,25 @@ export const handleCommand = async (
 
   if (verb === "doctor") {
     const fix = /(^|\s)(--)?fix(\s|$)/.test(rest.toLowerCase())
+    // `doctor config` answers a different question than the backlog audit —
+    // "what configuration is actually in force, and why isn't my repo key
+    // taking effect" — so it returns the config report instead of the audit.
+    if (/(^|\s)(--)?config(\s|$)/.test(rest.toLowerCase())) {
+      const cfgReport = effectiveConfigReport(deps.directory, config)
+      await deps.log("info", `config sources: user ${cfgReport.userConfigPath ?? "(none)"} · repo ${cfgReport.repoConfigPath}`)
+      if (cfgReport.droppedRepoKeys.length) {
+        await deps.log("warn", `repo-layer keys ignored at runtime (honored from the user-scope config only): ${cfgReport.droppedRepoKeys.join(", ")}`)
+      }
+      await deps.log("info", `effective config (secrets masked):\n${JSON.stringify(cfgReport.effective, null, 2)}`)
+      const droppedTail = cfgReport.droppedRepoKeys.length
+        ? ` · ${cfgReport.droppedRepoKeys.length} repo key${cfgReport.droppedRepoKeys.length === 1 ? "" : "s"} ignored (see log)`
+        : ""
+      return report(
+        client,
+        `Config report logged — user: ${cfgReport.userConfigPath ?? "none"} · repo: ${cfgReport.repoConfigPath}${droppedTail}.`,
+        cfgReport.droppedRepoKeys.length ? "warning" : "info",
+      )
+    }
     try {
       const anomalies = await auditBacklog(client, deps.directory, config.tasksDir)
       const heldQueued = await listClaimIds(deps.$, deps.directory, config.tasksDir, "queued")

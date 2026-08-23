@@ -112,9 +112,11 @@ skill／參考檢查清單符號連結是 git 追蹤的，會保留下來。要�
 - `/agentic-workflow:engineering kinds` —— 列出各工作流程類型及其啟用狀態。
 - `/agentic-workflow:engineering recover <id>` —— 從狀態快照恢復一個
   被中斷的迴圈。
-- `/agentic-workflow:engineering doctor [fix]` —— 稽核待辦是否有結構性
+- `/agentic-workflow:engineering doctor [fix|config]` —— 稽核待辦是否有結構性
   損壞（迷途的資料夾、位於所有狀態資料夾之外的任務檔案、重複的 id、
-  被卡住的認領標記）；帶上 `fix` 時會套用沒有歧義的修復。
+  被卡住的認領標記）；帶上 `fix` 時會套用沒有歧義的修復。帶上 `config`
+  時改為回報實際生效的設定——各層檔案路徑、執行期忽略的 repo 層鍵、
+  以及遮蔽機密後的生效設定。
 - `/agentic-workflow:engineering stop`（別名 `abort`）—— 中止目前執行中的
   迴圈（未完成的工作會留在迴圈分支上）。
 

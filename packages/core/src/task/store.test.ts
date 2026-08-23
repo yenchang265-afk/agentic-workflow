@@ -778,6 +778,36 @@ test("nextActions renders one verb-bearing line per non-empty list, human gates 
   assert.match(lines[6]!, /^claim held .*: held — .*doctor/)
 })
 
+test("summarizeBacklog reports per-epic slice progress, and omits the key when no set is live", () => {
+  const byStatus = empty()
+  byStatus["draft"] = [
+    { ...task("epic-1", 0, "tracker"), type: "epic" },
+    { ...task("emptied", 0, "tracker with no live children"), type: "epic" },
+    { ...task("c", 2, "slice"), epic: "epic-1" },
+  ]
+  byStatus["in-progress"] = [{ ...task("b", 1, "slice"), epic: "epic-1" }]
+  byStatus["completed"] = [{ ...task("a", 0, "slice"), epic: "epic-1" }]
+  byStatus["abandoned"] = [{ ...task("d", 3, "slice"), epic: "epic-1" }, { ...task("e", 0, "slice"), epic: "emptied" }]
+  const s = summarizeBacklog(byStatus)
+  // Abandoned slices shrink the set; the emptied tracker yields no row at all.
+  assert.deepEqual(s.epics, [{ id: "epic-1", shipped: 1, open: ["b", "c"], total: 3 }])
+
+  assert.equal(summarizeBacklog(empty()).epics, undefined, "no epics → the key is omitted, not empty")
+})
+
+test("nextActions names a fully-shipped epic's close-out, and stays quiet while slices are open", () => {
+  const byStatus = empty()
+  byStatus["draft"] = [{ ...task("epic-1", 0, "tracker"), type: "epic" }]
+  byStatus["completed"] = [{ ...task("a", 0, "slice"), epic: "epic-1" }]
+  const done = nextActions(summarizeBacklog(byStatus), "cmd")
+  assert.equal(done.length, 1)
+  assert.equal(done[0], "epic epic-1: all 1 slice shipped — cmd abandon epic-1 closes the tracker")
+
+  byStatus["queued"] = [{ ...task("b", 1, "slice"), epic: "epic-1" }]
+  const open = nextActions(summarizeBacklog(byStatus), "cmd")
+  assert.ok(!open.some((l) => l.includes("abandon epic-1")), "an open slice means the set is not closable")
+})
+
 test("nextActions renders nothing for an empty backlog, and elides a long id list", () => {
   assert.deepEqual(nextActions(summarizeBacklog(empty()), "cmd"), [])
   const byStatus = empty()

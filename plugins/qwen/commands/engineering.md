@@ -1,6 +1,6 @@
 ---
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | recover <id> | kinds | doctor [fix] | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | recover <id> | kinds | doctor [fix|config] | stop | status
 ---
 
 You are about to work the **engineering agentic loop** (typed as
@@ -36,7 +36,8 @@ on and who does the work; it is deliberately not a procedure.
 - **`stop`** (alias: `abort`) — abort the active loop. **Yours.**
 - **`status`** (or bare) — the active loop plus the backlog roll-up. **Yours.**
 - **`kinds`** — the workflow kinds and which are enabled. **Yours.**
-- **`doctor [fix]`** — audit, and with `fix` repair, backlog damage. **Yours.**
+- **`doctor [fix|config]`** — audit, and with `fix` repair, backlog damage; with
+  `config`, report the effective configuration instead. **Yours.**
 
 **If no VERB INSTRUCTIONS block reached you, the plugin's hooks are not
 running.** Do NOT improvise the procedure and do NOT touch the backlog:

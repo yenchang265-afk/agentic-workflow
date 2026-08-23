@@ -136,9 +136,11 @@ The loop (`/agentic-workflow:engineering`):
   (bare `/agentic-workflow:engineering` does the same).
 - `/agentic-workflow:engineering kinds` — list the workflow kinds and their enabled state.
 - `/agentic-workflow:engineering recover <id>` — resume an interrupted loop from its state snapshot.
-- `/agentic-workflow:engineering doctor [fix]` — audit the backlog for structural damage (stray
+- `/agentic-workflow:engineering doctor [fix|config]` — audit the backlog for structural damage (stray
   folders, task files outside every status folder, duplicate ids, held claim
-  markers); with `fix` it applies the unambiguous repairs.
+  markers); with `fix` it applies the unambiguous repairs. With `config` it
+  reports the effective configuration instead — layer paths, the repo-layer
+  keys the runtime ignores, and the config in force with secrets masked.
 - `/agentic-workflow:engineering stop` (alias `abort`) — abort the active loop (partial work
   stays on the loop branch).
 

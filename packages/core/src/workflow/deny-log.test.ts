@@ -148,3 +148,25 @@ test("aggregateDenials groups by kind+stage+command, most-denied first, and form
   const lines = formatDenyFindings(findings)
   assert.match(lines[0] ?? "", /engineering VERIFY denied 2×: pnpm --filter web test/)
 })
+
+test("a check-sourced entry round-trips its source and is named in the report", () => {
+  // Design 38: discovered-check admission refusals join the log with
+  // source "check", so doctor's one view covers both starvation seams.
+  const checkEntry = { ...entry("mvn clean test"), source: "check" as const }
+  assert.deepEqual(parseDenyLine(JSON.stringify(checkEntry)), checkEntry)
+  // An unknown source value degrades to absent (agent), never to a parse failure.
+  assert.equal(parseDenyLine(JSON.stringify({ ...checkEntry, source: "weird" }))?.source, undefined)
+
+  const findings = aggregateDenials([checkEntry, checkEntry, entry("mvn clean test")], () => null)
+  assert.equal(findings.length, 1)
+  assert.equal(findings[0]?.count, 3)
+  assert.equal(findings[0]?.fromChecks, 2)
+  assert.match(formatDenyFindings(findings)[0] ?? "", /denied 3× \(2 of these from plan-discovered checks\): mvn clean test/)
+
+  const allChecks = aggregateDenials([checkEntry], () => null)
+  assert.match(formatDenyFindings(allChecks)[0] ?? "", /denied once \(a plan-discovered check\): mvn clean test/)
+
+  const agentOnly = aggregateDenials([entry("mvn clean test")], () => null)
+  assert.equal(agentOnly[0]?.fromChecks, 0)
+  assert.doesNotMatch(formatDenyFindings(agentOnly)[0] ?? "", /plan-discovered/)
+})
