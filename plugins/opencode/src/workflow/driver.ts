@@ -287,6 +287,7 @@ const setPending = async (deps: Deps, sessionID: string, entry: Pending): Promis
 const dropPending = async (deps: Deps, sessionID: string): Promise<void> => {
   const prior = pending.get(sessionID)
   pending.delete(sessionID)
+  undeferIdle(sessionID) // the work is gone; nothing is owed a re-kick for it
   await releasePendingMarker(deps, prior)
 }
 const driving = new Set<string>()
@@ -689,6 +690,43 @@ const lastSkipReason = new Map<string, string>()
  * NOT covered — run extra watchers in their own clones/worktrees.)
  */
 const executingDirs = new Set<string>()
+/**
+ * Sessions that reached `onIdle` with work only `onIdle` can consume while
+ * another drive held their working tree — the `executingDirs` bail's waiting
+ * list, keyed by that directory.
+ *
+ * The bail returns AHEAD of `pending.delete`, which is what keeps the work
+ * queued rather than dropping it. Queued is only half an answer: `pending` and
+ * `claimRequested` are consumed by `onIdle` alone, so something has to call it
+ * again, and the bail left that to chance. For most pendings a human turn
+ * supplies it — nearly every `setPending` call site is a command handler, whose
+ * own turn produces the next idle. The auto-plan chain has no such turn: it
+ * kicks `onIdle` itself, exactly once, so a bail there stranded the work for the
+ * life of the process WITH the task's claim marker held — the state every gate
+ * verb refuses as "a loop is driving this NOW", and the wedge `pending`'s own
+ * kick exists to prevent. A typed `plan <id>`/`claim` that landed while the tree
+ * was busy was stranded the same way, one message later.
+ *
+ * So the tree hands itself on: whoever releases `executingDirs` kicks whoever
+ * bailed on it (`drainDeferredIdle`). Only sessions with work nothing else
+ * re-kicks are enrolled — a watcher has its own timer and needs no waiting list.
+ */
+const deferredIdle = new Map<string, Set<string>>()
+
+/** Enrol `sessionID` for the re-kick `directory`'s current drive owes it. */
+const deferIdle = (directory: string, sessionID: string): void => {
+  const waiting = deferredIdle.get(directory)
+  if (waiting) waiting.add(sessionID)
+  else deferredIdle.set(directory, new Set([sessionID]))
+}
+
+/** Drop a session from every waiting list — its queued work is gone. */
+const undeferIdle = (sessionID: string): void => {
+  for (const [directory, waiting] of deferredIdle) {
+    if (!waiting.delete(sessionID)) continue
+    if (waiting.size === 0) deferredIdle.delete(directory)
+  }
+}
 
 /** A check stage's name — validated against the driven kind's manifest. */
 type CheckStage = string
@@ -2613,6 +2651,8 @@ export const onInterrupt = async (deps: Deps, sessionID: string): Promise<void> 
   const priorPending = pending.get(sessionID)
   pending.delete(sessionID) // synchronous — beat the racing idle; marker released below
   claimRequested.delete(sessionID) // a dropped one-shot claim must not fire on the trailing idle
+  undeferIdle(sessionID) // ...nor may a waiting-list entry re-kick either of them
+
   // Only flag when a loop is actually driving — otherwise the flag would linger
   // (no drive to consume it in onIdle's finally) and wrongly halt this session's
   // NEXT loop. A running stage always has getWorkflow set (drive's setWorkflow), so the
@@ -2710,7 +2750,18 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
   // mode additionally holds a cross-process marker in `ensureIsolation`, because
   // there a second host's drive corrupts a verdict rather than a checkout.
   const serialize = !worktreesDirFor(config, "engineering")
-  if (serialize && executingDirs.has(deps.directory)) return
+  if (serialize && executingDirs.has(deps.directory)) {
+    // Queued, not dropped — this return is ahead of `pending.delete`. But
+    // `pending`/`claimRequested` are consumed by `onIdle` alone, so being queued
+    // does nothing on its own: enrol for the re-kick the holding drive owes when
+    // it releases the tree. Without it the auto-plan chain (whose only kick is
+    // the one it fires itself) strands its BUILD holding the task's claim
+    // marker, and a typed `plan <id>`/`claim` waits for the human's NEXT message.
+    // A watcher is deliberately not enrolled — its own timer is the re-kick.
+    if (work || oneShotClaim) deferIdle(deps.directory, sessionID)
+    return
+  }
+  undeferIdle(sessionID) // this drive is the re-kick; no stale waiting-list entry
   if (work) pending.delete(sessionID)
   driving.add(sessionID)
   if (serialize) executingDirs.add(deps.directory)
@@ -2799,7 +2850,15 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
   } finally {
     driving.delete(sessionID)
     haltReason.delete(sessionID) // consumed by this drive; a fresh drive re-arms via onInterrupt / the stop verb
-    if (serialize) executingDirs.delete(deps.directory)
+    if (serialize) {
+      executingDirs.delete(deps.directory)
+      // Hand the tree on. AFTER the release, so a kicked session finds it free —
+      // and inside the `finally`, so it runs on every way this drive can end
+      // (done, stop, ESC, a thrown stage), which is the only version of this
+      // that cannot itself strand the queue. Never awaited, never throws: see
+      // `drainDeferredIdle`.
+      drainDeferredIdle(deps, config, deps.directory)
+    }
   }
   // The plan gate. A parked plan is the one loop outcome with an obvious next
   // question, and until now this host could not put it: `plan <id>` returns before
@@ -2833,6 +2892,39 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
       )
     }
     if (!auto.crossed && work.askOnPark) void promptPlanGateAsk(deps, sessionID, work.task.id)
+  }
+}
+
+/**
+ * Re-kick every session that bailed on `directory`'s busy tree. Called from
+ * `onIdle`'s `finally`, immediately after the release, so the next drive finds
+ * the tree free.
+ *
+ * Never awaited and never throws, for the two reasons that already govern this
+ * path: `onIdle` is the whole BUILD→VERIFY→REVIEW chain, and this runs inside a
+ * `finally` on the event hook's path, where an await parks the handler for hours
+ * and a rejection kills the turn silently.
+ *
+ * Re-entry is safe for the same reason the hook's own `void` is — `onIdle`
+ * reaches `driving.add`/`executingDirs.add` with no intervening await — so the
+ * first kicked session takes the tree synchronously and the rest simply
+ * re-enrol on their own bail. The list is emptied BEFORE the kicks for that
+ * reason: a re-enrolment belongs to the next holder, not to this drain.
+ */
+const drainDeferredIdle = (deps: Deps, config: Config, directory: string): void => {
+  const waiting = deferredIdle.get(directory)
+  if (!waiting?.size) return
+  deferredIdle.delete(directory)
+  for (const id of waiting) {
+    try {
+      void onIdle(deps, id, config).catch((err: unknown) =>
+        deps.log("error", `idle: the deferred drive for ${id} failed: ${(err as Error).message}`),
+      )
+    } catch (err) {
+      // A synchronous throw out of onIdle's prologue must not cost the REST of
+      // the waiting list its kick — that would strand exactly what this fixes.
+      void deps.log("warn", `idle: could not re-kick the deferred drive for ${id}: ${(err as Error).message}`)
+    }
   }
 }
 

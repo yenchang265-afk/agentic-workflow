@@ -2332,6 +2332,71 @@ test("an auto-plan park chains into BUILD without waiting for another idle", asy
   clearWorkflow(sessionID)
 })
 
+/**
+ * The other half of the same wedge. `onIdle` bails when another drive holds the
+ * working tree (shared-tree / current-branch mode, which `testConfig` is in),
+ * and that bail returns AHEAD of `pending.delete` so the work stays queued. But
+ * `pending` is consumed by `onIdle` alone — queued is not the same as scheduled.
+ * Nothing re-called it, so a session whose only kick was its own (the auto-plan
+ * chain) or whose turn had already ended (a typed `plan <id>`) waited for the
+ * human's next message while HOLDING the task's claim marker: the state every
+ * gate verb refuses as "a loop is driving this NOW".
+ */
+test("work that bails on a busy tree is re-kicked when the tree frees, not stranded", async () => {
+  resetAskState()
+  const files = {
+    "docs/tasks/queued/b-task.md": serializeTask({ title: "First", body: "Context." }),
+    "docs/tasks/queued/a-task.md": serializeTask({ title: "Second", body: "Context." }),
+  }
+  const { client } = makeClientFS(files)
+  const fired: string[] = []
+  const log: string[] = []
+  let releaseB!: () => void
+  const bBlocked = new Promise<void>((resolve) => {
+    releaseB = resolve
+  })
+  const withCommand = {
+    ...client,
+    session: {
+      get: async () => ({ data: { parentID: undefined } }),
+      abort: async () => ({ data: true }),
+      prompt: async () => ({ data: undefined }),
+      command: async ({ path, body }: { path: { id: string }; body: { command: string } }) => {
+        fired.push(`${path.id}:${body.command}`)
+        // Hold the tree for as long as the test needs it, so A's idle lands
+        // squarely on the `executingDirs` bail rather than racing it.
+        if (path.id === "sess-busy-b") await bBlocked
+        return { data: { parts: [], info: undefined } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = { client: withCommand, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-busy-b", "plan b-task", testConfig)
+  const bDrive = onIdle(deps, "sess-busy-b", testConfig) // takes the tree, then blocks in its stage
+  for (let i = 0; i < 200 && !fired.includes("sess-busy-b:plan-task"); i++) await new Promise((r) => setTimeout(r, 5))
+  assert.ok(fired.includes("sess-busy-b:plan-task"), "the first drive must be holding the tree before the second tries")
+
+  await handleCommand(deps, "sess-busy-a", "plan a-task", testConfig)
+  await onIdle(deps, "sess-busy-a", testConfig) // the bail — the tree is busy
+  assert.ok(!fired.includes("sess-busy-a:plan-task"), "the bail must not run a stage on a tree another drive holds")
+
+  releaseB()
+  await bDrive
+  // The re-kick is fired from the releasing drive's `finally` and deliberately
+  // not awaited (it is a whole drive, started from the event hook's path), so
+  // settle it rather than assert into the same tick.
+  for (let i = 0; i < 200 && !fired.includes("sess-busy-a:plan-task"); i++) await new Promise((r) => setTimeout(r, 5))
+
+  assert.ok(
+    fired.includes("sess-busy-a:plan-task"),
+    "the deferred drive must run once the tree frees — otherwise its claim marker is held by a drive that never starts",
+  )
+  await onInterrupt(deps, "sess-busy-a")
+  clearWorkflow("sess-busy-a")
+  clearWorkflow("sess-busy-b")
+})
+
 test("autoAdvanceParkedPlan is inert for a parked plan without the flag", async () => {
   const parked = serializeTask({ title: "Chore", body: `${PLAN_HEADING}\n\n1. Step.` })
   const files = { "docs/tasks/plan-review/my-task.md": parked }
@@ -4523,6 +4588,32 @@ test("runStageChecks clears a stage's stale check results on a zero-defs re-fire
     /if \(!defs\.length\) return \{ state: withCheckResults\(state, stage, \[\]\), \.\.\.provenance \}/,
     "a re-fire with nothing to check must clear any prior iteration's results, not let them float forward",
   )
+})
+
+// A source lint for the same reason as the two above: `onIdle`'s `finally` is
+// not reachable in isolation, and this invariant is pure statement ORDER.
+//
+// The drain must come AFTER `executingDirs.delete`. Before it, every kicked
+// session finds the tree still busy and re-enrols — into a list whose only
+// drainer is the drive that just finished, so nothing drains it again and the
+// stranding this fixes comes straight back, now with a waiting list to hide in.
+// And it must be inside the `finally`, not after it: that is the only position
+// that runs on EVERY way a drive can end (done, stop, ESC, a thrown stage).
+test("onIdle hands the working tree on after releasing it, from the finally", async () => {
+  const fs = await import("node:fs")
+  const path = await import("node:path")
+  const src = fs.readFileSync(path.join(import.meta.dirname, "driver.ts"), "utf8")
+  const finallyAt = src.indexOf("haltReason.delete(sessionID) // consumed by this drive")
+  assert.ok(finallyAt > -1, "onIdle's finally moved — re-point this lint")
+  const block = src.slice(finallyAt, src.indexOf("\n  }\n", finallyAt))
+  const releaseAt = block.indexOf("executingDirs.delete(deps.directory)")
+  const drainAt = block.indexOf("drainDeferredIdle(deps, config, deps.directory)")
+  assert.ok(releaseAt > -1, "the tree must still be released in the finally")
+  assert.ok(drainAt > -1, "the finally must hand the tree on — a bailed session has no other kick")
+  assert.ok(drainAt > releaseAt, "the drain must follow the release, or every kicked session re-enrols on a busy tree")
+  // Never awaited: this sits on the event hook's path, and `onIdle` is a whole
+  // BUILD→VERIFY→REVIEW chain.
+  assert.doesNotMatch(block, /await drainDeferredIdle/, "the drain must not be awaited inside a finally on the hook's path")
 })
 
 test("approve <id> --base= targets that branch, and the id keeps the flag out", async () => {
