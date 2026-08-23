@@ -700,6 +700,20 @@ test("--auto-plan parses alone and alongside the ship flags", () => {
   assert.match(typo.ok === false ? typo.message : "", /--auto-plan/)
 })
 
+test("--all parses alone, refuses an id beside it, and rides alongside --auto-plan", () => {
+  assert.deepEqual(parseGateOptions(["--all"]), { ok: true, rest: [], all: true })
+  assert.deepEqual(parseGateOptions(["--all", "--auto-plan"]), { ok: true, rest: [], autoPlan: true, all: true })
+  // `--all` names no single task — an id beside it is a contradiction, refused
+  // rather than picked over (the same rule as two publish modes at once).
+  const withId = parseGateOptions(["t-1", "--all"])
+  assert.equal(withId.ok, false)
+  assert.match(withId.ok === false ? withId.message : "", /takes no task id/)
+  // The unknown-option refusal names it.
+  const typo = parseGateOptions(["--al"])
+  assert.equal(typo.ok, false)
+  assert.match(typo.ok === false ? typo.message : "", /--all/)
+})
+
 test("--base= carries the PR target, and the space-separated form refuses instead of eating the id", () => {
   assert.deepEqual(parseGateOptions(["t-1", "--base=release/2.4"]), { ok: true, rest: ["t-1"], base: "release/2.4" })
   // Both flags together, either order, with the id still recoverable from `rest`.

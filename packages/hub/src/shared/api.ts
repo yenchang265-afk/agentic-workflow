@@ -66,6 +66,10 @@ export interface ReviewItem {
   readonly lastEvent: string | null
   /** Opening of the plan, when there is one — enough to decide or to know to open it. */
   readonly planExcerpt: string | null
+  /** The branch the last completed run built on (in-review items) — where the diff to review lives. */
+  readonly branch: string | null
+  /** That run's one-line `git diff --shortstat` summary, read off the done note — the size of what a ship approves. */
+  readonly diffstat: string | null
   readonly lastRun: ReviewRunContext | null
   readonly claimed: boolean
 }
@@ -592,6 +596,13 @@ export interface ConfigLayerResponse {
    * anything — shows up here instead of vanishing.
    */
   readonly passthrough: readonly string[]
+  /**
+   * Repo-layer keys the RUNTIME ignores (user-layer-only: shell-bearing keys
+   * and the ADO destination/credentials), as dotted paths. The `effective`
+   * view above already excludes them — this list is what says the file sets
+   * something the loop will never honor.
+   */
+  readonly droppedRepoKeys: readonly string[]
   /** Dotted paths whose values were redacted on the way out. */
   readonly redactedPaths: readonly string[]
   /** Set when the file exists but isn't valid JSON — rendered, not thrown. */

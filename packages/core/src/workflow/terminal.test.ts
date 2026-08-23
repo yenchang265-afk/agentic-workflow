@@ -20,7 +20,7 @@ import { runTerminal, type TerminalCtx } from "./terminal.js"
 const makeCtx = (
   files: Record<string, string>,
   state: WorkflowState,
-  opts: { validate?: string; manifest?: LoadedManifest; config?: Partial<TerminalCtx["config"]> } = {},
+  opts: { validate?: string; manifest?: LoadedManifest; config?: Partial<TerminalCtx["config"]>; diffstat?: string } = {},
 ) => {
   const fs: Record<string, string> = {}
   for (const [k, v] of Object.entries(files)) fs[`/repo/docs/tasks/${k}`] = v
@@ -46,6 +46,10 @@ const makeCtx = (
         fs[dest!] = fs[src!]!
         delete fs[src!]
       } else out = { exitCode: 1, stdout: "" }
+    } else if (parts[0] === "git" && norm.includes("diff --shortstat")) {
+      // runDone's stat probe, answered only when a test opts in — every other
+      // test keeps the pre-clause note byte-identical.
+      out = opts.diffstat !== undefined ? { exitCode: 0, stdout: ` ${opts.diffstat}` } : { exitCode: 1, stdout: "" }
     } else if (parts[0] === "git") out = { exitCode: 1, stdout: "" } // no actor, no branch → no isolation
     const chain = {
       quiet: () => chain,
@@ -515,6 +519,66 @@ test("current-branch mode records NO base, because there the base is a commit sh
   const note = doneNoteFrom(log)
   assert.match(note, /on branch my-work, awaiting human diff review/)
   assert.doesNotMatch(note, /base /, "a sha must never be offered to the ship gate as a base branch")
+})
+
+test("the done note and report carry the diff stat, and the fields ahead of it are unmoved", async () => {
+  const state: WorkflowState = {
+    goal: "Do it",
+    stage: "review",
+    iteration: 0,
+    artifacts: {},
+    task: taskRef("t", "in-progress"),
+    git: { base: "release/2.4", branch: "feature/t" },
+  }
+  const stat = "3 files changed, 40 insertions(+), 2 deletions(-)"
+  const { ctx, log } = makeCtx({ "in-progress/t.md": body(true) }, state, { diffstat: stat })
+  const report = await runTerminal(ctx, done)
+  const note = doneNoteFrom(log)
+  // The stat clause goes LAST, after the phrase the branch/base fields close on
+  // — store.test.ts pins the parser side of this exact shape (extractRunDiffstat,
+  // and the branch/base fields staying unmoved beside the stat's commas).
+  assert.match(note, /on branch feature\/t, base release\/2.4, awaiting human diff review; diff: 3 files changed, 40 insertions\(\+\), 2 deletions\(-\)/)
+  assert.ok(report.kind === "done" && report.diffstat === stat)
+  assert.ok(report.kind === "done" && report.diffCmd === "git diff release/2.4...feature/t")
+})
+
+test("a failed stat probe degrades to the pre-clause note, never to a mangled one", async () => {
+  const state: WorkflowState = {
+    goal: "Do it",
+    stage: "review",
+    iteration: 0,
+    artifacts: {},
+    task: taskRef("t", "in-progress"),
+    git: { base: "main", branch: "feature/t" },
+  }
+  const { ctx, log } = makeCtx({ "in-progress/t.md": body(true) }, state) // no diffstat answer → probe fails
+  const report = await runTerminal(ctx, done)
+  assert.match(doneNoteFrom(log), /awaiting human diff review(?!; diff:)/)
+  assert.ok(report.kind === "done" && report.diffstat === undefined)
+  assert.ok(report.kind === "done" && report.diffCmd === "git diff main...feature/t", "the command still helps even with no stat")
+})
+
+test("suggestions land as one redacted audit note BEFORE the done note, and ride the report", async () => {
+  const state: WorkflowState = {
+    goal: "Do it",
+    stage: "review",
+    iteration: 0,
+    artifacts: {},
+    task: taskRef("t", "in-progress"),
+    git: { base: "main", branch: "feature/t" },
+  }
+  const { ctx, log } = makeCtx({ "in-progress/t.md": body(true) }, state)
+  const withSugg: Extract<Action, { kind: "done" }> = {
+    ...done,
+    suggestions: ["readability: extract the loop (src/x.ts:10)", "security: api_key = hunter2secret in the fixture"],
+  }
+  const report = await runTerminal(ctx, withSugg)
+  const sugg = log.find((c) => c.includes("Review suggestions (2) —"))
+  assert.ok(sugg, `the suggestions note must be appended: ${log.join(" | ")}`)
+  assert.match(sugg, /extract the loop/)
+  assert.match(sugg, /\[REDACTED:generic-assignment\]/, "model-authored text is redacted before it lands on the task file")
+  assert.ok(log.indexOf(sugg) < log.indexOf(doneNoteFrom(log)), "the done note stays the trail's newest line")
+  assert.ok(report.kind === "done" && report.suggestions?.length === 2, "the report carries them un-flattened for the hosts")
 })
 
 test("a run with no git state writes the note it always wrote", async () => {

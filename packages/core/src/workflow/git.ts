@@ -50,6 +50,24 @@ export const headSha = async ($: Shell, cwd: string): Promise<string | null> => 
 }
 
 /**
+ * One-line `git diff --shortstat <base>...<branch>` summary — e.g.
+ * "3 files changed, 40 insertions(+), 2 deletions(-)" — or null (empty diff,
+ * unknown refs, not a repo). Runs by ref from the MAIN checkout, so it works
+ * whether the branch is checked out in a worktree or nowhere at all.
+ *
+ * The shape is validated rather than trusted for the same reason `headSha`'s
+ * is: the caller writes this into an audit note whose line format downstream
+ * parsers anchor on, so a stray warning line must read as "no stat", never
+ * ride into the note.
+ */
+export const diffShortstat = async ($: Shell, cwd: string, base: string, branch: string): Promise<string | null> => {
+  const { ok, stdout } = await run($, cwd, ["diff", "--shortstat", `${base}...${branch}`])
+  if (!ok) return null
+  const line = stdout.split("\n").map((l) => l.trim()).filter(Boolean).pop() ?? ""
+  return /^\d+ files? changed(, \d+ insertions?\(\+\))?(, \d+ deletions?\(-\))?$/.test(line) ? line : null
+}
+
+/**
  * The repo's default branch, resolved LOCALLY: `origin/HEAD` (set by clone, or
  * by `git remote set-head`), else `init.defaultBranch`, else null.
  *

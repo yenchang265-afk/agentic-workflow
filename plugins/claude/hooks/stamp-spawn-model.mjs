@@ -43,6 +43,55 @@ var mergeConfigLayers = (base, override) => {
   return out;
 };
 var SHELL_BEARING_KEYS = ["worktreeSetup", "notifyCommand"];
+var SHELL_BEARING_WORKFLOW_KEYS = ["scannerCommand", "stageChecks"];
+var ADO_USER_LAYER_ONLY_KEYS = ["organization", "pat", "mcp"];
+var sanitizeRepoLayer = (repoRaw) => {
+  if (!isPlainObject(repoRaw))
+    return repoRaw;
+  let out = repoRaw;
+  const without = (obj, key) => {
+    const { [key]: _dropped, ...rest } = obj;
+    return rest;
+  };
+  for (const key of SHELL_BEARING_KEYS)
+    if (key in out)
+      out = without(out, key);
+  const workflows = out["workflows"];
+  if (isPlainObject(workflows)) {
+    const cleaned = {};
+    let dropped = false;
+    for (const [kind, section] of Object.entries(workflows)) {
+      if (!isPlainObject(section)) {
+        cleaned[kind] = section;
+        continue;
+      }
+      let sec = section;
+      for (const key of SHELL_BEARING_WORKFLOW_KEYS) {
+        if (!(key in sec))
+          continue;
+        sec = without(sec, key);
+        dropped = true;
+      }
+      cleaned[kind] = sec;
+    }
+    if (dropped)
+      out = { ...out, workflows: cleaned };
+  }
+  const ado = out["ado"];
+  if (isPlainObject(ado)) {
+    let sec = ado;
+    let dropped = false;
+    for (const key of ADO_USER_LAYER_ONLY_KEYS) {
+      if (!(key in sec))
+        continue;
+      sec = without(sec, key);
+      dropped = true;
+    }
+    if (dropped)
+      out = { ...out, ado: sec };
+  }
+  return out;
+};
 var bareModel = (model) => model.includes("/") ? model.slice(model.lastIndexOf("/") + 1) : model;
 var SPAWN_ALIASES = ["sonnet", "opus", "haiku", "fable"];
 var spawnAlias = (model) => {
@@ -72,13 +121,7 @@ var readRawConfigLayers = (cwd) => {
   } catch {
     userLayer = void 0;
   }
-  let repoLayer = read(path.join(cwd, CONFIG_FILE));
-  if (isPlainObject(repoLayer)) {
-    const stripped = { ...repoLayer };
-    for (const key of SHELL_BEARING_KEYS)
-      delete stripped[key];
-    repoLayer = stripped;
-  }
+  const repoLayer = sanitizeRepoLayer(read(path.join(cwd, CONFIG_FILE)));
   const merged = mergeConfigLayers(userLayer ?? {}, repoLayer);
   return isPlainObject(merged) ? merged : {};
 };

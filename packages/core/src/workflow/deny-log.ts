@@ -51,6 +51,14 @@ export interface DenyEntry {
   readonly stage: string
   /** The denied bash command, verbatim. */
   readonly command: string
+  /**
+   * Which seam refused it: an agent's live bash call (`"agent"`, the original
+   * writers — absent on their older entries, which reads as agent), or a
+   * plan-named discovered check the stage's admission refused (`"check"`).
+   * The distinction matters to the operator: a check refusal starves VERIFY
+   * of a command the PLAN promised, one silent warning at a time.
+   */
+  readonly source?: "agent" | "check"
 }
 
 /**
@@ -92,6 +100,7 @@ export const parseDenyLine = (line: string): DenyEntry | null => {
       kind: typeof p.kind === "string" ? p.kind : "",
       stage: typeof p.stage === "string" ? p.stage : "",
       command: p.command,
+      ...(p.source === "check" || p.source === "agent" ? { source: p.source } : {}),
     }
   } catch {
     return null
@@ -138,6 +147,8 @@ export interface DenyFinding {
   readonly stage: string
   readonly command: string
   readonly count: number
+  /** How many of `count` came from plan-discovered checks (source "check"); 0 ⇒ all agent-side. */
+  readonly fromChecks: number
   /** Actionable config suggestion, or null when none can be derived
    *  (e.g. the stage's allowlist could not be resolved). */
   readonly suggestion: string | null
@@ -210,20 +221,20 @@ export const suggestFor = (command: string, globs: readonly string[] | null): st
  * first. Pure given the lookup.
  */
 export const aggregateDenials = (entries: readonly DenyEntry[], globsFor: StageGlobsLookup): DenyFinding[] => {
-  const groups = new Map<string, { entry: DenyEntry; count: number }>()
+  const groups = new Map<string, { entry: DenyEntry; count: number; fromChecks: number }>()
   for (const entry of entries) {
     const key = `${entry.kind}\u0000${entry.stage}\u0000${entry.command}`
-    const seen = groups.get(key)
-    if (seen) groups.set(key, { entry, count: seen.count + 1 })
-    else groups.set(key, { entry, count: 1 })
+    const seen = groups.get(key) ?? { entry, count: 0, fromChecks: 0 }
+    groups.set(key, { entry, count: seen.count + 1, fromChecks: seen.fromChecks + (entry.source === "check" ? 1 : 0) })
   }
   const findings: DenyFinding[] = []
-  for (const { entry, count } of groups.values()) {
+  for (const { entry, count, fromChecks } of groups.values()) {
     findings.push({
       kind: entry.kind,
       stage: entry.stage,
       command: entry.command,
       count,
+      fromChecks,
       suggestion: suggestFor(entry.command, globsFor(entry.kind, entry.stage)),
     })
   }
@@ -234,6 +245,9 @@ export const aggregateDenials = (entries: readonly DenyEntry[], globsFor: StageG
 export const formatDenyFindings = (findings: readonly DenyFinding[]): string[] =>
   findings.map((f) => {
     const where = [f.kind || "unknown-kind", f.stage ? f.stage.toUpperCase() : "unknown-stage"].join(" ")
-    const base = `${where} denied ${f.count === 1 ? "once" : `${f.count.toString()}×`}: ${f.command}`
+    // A check refusal starved the stage of a command its PLAN named — worth a
+    // word, since the operator's mental model is "denials come from the agent".
+    const via = f.fromChecks > 0 ? (f.fromChecks === f.count ? " (a plan-discovered check)" : ` (${f.fromChecks.toString()} of these from plan-discovered checks)`) : ""
+    const base = `${where} denied ${f.count === 1 ? "once" : `${f.count.toString()}×`}${via}: ${f.command}`
     return f.suggestion ? `${base} — ${f.suggestion}` : base
   })

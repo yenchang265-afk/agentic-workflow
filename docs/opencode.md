@@ -110,6 +110,14 @@ The loop (`/agentic-workflow:engineering`):
   approved automatically and the BUILD drive follows on the same session
   (`replan` clears it; a later plain `approve` on the draft clears it too;
   the ship gate is never automated)
+- `/agentic-workflow:engineering approve --all` — the task gate over every
+  reviewed draft at once (priority order, tracking epics excluded), for a
+  slice set read end to end; takes no id, and the plan/ship gates stay
+  one-at-a-time
+- `/agentic-workflow:engineering init` — scaffold the repo: create the
+  backlog's status folders, write a safe-key `.agentic-workflow.json` when
+  none exists (never overwrites), and git-exclude the backlog when
+  `ignoreBacklog` is on; idempotent
 - `/agentic-workflow:engineering claim [id]` — one-shot pull. Bare, it claims the
   next item, lowest priority number first: build-ready `in-progress/` work,
   then an approved `queued/` task to plan when no build work is left. With a
@@ -131,15 +139,18 @@ The loop (`/agentic-workflow:engineering`):
   included). Pressing **ESC** mid-drive does this too *and* interrupts the
   running loop (see `recover`); `unwatch` only clears the watch flag and leaves
   an in-flight loop to finish
-- `/agentic-workflow:engineering doctor [fix]` — audit the backlog for stray folders/files,
+- `/agentic-workflow:engineering doctor [fix|config]` — audit the backlog for stray folders/files,
   duplicate ids, held claim markers, and stray plan-request markers, and
   report the allowlist deny log (`<tasksDir>/runs/.deny-log.jsonl`): every
-  bash command a check stage refused, aggregated with the config change that
+  bash command a check stage refused — agent-side denials and plan-discovered
+  check refusals alike — aggregated with the config change that
   would admit it (`bashAllowlistPrefix` when the wrapped command is already
   allowed, else a narrow `bashAllowlistExtra` glob); `fix` applies the
   unambiguous repairs (rescue strays to `draft/`, drop emptied folders,
   release stale claim markers, drop stray plan requests, clear the reported
-  deny log)
+  deny log). `doctor config` reports the effective configuration instead:
+  the layer file paths, the repo-layer keys the runtime ignores (user-scope
+  only), and the config in force with secrets masked
 - `/agentic-workflow:engineering recover <id>` — resume an in-progress task whose run stopped
   early — a crash/restart, or a user **interrupt (ESC)** — from its state
   snapshot (or its persisted plan), at the exact stage it reached

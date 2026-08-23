@@ -92,6 +92,12 @@ FAIL/ERROR 判定，工作階段呼叫 `workflow_blocked`。兩者都會在下�
   加值：為那一個任務削薄計畫閘門——計畫暫存時自動核准，並在同一個
   session 接著 BUILD（`replan` 會清除它；之後對同一份草稿的普通
   `approve` 也會清除；出貨閘門永不自動化）
+- `/agentic-workflow:engineering approve --all`——對每一份已審閱的草稿一次過
+  任務閘門（依優先序，tracking epic 除外），給已從頭讀到尾的 slice set 用；
+  不帶 id，計畫／出貨閘門仍然一次一個
+- `/agentic-workflow:engineering init`——搭建這個 repo：建立 backlog 的狀態
+  資料夾、在不存在時寫入只含安全鍵的 `.agentic-workflow.json`（絕不覆寫）、
+  並在 `ignoreBacklog` 開啟時把 backlog 排除出 git；可重複執行
 - `/agentic-workflow:engineering claim [id]`——一次性拉取。不帶引數時認領下一個
   項目，優先數字最小者優先：先取建置就緒的 `in-progress/` 工作，沒有可建置的
   工作時，再取一個已核准的 `queued/` 任務來規劃。帶任務 id（短雜湊代碼可
@@ -113,13 +119,16 @@ FAIL/ERROR 判定，工作階段呼叫 `workflow_blocked`。兩者都會在下�
   （包括計時器）。在執行中途按下 **ESC** 也會做這件事*並且*中斷
   正在執行的迴圈（見 `recover`）；`unwatch` 只清除 watch 旗標，並
   讓一個進行中的迴圈跑完
-- `/agentic-workflow:engineering doctor [fix]`——稽核待辦中的雜散資料夾
+- `/agentic-workflow:engineering doctor [fix|config]`——稽核待辦中的雜散資料夾
   /檔案、重複的 id，以及卡住的認領標記，並回報 allowlist 拒絕紀錄
   （`<tasksDir>/runs/.deny-log.jsonl`）：每一個被檢查階段拒絕的 bash
-  指令，彙整後附上能放行它的設定變更（被包裹的指令原本就允許時建議
+  指令——agent 端的拒絕與計畫發現的 check 拒絕都在內——彙整後附上能放行
+  它的設定變更（被包裹的指令原本就允許時建議
   `bashAllowlistPrefix`，否則建議一個窄的 `bashAllowlistExtra` glob）；
   `fix` 會套用沒有歧義的修復（把雜散項目搶救到 `draft/`、丟棄清空的
-  資料夾、釋放陳舊標記、清除已回報的拒絕紀錄）
+  資料夾、釋放陳舊標記、清除已回報的拒絕紀錄）。`doctor config` 改為回報
+  實際生效的設定：各層檔案路徑、執行期忽略的 repo 層鍵（僅 user 層生效）、
+  以及遮蔽機密後的生效設定
 - `/agentic-workflow:engineering recover <id>`——從狀態快照（或其已持久化
   的計畫）恢復一個提早停止的進行中任務——不論是崩潰/重啟，還是使用者
   **中斷（ESC）**——從它抵達的確切階段接續

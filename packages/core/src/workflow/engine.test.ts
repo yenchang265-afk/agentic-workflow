@@ -763,6 +763,24 @@ test("park and done actions carry the manifest's toStatus", () => {
   if (done.action.kind === "done") assert.equal(done.action.toStatus, "in-review")
 })
 
+test("a check stage's done carries the record's suggestion findings; a clean PASS carries none", () => {
+  // The rebuild seam drops suggestions on purpose (verdictFeedbackBlock), so
+  // this action is their ONLY route to the human at the diff review.
+  const record = {
+    verdict: "PASS" as const,
+    axes: [{ axis: "readability", verdict: "PASS" as const, findings: [{ severity: "suggestion" as const, detail: "extract the loop" }] }],
+  }
+  const done = advance(eng, { ...mk("g"), stage: "review" }, config, "clean", "PASS", record)
+  assert.equal(done.action.kind, "done")
+  if (done.action.kind === "done") assert.deepEqual(done.action.suggestions, ["readability: extract the loop"])
+  // And the seam it must NOT ride: the artifact's feedback stays empty on a PASS.
+  assert.equal(done.state.feedback?.["review"], undefined)
+
+  const clean = advance(eng, { ...mk("g"), stage: "review" }, config, "clean", "PASS", { verdict: "PASS" as const })
+  assert.equal(clean.action.kind, "done")
+  if (clean.action.kind === "done") assert.equal(clean.action.suggestions, undefined)
+})
+
 test("an onError (ERROR verdict) stop is marked retryable; a cap stop is not (C2)", () => {
   // A transient environment/tooling error the manifest asks to retry next poll — the
   // work source must NOT record it as a failed attempt, so it stays claimable.

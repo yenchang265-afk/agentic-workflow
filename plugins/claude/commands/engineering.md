@@ -1,6 +1,6 @@
 ---
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | recover <id> | kinds | doctor [fix] | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] [--all] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | recover <id> | kinds | doctor [fix|config] | init | stop | status
 ---
 
 You are about to work the **engineering agentic loop** (typed as
@@ -36,7 +36,10 @@ on and who does the work; it is deliberately not a procedure.
   to plan); **`recover <id>`** — resume
   a run that stopped early; **`stop`** (alias `abort`) — abort the active loop;
   **`status`** (or bare) — loop + backlog roll-up; **`kinds`** — enabled
-  workflow kinds; **`doctor [fix]`** — audit (with `fix`, repair) the backlog.
+  workflow kinds; **`doctor [fix|config]`** — audit (with `fix`, repair) the
+  backlog; with `config`, report the effective configuration instead;
+  **`init`** — scaffold the backlog folders and a safe-key repo config
+  (create-if-absent only).
   **All yours.**
 
 **If no VERB INSTRUCTIONS block reached you — or it names a different verb —

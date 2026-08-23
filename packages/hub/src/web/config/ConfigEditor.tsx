@@ -337,6 +337,24 @@ export const ConfigEditor = () => {
             </section>
           )}
 
+          {data.droppedRepoKeys.length > 0 && (
+            <section className="cfg-section">
+              <h3>Set here, ignored at runtime</h3>
+              <p className="cfg-hint">
+                These repo-file keys are honored from the user-scope config only (shell-bearing settings, and the Azure
+                DevOps destination/credentials), so the loop drops them before merging — the effective view already
+                excludes them. Move each to your user config to make it take effect.
+              </p>
+              <ul className="cfg-warnings">
+                {data.droppedRepoKeys.map((k) => (
+                  <li key={k}>
+                    <code>{k}</code>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           {data.passthrough.length > 0 && (
             <section className="cfg-section">
               <h3>Preserved, not editable</h3>

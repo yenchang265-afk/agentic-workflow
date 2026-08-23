@@ -2,7 +2,7 @@ import path from "node:path"
 import type { Client, Log, Shell } from "../host.js"
 import type { Config, ShipPublish } from "./state.js"
 import { isEpicType, isSafeTaskId, parseTask, taskToInput, unknownFrontmatterKeys, type Task } from "../task/schema.js"
-import { appendNote, auditNote, epicSiblings, extractPlan, extractRunBase, extractRunBranch, extractStopContext, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, planHeadingCount, planRejectedNote, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, rewriteTask, STATUSES } from "../task/store.js"
+import { ACTIVE_STATUSES, appendNote, auditNote, epicSiblings, extractPlan, extractRunBase, extractRunBranch, extractStopContext, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, planHeadingCount, planRejectedNote, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, rewriteTask, selectOrder, STATUSES } from "../task/store.js"
 import { withoutPlanSections } from "../task/plan-section.js"
 import { redact } from "../task/redact.js"
 import { hasVerificationSection } from "./verdict.js"
@@ -249,6 +249,50 @@ const sliceData = (task: Task, siblings: readonly GateCandidate[]): Record<strin
   ...(task.epic ? { epic: task.epic } : {}),
   ...(siblings.length ? { siblings } : {}),
 })
+
+/** The most open-slice ids a ship's epic tail names — a hint, not a listing. */
+const EPIC_TAIL_IDS_MAX = 5
+
+/**
+ * The epic tail of a ship: where the just-shipped task is a slice of a set,
+ * report the set's progress off the `epic:` links — and when it was the LAST
+ * open slice, say how to close the tracker, which otherwise sits in `draft/`
+ * forever ("close it by hand once every child has shipped" was documented and
+ * surfaced nowhere).
+ *
+ * Best-effort like `remainingSlices`, for the same reason: it runs AFTER the
+ * ship committed, so a failed listing must cost the tail and never the move.
+ * Abandoned slices are excluded from the total on purpose — abandoning is the
+ * documented way to shrink a set, and a set whose every LIVE child shipped is
+ * done regardless of what was cancelled along the way.
+ */
+const epicShipOutcome = async (ctx: GateCtx, task: Task): Promise<{ tail: string; data: Record<string, unknown> }> => {
+  if (!task.epic) return { tail: "", data: {} }
+  try {
+    const children = async (status: TaskStatus): Promise<Task[]> =>
+      (await listByStatus(ctx.client, ctx.directory, ctx.config.tasksDir, status, ctx.log)).filter(
+        (t) => t.epic === task.epic && !isEpicType(t.type),
+      )
+    const shipped = (await children("completed")).length
+    const openTasks: Task[] = []
+    for (const status of ACTIVE_STATUSES) openTasks.push(...(await children(status)))
+    const open = selectOrder(openTasks).map((t) => t.id)
+    const data = {
+      epic: task.epic,
+      epicShipped: shipped,
+      epicTotal: shipped + open.length,
+      ...(open.length ? { epicOpen: open } : { epicDone: true }),
+    }
+    if (!open.length) {
+      return { tail: ` Epic ${task.epic}: all ${shipped} slice${shipped === 1 ? "" : "s"} shipped — abandon ${task.epic} closes the tracker.`, data }
+    }
+    const named = open.length <= EPIC_TAIL_IDS_MAX ? open.join(", ") : `${open.slice(0, EPIC_TAIL_IDS_MAX).join(", ")} +${open.length - EPIC_TAIL_IDS_MAX} more`
+    return { tail: ` Epic ${task.epic}: ${shipped}/${shipped + open.length} slices shipped; still open: ${named}.`, data }
+  } catch (err) {
+    void ctx.log("warn", `could not compute epic "${task.epic}" progress — the ship stands, but its message will not report the set (${(err as Error).message})`)
+    return { tail: "", data: {} }
+  }
+}
 
 /** approve: a reviewed draft/ task → queued/ (audited note + commit). */
 /**
@@ -1156,7 +1200,9 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering", p
     base: shipBaseFor(config, kind, { override: wantedBase?.value, recorded: extractRunBase(t) }),
     ...(wantedBase?.value ? { baseExplicit: true } : {}),
   })
-  const data: Record<string, unknown> = { completed: newPath, gate: "ship", id, publish: pr.mode }
+  // After the move, so the just-shipped slice counts as shipped, not open.
+  const epicOutcome = await epicShipOutcome(ctx, t)
+  const data: Record<string, unknown> = { completed: newPath, gate: "ship", id, publish: pr.mode, ...epicOutcome.data }
   if (pr.attempted) {
     data.pr = publishData(pr)
     await recordPublish(ctx, { id, path: newPath }, pr)
@@ -1169,7 +1215,7 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering", p
   // A caveated ship is still a ship: `ok` stays true (the CLI exits 0, no host
   // reads it as a refusal) and the variant is what makes the note VISIBLE rather
   // than a green toast the user scrolls past.
-  return { ok: true, message: `"${t.title}" completed.${publishOutcome(pr)}`, path: newPath, data, ...(publishMissed(pr) ? { variant: "warning" as const } : {}) }
+  return { ok: true, message: `"${t.title}" completed.${publishOutcome(pr)}${epicOutcome.tail}`, path: newPath, data, ...(publishMissed(pr) ? { variant: "warning" as const } : {}) }
 }
 
 /** Which task a folder-driven gate shortcut should act on. */
@@ -1285,7 +1331,10 @@ const completedTaskFor = (ctx: GateCtx, id: string): Promise<string | null> => r
  * never shadowed by a pile of drafts. Tracking epics are skipped in the id-less
  * scan — they are never approvable, so they must not create a false ambiguity.
  */
-export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering", publish?: ShipPublish, base?: string, autoPlan?: boolean): Promise<GateResult> => {
+export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering", publish?: ShipPublish, base?: string, autoPlan?: boolean, all?: boolean): Promise<GateResult> => {
+  // The batch form routes before any single-task resolution: `--all` names no
+  // task, and `parseGateOptions` already refused an id beside it.
+  if (all) return approveAllTasks(ctx, autoPlan)
   const tiers: readonly (readonly TaskStatus[])[] = [["plan-review", "in-review"], ["draft"]]
   const pick = await resolveGateTask(ctx, id, tiers, (t) => isEpicType(t.type))
   if (!pick.ok) {
@@ -1335,6 +1384,62 @@ export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering",
   if (pick.from === "draft") return approveTask(ctx, pick.id, autoPlan)
   if (pick.from === "plan-review") return approvePlan(ctx, pick.id)
   return shipTask(ctx, pick.id, kind, publish, base) // in-review
+}
+
+/** The most refusal lines a batch approve's message carries verbatim. */
+const APPROVE_ALL_REFUSALS_MAX = 5
+
+/**
+ * approve --all: the TASK gate over every reviewed draft at once, priority
+ * order, tracking epics excluded — for the slice-set morning where a human has
+ * read N sibling drafts and does not want to type N approves.
+ *
+ * Task gate ONLY, by construction: it lists `draft/` and calls `approveTask`
+ * per child. The plan and ship gates stay one-at-a-time forever — each needs a
+ * human to have READ something specific (a plan, a diff), and a batch form
+ * there approves documents nobody opened.
+ *
+ * Per-child refusals (the secret scan, an unparseable file) don't stop the
+ * walk: each draft gets its own verdict, approved siblings stay approved, and
+ * the refusals ride the message so a partial batch is legible rather than
+ * silently smaller. No follow-up ask is armed — `data` carries no `id`, so
+ * both hosts' task-gate follow-ups stay quiet (they require one) and the turn
+ * blocks with the summary, which is the fail-safe arm design 19 specifies.
+ */
+export const approveAllTasks = async (ctx: GateCtx, autoPlan?: boolean): Promise<GateResult> => {
+  const { client, directory, config, log } = ctx
+  let drafts: Task[]
+  try {
+    drafts = await listByStatus(client, directory, config.tasksDir, "draft", log)
+  } catch (err) {
+    return { ok: false, message: `Could not list draft/ — ${(err as Error).message}. Nothing was approved.` }
+  }
+  const targets = selectOrder(drafts.filter((t) => !isEpicType(t.type)))
+  if (!targets.length) return { ok: false, message: "No drafts awaiting approval.", variant: "info" }
+  const approved: string[] = []
+  const refusals: string[] = []
+  let lastPath = "" // GateResult's ok arm carries a path; for a batch, the last approved task's
+  for (const t of targets) {
+    const r = await approveTask(ctx, t.id, autoPlan)
+    if (r.ok) {
+      approved.push(t.id)
+      lastPath = r.path
+    } else refusals.push(`${t.id}: ${r.message}`)
+  }
+  const shown = refusals.slice(0, APPROVE_ALL_REFUSALS_MAX)
+  const refusedTail = refusals.length
+    ? ` ${refusals.length} refused — ${shown.join(" · ")}${refusals.length > shown.length ? ` (+${refusals.length - shown.length} more)` : ""}`
+    : ""
+  const head = approved.length
+    ? `Approved ${approved.length} draft${approved.length === 1 ? "" : "s"}: ${approved.join(", ")} — now queued. Plan one with plan <id>, or claim to plan them in priority order.`
+    : "Approved none."
+  const message = `${head}${refusedTail}`
+  // Deliberately NO `gate`/`id` keys: the follow-up machinery is per-task,
+  // and an absent id is what keeps it quiet on both hosts (fail-safe arm).
+  const data = { all: true, approved, ...(refusals.length ? { refused: refusals.length } : {}) }
+  return approved.length > 0
+    ? { ok: true, message, path: lastPath, data, ...(refusals.length ? { variant: "warning" as const } : {}) }
+    : { ok: false, message, data, variant: "warning" }
 }
 
 /** ship shortcut: id optional — ships the single in-review/ task when omitted. */

@@ -26,6 +26,7 @@ import {
   stageDriftRefusal,
   uncoveredAxes,
   verdictContractBlock,
+  suggestionFindings,
   verdictFeedbackBlock,
   withCoverageGap,
   withUnassessedGuard,
@@ -396,6 +397,54 @@ test("worstOf: any FAIL (or missing verdict) with no ERROR → FAIL", () => {
 
 test("worstOf: an empty list is PASS (no passes recorded a failure)", () => {
   assert.equal(worstOf([]), "PASS")
+})
+
+// --- suggestionFindings (the non-blocking findings, routed to the human at the ship gate) ---
+
+test("suggestionFindings collects exactly what verdictFeedbackBlock drops", () => {
+  const record = {
+    verdict: "PASS" as const,
+    axes: [
+      {
+        axis: "readability",
+        verdict: "PASS" as const,
+        findings: [{ severity: "suggestion" as const, detail: "extract the retry loop", location: "src/x.ts:10" }],
+      },
+      {
+        axis: "performance",
+        verdict: "PASS" as const,
+        findings: [{ severity: "suggestion" as const, detail: "memoize the parse" }],
+      },
+    ],
+  }
+  assert.deepEqual(suggestionFindings(record), ["readability: extract the retry loop (src/x.ts:10)", "performance: memoize the parse"])
+  // The rebuild seam must stay clean — these are for the human, not the next BUILD.
+  assert.equal(verdictFeedbackBlock(record), "")
+})
+
+test("suggestionFindings skips blocking findings, and is empty for null or an axis-less record", () => {
+  assert.deepEqual(suggestionFindings(null), [])
+  assert.deepEqual(suggestionFindings({ verdict: "PASS" }), [])
+  const record = {
+    verdict: "FAIL" as const,
+    axes: [
+      {
+        axis: "correctness",
+        verdict: "FAIL" as const,
+        findings: [
+          { severity: "critical" as const, detail: "drops the lock" },
+          { severity: "suggestion" as const, detail: "rename the helper" },
+        ],
+      },
+    ],
+  }
+  assert.deepEqual(suggestionFindings(record), ["correctness: rename the helper"])
+})
+
+test("suggestionFindings caps the list", () => {
+  const findings = Array.from({ length: 15 }, (_, i) => ({ severity: "suggestion" as const, detail: `s${i}` }))
+  const record = { verdict: "PASS" as const, axes: [{ axis: "readability", verdict: "PASS" as const, findings }] }
+  assert.equal(suggestionFindings(record).length, 10)
 })
 
 // --- verdictFeedbackBlock (threading structured reasons into the next iteration) ---

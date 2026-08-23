@@ -176,6 +176,12 @@ export const checkDiscoveryBlock = (planStage: string, consumer: string): string
 export interface RejectedCheck {
   readonly name: string
   readonly reason: string
+  /**
+   * The refused command, verbatim — what a deny-log entry records so doctor's
+   * aggregation can suggest the config change. Optional because older callers
+   * built these without it; a command-less rejection simply writes no entry.
+   */
+  readonly command?: string
 }
 
 /**
@@ -249,15 +255,15 @@ export const admissibleChecks = (
   const rejected: RejectedCheck[] = []
   for (const def of defs) {
     if (!NAME_RE.test(def.name)) {
-      rejected.push({ name: def.name, reason: "the name is rendered into the stage prompt and must be plain text (letters, digits, spaces, . _ -)" })
+      rejected.push({ name: def.name, command: def.command, reason: "the name is rendered into the stage prompt and must be plain text (letters, digits, spaces, . _ -)" })
       continue
     }
     if (def.cwd !== undefined && !safeCwd(def.cwd)) {
-      rejected.push({ name: def.name, reason: `cwd "${def.cwd}" is not a plain relative path inside the work tree` })
+      rejected.push({ name: def.name, command: def.command, reason: `cwd "${def.cwd}" is not a plain relative path inside the work tree` })
       continue
     }
     if (backgroundsItself(def.command)) {
-      rejected.push({ name: def.name, reason: "the command backgrounds itself with `&` — a check must run in the foreground and exit, or the loop records the shell's exit 0 as a pass" })
+      rejected.push({ name: def.name, command: def.command, reason: "the command backgrounds itself with `&` — a check must run in the foreground and exit, or the loop records the shell's exit 0 as a pass" })
       continue
     }
     if (splitSegments(def.command).every(isBareCd)) {
@@ -265,7 +271,7 @@ export const admissibleChecks = (
       // the `cd <dir> && <runner>` compound) and `commandBinaries` probes
       // nothing for it — so a cd-only command would pass every later gate, run,
       // exit 0, and fabricate a green "established fact" out of nothing.
-      rejected.push({ name: def.name, reason: "the command runs nothing — every segment is a bare `cd`, so the shell exits 0 and the check records a pass it never earned" })
+      rejected.push({ name: def.name, command: def.command, reason: "the command runs nothing — every segment is a bare `cd`, so the shell exits 0 and the check records a pass it never earned" })
       continue
     }
     const climb = escapingCdTarget(def.command)
@@ -278,11 +284,11 @@ export const admissibleChecks = (
       // trust boundary this module claims. Conservative like the rest of this
       // list: `..` anywhere is refused even where a preceding `cd` might make
       // it safe — a check that needs a subdirectory names `cwd` instead.
-      rejected.push({ name: def.name, reason: `the command's \`cd ${climb}\` can leave the work tree — a check runs inside it; use a work-tree-relative directory (or the "cwd" field)` })
+      rejected.push({ name: def.name, command: def.command, reason: `the command's \`cd ${climb}\` can leave the work tree — a check runs inside it; use a work-tree-relative directory (or the "cwd" field)` })
       continue
     }
     if (chainedGithubPrMutation(def.command, prefixes) || chainedGitPushViolation(def.command, prefixes, protectedBranches)) {
-      rejected.push({ name: def.name, reason: "the command mutates a pull request or pushes a branch" })
+      rejected.push({ name: def.name, command: def.command, reason: "the command mutates a pull request or pushes a branch" })
       continue
     }
     if (chainedFindMutation(def.command, prefixes)) {
@@ -291,16 +297,17 @@ export const admissibleChecks = (
       // both raw and with the configured prefix hop stripped, same as the PR and
       // push backstops one line up — the driver-run channel must not be weaker
       // than the agent channels, which both apply it.
-      rejected.push({ name: def.name, reason: "the command runs `find` with a mutating action flag" })
+      rejected.push({ name: def.name, command: def.command, reason: "the command runs `find` with a mutating action flag" })
       continue
     }
     if (!commandAllowed(def.command, globs, prefixes)) {
-      rejected.push({ name: def.name, reason: `"${def.command}" is not on this stage's bash allowlist` })
+      rejected.push({ name: def.name, command: def.command, reason: `"${def.command}" is not on this stage's bash allowlist` })
       continue
     }
     if (def.timeoutMinutes !== undefined && def.timeoutMinutes > maxTimeoutMinutes) {
       rejected.push({
         name: def.name,
+        command: def.command,
         reason:
           `timeoutMinutes ${def.timeoutMinutes} exceeds this stage's own cap of ${maxTimeoutMinutes} — ` +
           "raise stageTimeoutMinutes, or pin the command in stageChecks where the cap does not apply",
@@ -512,9 +519,18 @@ export interface ResolvedChecks {
   readonly source: ChecksSource
   /** Human-facing lines the host logs at `warn`; never empty-but-meaningful. */
   readonly warnings: readonly string[]
+  /**
+   * The ADMISSION rejections alone, structured — what the hosts feed the deny
+   * log so `doctor` sees plan-named commands the stage refused, not only the
+   * agent-side denials. Deliberately excludes parse issues and missing
+   * binaries: those are plan-shape and environment facts no allowlist change
+   * answers, and the `checksRefused` metric counts THIS list — it used to
+   * count `warnings.length`, conflating all three.
+   */
+  readonly refused: readonly RejectedCheck[]
 }
 
-const NO_CHECKS: ResolvedChecks = { defs: [], source: "none", warnings: [] }
+const NO_CHECKS: ResolvedChecks = { defs: [], source: "none", warnings: [], refused: [] }
 
 /**
  * The ONE seam both hosts call to decide what a check stage runs.
@@ -540,8 +556,8 @@ export const resolveStageChecks = async (args: {
   const { $, config, kind, def, plan, dir } = args
   // Every branch returns through `checksFor`, so the precedence rule lives in
   // exactly one place and this module cannot drift from it.
-  if (configuredChecks(config, kind, def)) return { defs: checksFor(config, kind, def), source: "config", warnings: [] }
-  if (def.checks.length) return { defs: checksFor(config, kind, def), source: "manifest", warnings: [] }
+  if (configuredChecks(config, kind, def)) return { defs: checksFor(config, kind, def), source: "config", warnings: [], refused: [] }
+  if (def.checks.length) return { defs: checksFor(config, kind, def), source: "manifest", warnings: [], refused: [] }
   if (!discoverChecksFor(config, kind, def) || !plan) return NO_CHECKS
   try {
     const { defs, issues } = parseDiscoveredChecks(plan)
@@ -567,7 +583,9 @@ export const resolveStageChecks = async (args: {
       ...rejected.map((r) => `discovered check "${r.name}" refused: ${r.reason}`),
       ...missing.map((m) => `discovered check "${m.name}" skipped: ${m.reason}`),
     ]
-    return runnable.length ? { defs: checksFor(config, kind, def, runnable), source: "discovered", warnings } : { ...NO_CHECKS, warnings }
+    return runnable.length
+      ? { defs: checksFor(config, kind, def, runnable), source: "discovered", warnings, refused: rejected }
+      : { ...NO_CHECKS, warnings, refused: rejected }
   } catch (e) {
     // Discovery is an enhancement over "no checks"; a bug in it must never be
     // the thing that stops a run.

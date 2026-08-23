@@ -145,6 +145,182 @@ export const readUserLayer = (userPath: string): unknown => {
 export const SHELL_BEARING_KEYS = ["worktreeSetup", "notifyCommand"] as const
 
 /**
+ * Keys INSIDE a `workflows.<kind>` section whose value is shell the loop
+ * executes verbatim — the nested sibling of SHELL_BEARING_KEYS, same rule and
+ * same reason. The top-level drop deletes whole keys and cannot see one level
+ * down, so this is a sibling rather than a generalization into a path walker:
+ * two small obviously-correct lists beat one clever one.
+ */
+export const SHELL_BEARING_WORKFLOW_KEYS = ["scannerCommand", "stageChecks"] as const
+
+/**
+ * Keys inside the `ado` section that decide WHERE an authenticated request goes
+ * and HOW it is secured. The third sibling of the two lists above, same rule for
+ * a different asset: not shell the repo can run, but the user's Personal Access
+ * Token it can aim.
+ *
+ * `adoMcpSpawn` resolves the PAT as `env AZURE_DEVOPS_EXT_PAT ?? ado.pat` and
+ * hands it to the Azure DevOps MCP server it launches against
+ * `ado.organization`. Because layers merge per key, a cloned repo supplying
+ * only `organization` keeps the user's PAT underneath it — and
+ * `pr-sitter`/`review-sitter` poll on the first watch tick, so nobody has to
+ * run anything for the token to leave. `mcp` is dropped for the same reason
+ * one step further along: it names the COMMAND that gets spawned, so a repo
+ * that could set it could run anything with the token in its environment.
+ *
+ * `project`, `repository` and `selfLogin` are NOT here: they describe this repo
+ * and nothing else, and dropping them would make the rule unusable rather than
+ * safe.
+ */
+export const ADO_USER_LAYER_ONLY_KEYS = ["organization", "pat", "mcp"] as const
+
+/** Which drop rule claimed a repo-layer key — decides the warning's wording. */
+export interface DroppedRepoKey {
+  /** Dotted path as the config file spells it, e.g. `workflows.engineering.stageChecks`. */
+  readonly path: string
+  readonly family: "shell" | "workflowShell" | "ado"
+}
+
+/**
+ * Every repo-layer key the runtime IGNORES, as dotted paths — the single
+ * answer to "why is my repo config not taking effect". Pure and zod-free so
+ * `loadConfig`'s warnings, `sanitizeRepoLayer`, the hub's effective view, and
+ * a doctor report all read the same list and cannot drift.
+ */
+export const droppedRepoKeys = (repoRaw: unknown): DroppedRepoKey[] => {
+  if (!isPlainObject(repoRaw)) return []
+  const out: DroppedRepoKey[] = []
+  for (const key of SHELL_BEARING_KEYS) if (key in repoRaw) out.push({ path: key, family: "shell" })
+  const workflows = repoRaw["workflows"]
+  if (isPlainObject(workflows)) {
+    for (const [kind, section] of Object.entries(workflows)) {
+      if (!isPlainObject(section)) continue
+      for (const key of SHELL_BEARING_WORKFLOW_KEYS) {
+        if (key in section) out.push({ path: `workflows.${kind}.${key}`, family: "workflowShell" })
+      }
+    }
+  }
+  const ado = repoRaw["ado"]
+  if (isPlainObject(ado)) {
+    for (const key of ADO_USER_LAYER_ONLY_KEYS) if (key in ado) out.push({ path: `ado.${key}`, family: "ado" })
+  }
+  return out
+}
+
+/**
+ * The repo layer with every user-layer-only key removed — the pure half of
+ * what `loadConfig` does before merging (it also warns per dropped key).
+ * Never mutates its input. Sound to apply per-kind because
+ * `mergeConfigLayers` merges `workflows.<kind>` per key: a repo section
+ * setting `severityFloor` beside a dropped `scannerCommand` keeps its
+ * severityFloor AND the user layer's scannerCommand underneath.
+ */
+export const sanitizeRepoLayer = (repoRaw: unknown): unknown => {
+  if (!isPlainObject(repoRaw)) return repoRaw
+  let out: Record<string, unknown> = repoRaw
+  const without = (obj: Record<string, unknown>, key: string): Record<string, unknown> => {
+    const { [key]: _dropped, ...rest } = obj
+    return rest
+  }
+  for (const key of SHELL_BEARING_KEYS) if (key in out) out = without(out, key)
+  const workflows = out["workflows"]
+  if (isPlainObject(workflows)) {
+    const cleaned: Record<string, unknown> = {}
+    let dropped = false
+    for (const [kind, section] of Object.entries(workflows)) {
+      if (!isPlainObject(section)) {
+        cleaned[kind] = section
+        continue
+      }
+      let sec = section
+      for (const key of SHELL_BEARING_WORKFLOW_KEYS) {
+        if (!(key in sec)) continue
+        sec = without(sec, key)
+        dropped = true
+      }
+      cleaned[kind] = sec
+    }
+    if (dropped) out = { ...out, workflows: cleaned }
+  }
+  const ado = out["ado"]
+  if (isPlainObject(ado)) {
+    let sec = ado
+    let dropped = false
+    for (const key of ADO_USER_LAYER_ONLY_KEYS) {
+      if (!(key in sec)) continue
+      sec = without(sec, key)
+      dropped = true
+    }
+    if (dropped) out = { ...out, ado: sec }
+  }
+  return out
+}
+
+/** Key names whose string values never leave a display surface unmasked. */
+const SECRET_KEY_RE = /^(pat|token|secret|password|passwd|api[_-]?key)$/i
+
+/**
+ * A deep copy of a config value with secret-named string leaves replaced by
+ * `"[REDACTED]"` — for DISPLAY surfaces only (a doctor report, a log line).
+ * Key-name–based like the hub's `redactSecrets`, and deliberately broader than
+ * today's one secret field (`ado.pat`): a future credential key is masked the
+ * day it is added, not the day someone remembers this list. Pure.
+ */
+export const maskConfigSecrets = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(maskConfigSecrets)
+  if (!isPlainObject(value)) return value
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(value)) {
+    out[k] = SECRET_KEY_RE.test(k) && typeof v === "string" && v ? "[REDACTED]" : maskConfigSecrets(v)
+  }
+  return out
+}
+
+/** What `effectiveConfigReport` returns — see there. */
+export interface EffectiveConfigReport {
+  /** The user-scope file in effect, or null (layer disabled, or no file exists). */
+  readonly userConfigPath: string | null
+  /** The repo-scope file name (relative — it may not exist; then nothing was layered). */
+  readonly repoConfigPath: string
+  /** Repo-layer keys the runtime ignores (user-layer-only), as dotted paths. */
+  readonly droppedRepoKeys: readonly string[]
+  /** The config actually in force, secrets masked. Display only — never write it back. */
+  readonly effective: unknown
+}
+
+/**
+ * The "what configuration is actually in force, and why" report behind
+ * `doctor config`. `parsedConfig` is the host's ALREADY-LOADED config — the
+ * ground truth of what the process is running with — so this never re-derives
+ * the merge; it only adds the two facts a loaded object cannot carry: where
+ * the layers came from, and which repo-layer keys were dropped on the way in.
+ * Filesystem reads are best-effort: outside a repo, or with no config files at
+ * all, the report is simply "defaults, nothing dropped".
+ */
+export const effectiveConfigReport = (cwd: string, parsedConfig: unknown): EffectiveConfigReport => {
+  let userPath: string | null = null
+  try {
+    const resolved = resolveUserConfigPath()
+    userPath = resolved && fs.existsSync(resolved) ? resolved : null
+  } catch {
+    userPath = null
+  }
+  let repoRaw: unknown
+  try {
+    const content = fs.readFileSync(path.join(cwd, CONFIG_FILE), "utf8")
+    repoRaw = content.trim() ? JSON.parse(content) : undefined
+  } catch {
+    repoRaw = undefined
+  }
+  return {
+    userConfigPath: userPath,
+    repoConfigPath: CONFIG_FILE,
+    droppedRepoKeys: droppedRepoKeys(repoRaw).map((d) => d.path),
+    effective: maskConfigSecrets(parsedConfig),
+  }
+}
+
+/**
  * A model string without its provider prefix ("anthropic/claude-sonnet-4-5" →
  * "claude-sonnet-4-5") — for hosts that take bare model ids (Qwen's agent
  * frontmatter), so a config written OpenCode-style works on both hosts. Pure.
@@ -229,12 +405,11 @@ export const readRawConfigLayers = (cwd: string): Record<string, unknown> => {
     userLayer = undefined
   }
 
-  let repoLayer = read(path.join(cwd, CONFIG_FILE))
-  if (isPlainObject(repoLayer)) {
-    const stripped: Record<string, unknown> = { ...repoLayer }
-    for (const key of SHELL_BEARING_KEYS) delete stripped[key]
-    repoLayer = stripped
-  }
+  // The FULL drop set, not just the top-level keys: this reader used to strip
+  // only SHELL_BEARING_KEYS, which made its own doc comment a lie one level
+  // down — a repo-layer `workflows.<kind>.stageChecks` or `ado.organization`
+  // reached the hooks that trust this function.
+  const repoLayer = sanitizeRepoLayer(read(path.join(cwd, CONFIG_FILE)))
 
   const merged = mergeConfigLayers(userLayer ?? {}, repoLayer)
   return isPlainObject(merged) ? merged : {}

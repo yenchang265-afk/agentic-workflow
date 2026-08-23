@@ -18,7 +18,8 @@ import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
 import { effectivePlatformTools, stageDef, stageRequiresCriteria, type LoadedManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
 import { pollOnce } from "@agentic-workflow/core/scheduler/scheduler"
 import { appendSchedulerEvents, skipSetKey, type SchedulerEvent } from "@agentic-workflow/core/scheduler/events-log"
-import { aggregateDenials, clearDenyLog, formatDenyFindings, readDenyLog } from "@agentic-workflow/core/workflow/deny-log"
+import { aggregateDenials, appendDenyEntry, clearDenyLog, formatDenyFindings, readDenyLog } from "@agentic-workflow/core/workflow/deny-log"
+import { initRepo } from "@agentic-workflow/core/workflow/init"
 import {
   buildEntryState,
   buildWorkSources,
@@ -41,6 +42,7 @@ import {
   stagePasses,
   unbindableAgentModels,
   unknownAgentModelKeys,
+  effectiveConfigReport,
   unknownStageCheckKeys,
   unknownStageConcurrencyKeys,
   unknownStageContextKeys,
@@ -114,6 +116,7 @@ import {
   isRecoverable,
   listByStatus,
   listClaimIds,
+  nextActions,
   markClaimed,
   moveTask,
   pairingCoverage,
@@ -1120,7 +1123,7 @@ const claimWarnings = async (): Promise<string[]> => {
  */
 const runStageChecks = async (state: WorkflowState, stage: string): Promise<WorkflowState> => {
   const dir = state.git?.worktree ?? directory
-  const { defs, source, warnings } = await resolveStageChecks({
+  const { defs, source, warnings, refused } = await resolveStageChecks({
     $: sh,
     config,
     kind: activeManifest().manifest.kind,
@@ -1136,11 +1139,28 @@ const runStageChecks = async (state: WorkflowState, stage: string): Promise<Work
   // below): the log line alone made a fully-refused fence indistinguishable,
   // on disk, from a plan that never declared one.
   for (const w of warnings) await log("warn", `${stage}: ${w}`)
+  // Admission refusals reach the deny log too (source "check"), so doctor's
+  // one telemetry view covers BOTH starvation seams — plan-named commands the
+  // stage refused used to live only in warn lines and a conflated metric.
+  for (const r of refused) {
+    if (r.command) {
+      appendDenyEntry(directory, config.tasksDir, {
+        ts: new Date().toISOString(),
+        host: HOST,
+        kind: activeManifest().manifest.kind,
+        stage,
+        command: r.command,
+        source: "check",
+      })
+    }
+  }
   const prior = checksInfo.get(stage)
   const info = {
     source,
     ran: defs.length,
-    refused: warnings.length,
+    // Admission refusals alone — parse issues and missing binaries stay in
+    // `detail`, where they always were; they used to be conflated in here.
+    refused: refused.length,
     detail: clampedChecksDetail(warnings),
     noted: prior?.noted ?? false,
   }
@@ -2137,19 +2157,36 @@ server.registerTool(
         ? { kind: action.kind, message: (action as { message: string }).message }
         : { kind: "stop", message: report?.message ?? (action as { message: string }).message },
       ...(action.kind === "done" && parked && taskId
-        ? {
-            taskId,
-            gate: { kind: "ship", id: taskId },
-            next:
-              `ship gate: show the user the loop branch's diff summary, then ask with ${dialect.askTool} — ` +
-              `Ship (workflow_ship("${taskId}")), Replan with a reason (workflow_replan("${taskId}", reason)), ` +
-              `or Leave in in-review (stop here; /agentic-workflow:engineering approve ${taskId} ships it later). ` +
-              // The publish choice belongs to THIS ask and no later one: the ship
-              // gate blocks its own turn, so once the task is completed there is
-              // no turn left to ask in.
-              `If they choose Ship, offer the publish choice too — open a draft PR, push the branch only, or keep it local — ` +
-              `and pass it as workflow_ship's publish argument ("pr" | "push" | "local"). Omit publish if they have no preference.`,
-          }
+        ? (() => {
+            const done = report?.kind === "done" ? report : null
+            // The diff summary used to be a model-run errand ("show the user the
+            // loop branch's diff summary"); with core computing the stat at
+            // runDone, the prose leads with the deterministic numbers and the
+            // exact command instead of asking the model to derive the range.
+            const diffLine = done?.diffstat
+              ? `the run's diff is ${done.diffstat}${done.diffCmd ? ` (\`${done.diffCmd}\`)` : ""} — show the user that summary`
+              : `show the user the loop branch's diff summary`
+            const suggLine = done?.suggestions?.length
+              ? ` Relay the reviewer's ${done.suggestions.length} non-blocking suggestion${done.suggestions.length === 1 ? "" : "s"} too (this result's \`suggestions\`; also on the task's audit note) — they inform the diff review, they block nothing.`
+              : ""
+            return {
+              taskId,
+              gate: { kind: "ship", id: taskId },
+              ...(done?.diffstat ? { diffstat: done.diffstat } : {}),
+              ...(done?.diffCmd ? { diffCmd: done.diffCmd } : {}),
+              ...(done?.suggestions?.length ? { suggestions: done.suggestions } : {}),
+              next:
+                `ship gate: ${diffLine}, then ask with ${dialect.askTool} — ` +
+                `Ship (workflow_ship("${taskId}")), Replan with a reason (workflow_replan("${taskId}", reason)), ` +
+                `or Leave in in-review (stop here; /agentic-workflow:engineering approve ${taskId} ships it later). ` +
+                // The publish choice belongs to THIS ask and no later one: the ship
+                // gate blocks its own turn, so once the task is completed there is
+                // no turn left to ask in.
+                `If they choose Ship, offer the publish choice too — open a draft PR, push the branch only, or keep it local — ` +
+                `and pass it as workflow_ship's publish argument ("pr" | "push" | "local"). Omit publish if they have no preference.` +
+                suggLine,
+            }
+          })()
         : {}),
     }))
   },
@@ -2391,16 +2428,35 @@ server.registerTool(
     await loadCfg()
     const byStatus = {} as Record<TaskStatus, Task[]>
     for (const s of STATUSES) byStatus[s] = await listByStatus(fsClient, directory, config.tasksDir, s, log)
-    const summary = summarizeBacklog(byStatus)
+    // The claim markers are what split body-claimable tasks into claimable vs
+    // claim-held; without them every held task misreports as "ready" here (the
+    // OpenCode host has always passed them — this one silently didn't).
+    const summary = summarizeBacklog(byStatus, await listClaimIds(sh, directory, config.tasksDir))
+    const hints = nextActions(summary, "/agentic-workflow:engineering")
     const anomalies = await auditBacklog(fsClient, directory, config.tasksDir)
     const pm = config.projectManagement
     return ok({
       active: active ? { stage: active.stage, iteration: active.iteration + 1, task: active.task?.id ?? active.goal } : null,
       backlog: summary,
       kinds: kindsReport(),
+      ...(hints.length ? { nextActions: hints } : {}),
       ...(pm ? { pairing: { system: pm.system, ...pairingCoverage(byStatus) } } : {}),
       ...(hasAnomalies(anomalies) ? { anomalies: formatAnomalies(anomalies, config.tasksDir).map((l) => `${l} (workflow_doctor repairs)`) } : {}),
     })
+  },
+)
+
+server.registerTool(
+  "workflow_init",
+  {
+    description:
+      "/agentic-workflow:engineering init — scaffold this repo for the backlog loop: create the tasksDir status folders, write a safe-key .agentic-workflow.json when none exists (NEVER overwrites an existing one), and git-exclude the backlog when ignoreBacklog is on. Idempotent — re-running reports what already existed and changes nothing.",
+    inputSchema: {},
+  },
+  async () => {
+    await loadCfg()
+    const r = await initRepo(sh, directory, config, log)
+    return ok(r)
   },
 )
 
@@ -2409,10 +2465,34 @@ server.registerTool(
   {
     description:
       "Audit the backlog for structural damage a confused agent can cause: stray folders (not a status folder), task files outside every status folder, duplicate ids across status folders, and held claim markers — plus the allowlist deny log (bash commands the check stages refused, aggregated with the config change that would admit each). With fix:true, performs only the unambiguous repairs — rescue stray .md files back to draft/ (audited note + commit), remove now-empty stray folders, release stale orphaned claim markers, and clear the reported deny log. Duplicates are always flagged for a human, never auto-resolved.",
-    inputSchema: { fix: z.boolean().optional().describe("Apply the unambiguous repairs instead of only reporting.") },
+    inputSchema: {
+      fix: z.boolean().optional().describe("Apply the unambiguous repairs instead of only reporting."),
+      config: z
+        .boolean()
+        .optional()
+        .describe(
+          "Return the effective-config report instead of the backlog audit: the layer file paths, which repo-layer keys the runtime ignores (user-layer-only), and the config actually in force with secrets masked.",
+        ),
+    },
   },
-  async ({ fix }) => {
+  async ({ fix, config: wantConfig }) => {
     await loadCfg()
+    // A different question than the audit — "what configuration is actually in
+    // force, and why isn't my repo key taking effect" — answered from the same
+    // seam the load-time drops and the hub's effective view read.
+    if (wantConfig) {
+      const cfgReport = effectiveConfigReport(directory, config)
+      return ok({
+        configReport: cfgReport,
+        ...(cfgReport.droppedRepoKeys.length
+          ? {
+              note:
+                `${cfgReport.droppedRepoKeys.length} repo-layer key(s) are ignored at runtime (honored from the user-scope config only): ` +
+                `${cfgReport.droppedRepoKeys.join(", ")} — move them to the user config to take effect.`,
+            }
+          : {}),
+      })
+    }
     const anomalies = await auditBacklog(fsClient, directory, config.tasksDir)
     const heldClaims: Record<string, string[]> = {}
     for (const status of ["queued", "in-progress"] as const) {
@@ -2542,7 +2622,8 @@ server.registerTool(
  */
 const approveTask = (id: string): Promise<GateResult> => coreApproveTask(gateCtx(), id)
 const approvePlan = (id: string): Promise<GateResult> => coreApprovePlan(gateCtx(), id)
-const approveAny = (id: string, publish?: ShipPublish, base?: string, autoPlan?: boolean): Promise<GateResult> => coreApproveAny(gateCtx(), id, "engineering", publish, base, autoPlan)
+const approveAny = (id: string, publish?: ShipPublish, base?: string, autoPlan?: boolean, all?: boolean): Promise<GateResult> =>
+  coreApproveAny(gateCtx(), id, "engineering", publish, base, autoPlan, all)
 const shipAny = (id: string, publish?: ShipPublish, base?: string): Promise<GateResult> => coreShipAny(gateCtx(), id, "engineering", publish, base)
 const replanTask = (id: string, reason: string | undefined, liveTaskId: string | null): Promise<GateResult> =>
   coreReplanTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, reason)
@@ -2779,11 +2860,17 @@ server.registerTool(
         .describe(
           "Task gate only, and only when the user explicitly asked for --auto-plan: when this task's plan later parks, the plan gate is crossed automatically and BUILD follows. Never add it on your own - it removes a human review the user did not choose to skip. A replan or a fresh approve clears it; the ship gate is never automated.",
         ),
+      all: z
+        .boolean()
+        .optional()
+        .describe(
+          "Task gate only, and only when the user explicitly asked for --all: approve EVERY reviewed draft (priority order, tracking epics excluded) instead of one. Never add it on your own - it approves drafts the user may not have read. Takes no id; the plan and ship gates stay one-at-a-time.",
+        ),
     },
   },
-  async ({ id, publish, base, autoPlan }) => {
+  async ({ id, publish, base, autoPlan, all }) => {
     await loadCfg()
-    const r = await approveAny((id ?? "").trim(), publish, base, autoPlan)
+    const r = await approveAny((id ?? "").trim(), publish, base, autoPlan, all)
     return okGate(r)
   },
 )
@@ -3064,7 +3151,7 @@ async function runGate(argv: string[]): Promise<number> {
     }
     // The id comes from the parser's leftovers, never from a fresh scan of
     // `rest`: only the parser knows which bare-looking words it consumed.
-    result = await approveAny(opts.rest[0] ?? "", opts.publish, opts.base, opts.autoPlan)
+    result = await approveAny(opts.rest[0] ?? "", opts.publish, opts.base, opts.autoPlan, opts.all)
   } else if (verb === "reject-any") result = await rejectAny(remainder, readStageTaskId())
   else {
     // Legacy verbs require an explicit id.

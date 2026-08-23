@@ -219,7 +219,19 @@ export type Action =
       /** Characters the stage's context budget elided from `arguments`; absent ⇒ none. */
       readonly promptElided?: number
     }
-  | { readonly kind: "done"; readonly message: string; readonly toStatus?: string }
+  | {
+      readonly kind: "done"
+      readonly message: string
+      readonly toStatus?: string
+      /**
+       * The final check stage's non-blocking (`suggestion`) findings, already
+       * formatted one string per finding. They never reach a rebuild —
+       * `verdictFeedbackBlock` filters to blocking findings on purpose — so
+       * without this they exist only in the metrics sidecar while the human
+       * who reviews the diff never sees them. Absent ⇒ none were recorded.
+       */
+      readonly suggestions?: readonly string[]
+    }
   /** A gate stage finished: the driver validates its output, moves the item to `toStatus`, and the loop exits. */
   | { readonly kind: "park"; readonly message: string; readonly toStatus?: string }
   /**

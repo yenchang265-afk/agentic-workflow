@@ -266,6 +266,15 @@ const RUN_BRANCH_PREFIX = "— review passed on branch "
  * fail the ref check, and silently strand every ship with no branch at all.
  */
 const RUN_BASE_PREFIX = ", base "
+/**
+ * The diff-stat clause, appended at the very END of the done note (after
+ * "awaiting human diff review"). A semicolon lead-in, not a comma: the stat's
+ * own text carries commas ("3 files changed, 40 insertions(+)…"), and
+ * `runDoneField` terminates the branch/base values at the FIRST comma after
+ * their prefixes — both of which come earlier on the line, so this clause can
+ * never shift what they read.
+ */
+export const RUN_DIFF_PREFIX = "; diff: "
 
 /**
  * One comma-delimited field of the LAST `RUN_DONE_MARKER` line, or `undefined`.
@@ -313,6 +322,31 @@ export const extractRunBranch = (task: Task): string | undefined => runDoneField
  * that predates this field.
  */
 export const extractRunBase = (task: Task): string | undefined => runDoneField(task, RUN_BASE_PREFIX, RUN_BRANCH_PREFIX)
+
+/**
+ * The one-line `git diff --shortstat` summary the last completed run recorded
+ * on its done note, or `undefined` (task completed before the clause existed,
+ * or the stat could not be computed). Unlike `runDoneField` this value is
+ * free-ish text with commas in it, so it is parsed separately: everything
+ * after the LAST `RUN_DIFF_PREFIX` up to the closing stamp, and only accepted
+ * in `diffShortstat`'s validated shape — display data, but it rides beside
+ * refs that reach `git push`, so a note edited into something stranger reads
+ * as "no stat" rather than as whatever it says. Pure.
+ */
+export const extractRunDiffstat = (task: Task): string | undefined => {
+  const idx = lastMarkerIndex(task.body, RUN_DONE_MARKER)
+  if (idx === -1) return undefined
+  const end = task.body.indexOf("\n", idx)
+  const line = task.body.slice(idx, end === -1 ? task.body.length : end)
+  if (!AUDIT_NOTE_LINE_RE.test(line)) return undefined
+  const from = line.lastIndexOf(RUN_DIFF_PREFIX)
+  if (from === -1) return undefined
+  const value = line
+    .slice(from + RUN_DIFF_PREFIX.length)
+    .replace(/\s*\[[^\]\n]+\]\s*$/, "")
+    .trim()
+  return /^\d+ files? changed(, \d+ insertions?\(\+\))?(, \d+ deletions?\(-\))?$/.test(value) ? value : undefined
+}
 
 /**
  * The PENDING rejection reason a human gave `replan` (or the plan contract's
@@ -613,6 +647,31 @@ export interface BacklogSummary {
   readonly interrupted: readonly string[]
   /** in-review tasks awaiting a human diff review (/agentic-workflow:engineering approve). */
   readonly awaitingReview: readonly string[]
+  /**
+   * Per-epic slice progress, one entry per tracking draft that still has linked
+   * children on the board. Omitted (not empty) when the backlog has none, so a
+   * slice-set-free repo's summary is unchanged — the same omit-when-absent rule
+   * every `epic`/`siblings` key follows.
+   */
+  readonly epics?: readonly EpicProgress[]
+}
+
+/**
+ * One tracking epic's slice progress, derived purely from the `epic:` links —
+ * never from the tracker's body prose (that is LLM-authored and drifts).
+ * `total` excludes abandoned children on purpose: abandoning a slice is the
+ * documented way to shrink a set, and a set whose every LIVE child shipped is
+ * done regardless of what was cancelled along the way.
+ */
+export interface EpicProgress {
+  /** The tracking draft's id — what `abandon <id>` closes. */
+  readonly id: string
+  /** Children now in completed/. */
+  readonly shipped: number
+  /** Children still anywhere active (draft/queued/plan-review/in-progress/in-review). */
+  readonly open: readonly string[]
+  /** shipped + open — the live set. */
+  readonly total: number
 }
 
 /**
@@ -629,6 +688,7 @@ export const summarizeBacklog = (
   const ids = (tasks: readonly Task[]): string[] => tasks.map((t) => t.id)
   const inProgress = byStatus["in-progress"] ?? []
   const held = new Set(claimedIds)
+  const epics = epicProgress(byStatus)
   return {
     counts,
     awaitingTask: ids((byStatus["draft"] ?? []).filter((t) => !isEpicType(t.type))),
@@ -638,11 +698,71 @@ export const summarizeBacklog = (
     claimHeld: ids(inProgress.filter((t) => isClaimable(t) && held.has(t.id))),
     interrupted: ids(inProgress.filter(wasInterrupted)),
     awaitingReview: ids(byStatus["in-review"] ?? []),
+    ...(epics.length ? { epics } : {}),
   }
 }
 
-/** The active statuses whose tasks ought to be paired to a tracker item. */
-const ACTIVE_STATUSES: readonly TaskStatus[] = ["draft", "queued", "plan-review", "in-progress", "in-review"]
+/**
+ * Slice progress for every tracking epic still on the board (a tracker lives in
+ * `draft/` un-approved for good — `abandon` is how it closes). A tracker with
+ * NO linked live-or-shipped children yields no entry: its set was emptied by
+ * removes/abandons, and a "0/0 shipped" row is noise with no next action. Pure.
+ */
+const epicProgress = (byStatus: Readonly<Record<TaskStatus, readonly Task[]>>): EpicProgress[] => {
+  const trackers = (byStatus["draft"] ?? []).filter((t) => isEpicType(t.type))
+  if (!trackers.length) return []
+  const out: EpicProgress[] = []
+  for (const tracker of trackers) {
+    const children = (status: TaskStatus): Task[] =>
+      (byStatus[status] ?? []).filter((t) => t.epic === tracker.id && !isEpicType(t.type))
+    const shipped = children("completed").length
+    const open = selectOrder(ACTIVE_STATUSES.flatMap(children)).map((t) => t.id)
+    if (shipped + open.length === 0) continue
+    out.push({ id: tracker.id, shipped, open, total: shipped + open.length })
+  }
+  return out
+}
+
+/** How many ids a next-action line names before eliding — the line is a hint, not a listing. */
+const NEXT_ACTION_IDS_MAX = 5
+
+const idList = (ids: readonly string[]): string =>
+  ids.length <= NEXT_ACTION_IDS_MAX
+    ? ids.join(", ")
+    : `${ids.slice(0, NEXT_ACTION_IDS_MAX).join(", ")} +${ids.length - NEXT_ACTION_IDS_MAX} more`
+
+/**
+ * Render the summary's actionable lists as "what to type next" lines, one per
+ * non-empty list, human gates first. The summary alone tells a human that a
+ * task is parked; it does not tell them the VERB that unparks it, and both
+ * hosts were rendering counts and leaving the verb to memory (OpenCode logged
+ * hints for exactly two of the seven lists; the Claude host for none). One
+ * renderer here so the hosts cannot drift on which state maps to which verb.
+ *
+ * `cmd` is the host's typed-command prefix (`/agentic-workflow:engineering`) —
+ * passed in, not baked, because a future kind gets its own command. Pure.
+ */
+export const nextActions = (s: BacklogSummary, cmd: string): readonly string[] => {
+  const out: string[] = []
+  if (s.gated.length) out.push(`plan awaiting review: ${idList(s.gated)} — ${cmd} approve <id> (or replan <id> <why>)`)
+  if (s.awaitingReview.length) out.push(`awaiting diff review: ${idList(s.awaitingReview)} — review the run branch, then ${cmd} approve <id> ships`)
+  if (s.awaitingTask.length) out.push(`drafts awaiting approval: ${idList(s.awaitingTask)} — ${cmd} approve <id>`)
+  if (s.awaitingPlan.length) out.push(`queued, not yet planned: ${idList(s.awaitingPlan)} — ${cmd} plan <id> (or claim)`)
+  if (s.claimable.length) out.push(`build-ready: ${idList(s.claimable)} — ${cmd} claim [id]`)
+  if (s.interrupted.length) out.push(`interrupted: ${idList(s.interrupted)} — ${cmd} recover <id>`)
+  if (s.claimHeld.length) out.push(`claim held (a loop is driving it, or the claim is stale): ${idList(s.claimHeld)} — ${cmd} doctor reports; doctor fix releases provably-dead holders`)
+  // A fully-shipped set is actionable too: the tracker never leaves draft/ on
+  // its own, and "close it by hand" was documented but never surfaced anywhere.
+  for (const e of s.epics ?? []) {
+    if (e.open.length === 0 && e.shipped > 0) {
+      out.push(`epic ${e.id}: all ${e.shipped} slice${e.shipped === 1 ? "" : "s"} shipped — ${cmd} abandon ${e.id} closes the tracker`)
+    }
+  }
+  return out
+}
+
+/** The statuses a task is still live in — everything but completed/abandoned. */
+export const ACTIVE_STATUSES: readonly TaskStatus[] = ["draft", "queued", "plan-review", "in-progress", "in-review"]
 
 /**
  * Pairing coverage across the active backlog (everything but completed/abandoned):
