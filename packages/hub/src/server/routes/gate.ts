@@ -1,4 +1,6 @@
 import { abandonTask, approvePlan, approveTask, removeTask, replanTask, shipTask, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
+import { ShipPublishSchema } from "@agentic-workflow/core/config"
+import { SHIP_PUBLISH_MODES } from "@agentic-workflow/core/workflow/state"
 import { findByIdIn, STATUSES } from "@agentic-workflow/core/task/store"
 import type { TaskStatus } from "@agentic-workflow/core/task/statuses"
 import type { GateAction, GateRequest } from "../../shared/api.js"
@@ -123,6 +125,16 @@ export const postGate = async (deps: HubDeps, req: ParsedRequest): Promise<JsonR
   const base = body.base?.trim()
   if (base !== undefined && base !== "" && !/^(refs\/heads\/)?[A-Za-z0-9][A-Za-z0-9._\-/]*$/.test(base)) {
     return badRequest(`invalid base branch "${base}"`)
+  }
+  // `publish` is the third field of this bare cast that changes what leaves the
+  // machine, and it was the one nobody screened. `shipPublishFor` is a plain
+  // `override ?? config`, and `shipPr` branches on `=== "local"` / `=== "push"`
+  // with PR as the fall-through — so an unrecognized value did not fall back to
+  // the repo's `shipPublish`, it silently took the MOST side-effectful arm:
+  // pushed the branch and opened a PR for a request that may have meant `local`.
+  // An unknown mode is a malformed request, which is what 400 is for here.
+  if (body.publish !== undefined && !ShipPublishSchema.safeParse(body.publish).success) {
+    return badRequest(`invalid publish mode "${String(body.publish)}" — expected ${SHIP_PUBLISH_MODES.join(", ")}`)
   }
 
   const spec = ACTIONS[action]
