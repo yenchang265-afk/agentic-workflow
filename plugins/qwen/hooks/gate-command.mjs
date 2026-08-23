@@ -140,6 +140,12 @@ var gateArgsFor = (prompt) => {
 var missingDistMessage = (label, installer = "plugins/claude/install.sh") => `agentic-workflow: can't run the "${label}" gate \u2014 the plugin is not built (mcp-server/dist/server.js is missing). Run ${installer}, then retry.`;
 var decideGateOutcome = ({ distExists, spawnError, status, stdout }, label, installer) => {
   if (!distExists) return { action: "block", message: missingDistMessage(label, installer), ok: false };
+  if (spawnError && spawnError.code === "ETIMEDOUT")
+    return {
+      action: "block",
+      message: `agentic-workflow: the "${label}" gate timed out before reporting. The move may or may not have landed \u2014 check which status folder the task sits in (status, or the backlog under docs/tasks/) before retrying.`,
+      ok: false
+    };
   if (spawnError || status === null || status === void 0) return { action: "pass" };
   let parsed = null;
   try {
@@ -343,6 +349,7 @@ var main = async () => {
   const res = distExists ? spawnSync("node", [serverJs, ...args], {
     cwd,
     encoding: "utf8",
+    timeout: 5e4,
     env: { ...process.env, AGENTIC_WORKFLOW_DIR: process.env.AGENTIC_WORKFLOW_DIR ?? cwd }
   }) : {};
   const outcome = decideGateOutcome(

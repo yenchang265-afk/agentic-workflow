@@ -955,7 +955,30 @@ const adoGatewayDep = (): { adoGateway?: AdoGateway } => {
   return gateway ? { adoGateway: gateway } : {}
 }
 
-const gateCtx = (): GateCtx => ({ $: sh, client: fsClient, log, directory, config, isDriving: (id) => active?.task?.id === id, ...adoGatewayDep() })
+/**
+ * Per-command cap on the shell a gate verb runs — design 21's bound, extended
+ * to this host (it stopped at OpenCode, and the hang class is host-agnostic: a
+ * gate move on a slow tree left the MCP call `running` forever with the
+ * orchestrator's turn wedged behind it). Generous on purpose: the slowest
+ * legitimate gate command is the ship's `git push` / `gh pr create`, and
+ * cutting one short costs a caveated ship a human can finish by hand — where
+ * NOT capping cost a call that never returned. The shim's `.timeout` kills the
+ * child and resolves exit 124 (`timeout(1)`'s convention), which core reads as
+ * an ordinary failed command: the move still reports, only the best-effort
+ * bookkeeping is skipped. Deliberately NOT applied to the plain `sh`:
+ * checkpoint commits, worktree setup and `runChecks` legitimately run long and
+ * carry their own regime. (No core gate path calls `.timeout` itself, so the
+ * initial cap is never widened; a caller that did would narrow via the shim.)
+ */
+const GATE_SHELL_TIMEOUT_MS = 60_000
+const boundedGateSh: typeof sh = (strings, ...exprs) => {
+  // `.timeout` is optional on the host interface; this shim always ships it,
+  // but degrade to the unbounded call rather than crash if that ever changes.
+  const p = sh(strings, ...exprs)
+  return p.timeout?.(GATE_SHELL_TIMEOUT_MS) ?? p
+}
+
+const gateCtx = (): GateCtx => ({ $: boundedGateSh, client: fsClient, log, directory, config, isDriving: (id) => active?.task?.id === id, ...adoGatewayDep() })
 
 /**
  * The shared terminal context for this host — the ports core's `runTerminal`

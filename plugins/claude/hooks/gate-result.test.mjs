@@ -30,6 +30,23 @@ test("a spawn error (node itself could not run) fails open", () => {
   assert.deepEqual(decideGateOutcome({ distExists: true, status: undefined, stdout: "" }, LABEL), { action: "pass" })
 })
 
+/**
+ * A timeout is NOT a crash: the CLI was killed mid-flight by the hook's own
+ * deadline, so the move may already have landed with the GateResult lost.
+ * Failing open here invites the model to re-run the verb via MCP — a
+ * double-move on exactly the slow trees that time out — so the arm blocks,
+ * naming what to check before retrying.
+ */
+test("a timed-out spawn blocks (fail closed), never falls to the fail-open arm", () => {
+  const timeoutErr = Object.assign(new Error("spawnSync node ETIMEDOUT"), { code: "ETIMEDOUT" })
+  const o = decideGateOutcome({ distExists: true, spawnError: timeoutErr, status: null, stdout: "" }, LABEL)
+  assert.equal(o.action, "block")
+  assert.equal(o.ok, false)
+  assert.ok(o.message.includes("timed out"), o.message)
+  assert.ok(o.message.includes(LABEL), o.message)
+  assert.ok(o.message.includes("before retrying"), o.message)
+})
+
 test("a crash without a GateResult (exit 1, empty stdout) fails open", () => {
   assert.deepEqual(decideGateOutcome({ distExists: true, status: 1, stdout: "" }, LABEL), { action: "pass" })
   assert.deepEqual(decideGateOutcome({ distExists: true, status: 1, stdout: "some stack trace\nnot json" }, LABEL), {
