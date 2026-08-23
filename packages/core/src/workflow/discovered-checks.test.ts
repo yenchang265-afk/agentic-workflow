@@ -10,6 +10,7 @@ import {
   checksProvenanceNote,
   clampedChecksDetail,
   commandBinaries,
+  discoveryAllowlist,
   hasChecksFence,
   noMachineChecksBlock,
   parseDiscoveredChecks,
@@ -559,6 +560,44 @@ test("hasChecksFence distinguishes an absent fence from a valid empty block", ()
   // plan that never declared one.
   assert.equal(hasChecksFence("## Implementation Plan\n\n1. step"), false)
   assert.equal(hasChecksFence(fence("[]")), true)
+})
+
+test("checkDiscoveryBlock renders the consumer's allowlist patterns when given — the author sees what admission judges by", () => {
+  const block = checkDiscoveryBlock("plan", "verify", ["npm test*", "pnpm --filter* test*"])
+  assert.ok(block.includes("That allowlist's patterns are: `npm test*` · `pnpm --filter* test*`"), block.slice(-400))
+  assert.match(block, /matches one/)
+  // No globs (or an empty list) composes byte-identically to before — the
+  // config-less callers' pin.
+  assert.ok(!checkDiscoveryBlock("plan", "verify").includes("That allowlist's patterns"))
+  assert.equal(checkDiscoveryBlock("plan", "verify", []), checkDiscoveryBlock("plan", "verify"))
+})
+
+test("checkDiscoveryBlock clamps a pathological allowlist by whole patterns, naming the elided count", () => {
+  // A runaway bashAllowlistExtra must not balloon every PLAN prompt.
+  const globs = Array.from({ length: 500 }, (_, i) => `runner-${String(i)} *`)
+  const block = checkDiscoveryBlock("plan", "verify", globs)
+  const bare = checkDiscoveryBlock("plan", "verify")
+  assert.ok(block.length - bare.length < 2600, `allowlist rendering added ${String(block.length - bare.length)} chars`)
+  assert.match(block, /— and \d+ more/)
+  assert.doesNotMatch(block, /runner-499/)
+})
+
+test("discoveryAllowlist: the consumer's globs when discovery is live, undefined when preempted or absent", () => {
+  const live = discoveryAllowlist(manifestWith(stage({ discoverChecks: true })), CONFIG)
+  assert.ok(live && live.length > 0, "a discovering consumer exposes its allowlist")
+  assert.ok(live.includes("npm test*"), "the manifest's own globs are the list")
+  // bashAllowlistExtra joins — the plan may name a runner only an extra admits.
+  const extra = parseConfig({ bashAllowlistExtra: ["cargo nextest*"] })
+  assert.ok(discoveryAllowlist(manifestWith(stage({ discoverChecks: true })), extra)?.includes("cargo nextest*"))
+  // Preempted by configured or manifest checks — the fence is never read there.
+  const configured = parseConfig({ workflows: { engineering: { stageChecks: { verify: [{ name: "t", command: "npm test" }] } } } })
+  assert.equal(discoveryAllowlist(manifestWith(stage({ discoverChecks: true })), configured), undefined)
+  assert.equal(discoveryAllowlist(manifestWith(stage({ discoverChecks: true, checks: [{ name: "shipped", command: "npm test" }] })), CONFIG), undefined)
+  // No discovering stage, or a partial manifest: nothing to say.
+  assert.equal(discoveryAllowlist(manifestWith(stage()), CONFIG), undefined)
+  assert.equal(discoveryAllowlist({} as unknown as WorkflowManifest, CONFIG), undefined)
+  // Config-less composes from the manifest alone — same list as a default config.
+  assert.deepEqual(discoveryAllowlist(manifestWith(stage({ discoverChecks: true }))), live)
 })
 
 test("previewDiscoveredChecks forecasts admitted and refused with the consumer's own allowlist", () => {

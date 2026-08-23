@@ -7,7 +7,7 @@ import { stripPlanAndAuditTail } from "../task/plan-section.js"
 import { clampWithStats } from "./budget.js"
 import { anyFailed, checksBlock, type CheckResult } from "./checks.js"
 import { contextFor, planVisualizationFor, prBaseFor, stagePasses } from "../config.js"
-import { checkDiscoveryBlock, discoveringStage, noMachineChecksBlock } from "./discovered-checks.js"
+import { checkDiscoveryBlock, discoveringStage, discoveryAllowlist, noMachineChecksBlock } from "./discovered-checks.js"
 import { dependencyContractBlock } from "./declared-deps.js"
 import { shellQuote } from "./worktree-guard.js"
 import {
@@ -329,7 +329,9 @@ const passMode = (passes: readonly StagePass[]): "single" | "axis" | "lens" =>
 // Moved to discovered-checks.ts (beside the grammar it belongs to, and so the
 // park-time preview there can use it without a cycle); re-exported to keep
 // every existing import site — the hub's creator preview included — compiling.
-export { discoveringStage }
+// `discoveryAllowlist` rides along: the hub preview needs both to compose the
+// discovery block the loop actually sends.
+export { discoveringStage, discoveryAllowlist }
 
 export const composeStagePrompt = (
   def: StageDef,
@@ -350,6 +352,12 @@ export const composeStagePrompt = (
   // has to write the block. Undefined ⇒ the block is omitted entirely, which is
   // what a config-less caller (the hub's creator preview) should see.
   discover?: string,
+  // The consumer's effective allowlist globs, rendered into the discovery
+  // block so the plan's commands are authored against the list admission will
+  // judge them by (`discoveryAllowlist`). Only `composePromptWithStats` can
+  // supply it — it needs the config — so a config-less caller composes
+  // byte-identically to before.
+  discoverGlobs?: readonly string[],
 ): string => {
   const rendered = renderPrompt(tpl, ctx)
   // How many acceptance criteria the prompt itself lists, derived from the SAME
@@ -373,7 +381,7 @@ export const composeStagePrompt = (
     ? `${rendered}${noChecks}\n\n${verdictContractBlock(def.name, def.requiredAxes, mode, def.requireEvidence, criteriaCount)}`
     : `${rendered}\n\n${workScopeBlock(def.name)}${def.planContract ? `\n\n${planContractBlock(def.name)}` : ""}${
         visualize ? `\n\n${planVisualizationBlock(def.name)}` : ""
-      }${def.planContract && discover ? `\n\n${checkDiscoveryBlock(def.name, discover)}` : ""}${
+      }${def.planContract && discover ? `\n\n${checkDiscoveryBlock(def.name, discover, discoverGlobs)}` : ""}${
         // Unconditional on `planContract`, unlike the two blocks above: it needs
         // no consuming stage (nothing downstream reads the fence — the human at
         // the plan gate does) and no config flag, so a config-less caller sees
@@ -430,7 +438,12 @@ export const composePromptWithStats = (
   // shipped manifests are user-uneditable, so the config override is the only
   // way the opt-in is reachable at all.
   const visualize = config ? planVisualizationFor(config, loaded.manifest.kind, def) : undefined
-  return { prompt: composeStagePrompt(def, tpl, ctx, mode, visualize, discoveringStage(loaded.manifest, config)), elided }
+  // The consumer's effective allowlist, so the PLAN author writes commands in
+  // the shapes admission will judge them by. Config-less composes from the
+  // manifest alone (same output as a default config — the unset-knob pin);
+  // undefined when discovery is preempted, dropping the sentence entirely.
+  const discoverGlobs = discoveryAllowlist(loaded.manifest, config)
+  return { prompt: composeStagePrompt(def, tpl, ctx, mode, visualize, discoveringStage(loaded.manifest, config), discoverGlobs), elided }
 }
 
 /** Render the prompt threaded into `target`'s stage command. */

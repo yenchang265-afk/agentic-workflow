@@ -20,7 +20,7 @@ import type { CheckResult } from "./checks.js"
 import type { Action, Config, WorkflowState, TaskRef } from "./state.js"
 import { resumeAtBuild, startAtPlan } from "./state.js"
 import { planContractBlock, planVisualizationBlock, verdictContractBlock, verdictFeedbackBlock, workScopeBlock, type Verdict } from "./verdict.js"
-import { checkDiscoveryBlock, noMachineChecksBlock } from "./discovered-checks.js"
+import { checkDiscoveryBlock, discoveryAllowlist, noMachineChecksBlock } from "./discovered-checks.js"
 import { dependencyContractBlock } from "./declared-deps.js"
 
 /**
@@ -253,8 +253,10 @@ const oracleCompose = (state: WorkflowState, stage: string): string => {
     : `${base}\n\n${workScopeBlock(stage)}${def.planContract ? `\n\n${planContractBlock(stage)}` : ""}${
         // "verify" spelled out, not read from the manifest: this oracle is a
         // hand-written twin, and deriving it would make it agree with the code
-        // by construction instead of by review.
-        def.planContract ? `\n\n${checkDiscoveryBlock(stage, "verify")}` : ""
+        // by construction instead of by review. (The globs argument is the one
+        // derived piece — the VERIFY allowlist is dozens of manifest patterns,
+        // and hand-copying it would pin the manifest, not the composition.)
+        def.planContract ? `\n\n${checkDiscoveryBlock(stage, "verify", discoveryAllowlist(eng.manifest))}` : ""
       }${def.planContract ? `\n\n${dependencyContractBlock(stage)}` : ""}`
 }
 
@@ -383,7 +385,7 @@ test("composeStagePrompt matches composePrompt byte-for-byte on hook-less stages
   for (const [label, state] of Object.entries(PROMPT_STATES)) {
     for (const stage of ["plan", "build", "verify", "review"]) {
       const def = stageDef(eng.manifest, stage)
-      const lenient = composeStagePrompt(def, eng.prompts[stage] ?? "", promptContext({ ...state, stage }), undefined, undefined, discoveringStage(eng.manifest))
+      const lenient = composeStagePrompt(def, eng.prompts[stage] ?? "", promptContext({ ...state, stage }), undefined, undefined, discoveringStage(eng.manifest), discoveryAllowlist(eng.manifest))
       assert.equal(lenient, composePrompt(eng, { ...state, stage }, stage), `${label} → ${stage}`)
     }
   }
@@ -453,7 +455,7 @@ test("composePrompt appends the visualization block only when config opts the ki
   const plan = composePrompt(eng, state, "plan", visual)
   assert.ok(
     plan.endsWith(
-      `${workScopeBlock("plan")}\n\n${planContractBlock("plan")}\n\n${planVisualizationBlock("plan")}\n\n${checkDiscoveryBlock("plan", "verify")}\n\n${dependencyContractBlock("plan")}`,
+      `${workScopeBlock("plan")}\n\n${planContractBlock("plan")}\n\n${planVisualizationBlock("plan")}\n\n${checkDiscoveryBlock("plan", "verify", discoveryAllowlist(eng.manifest, visual))}\n\n${dependencyContractBlock("plan")}`,
     ),
     "plan's tail is fence → contract → visualization → check discovery → dependency contract, in order",
   )
@@ -548,7 +550,7 @@ test("composePrompt fences work stages to their own stage", () => {
     assert.match(prompt, /STAGE SCOPE/, `${stage} carries the scope fence`)
     const tail =
       stage === "plan"
-        ? `${workScopeBlock(stage)}\n\n${planContractBlock(stage)}\n\n${checkDiscoveryBlock(stage, "verify")}\n\n${dependencyContractBlock(stage)}`
+        ? `${workScopeBlock(stage)}\n\n${planContractBlock(stage)}\n\n${checkDiscoveryBlock(stage, "verify", discoveryAllowlist(eng.manifest))}\n\n${dependencyContractBlock(stage)}`
         : workScopeBlock(stage)
     assert.ok(prompt.endsWith(tail), `${stage} ends with its contract tail`)
   }
