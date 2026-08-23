@@ -6,7 +6,7 @@ import { parseBlocks, type Block } from "../markdown/parse.js"
 import { repoPath, useRepo } from "../repo.js"
 import { Button } from "../ui/Button.js"
 import { Confirm } from "../ui/Confirm.js"
-import { composeReason, sendableCount, type AnchoredComment, type CommentTarget } from "./comments.js"
+import { composeReason, reasonStats, sendableCount, type AnchoredComment, type CommentTarget } from "./comments.js"
 
 /**
  * The drawer's read-only half — a task the editor will not touch, because it
@@ -258,7 +258,15 @@ export const TaskReview = ({
               <span className="muted">
                 {sendable === 0
                   ? "No comments yet — they are sent together as one replan reason."
-                  : `${sendable} comment${sendable === 1 ? "" : "s"} ready to send`}
+                  : (() => {
+                      // The reason rides one bounded audit-note line, so the
+                      // meter keeps the budget visible — and says so when the
+                      // notes are being clipped to share it.
+                      const stats = reasonStats(list)
+                      return `${sendable} comment${sendable === 1 ? "" : "s"} ready to send · reason ${stats.length}/${stats.budget}${
+                        stats.squeezed ? " — the budget is shared, long notes are clipped; trim or consolidate to keep every point whole" : ""
+                      }`
+                    })()}
               </span>
               {sendable === 0 ? (
                 <Button disabled title="Leave at least one comment first — it becomes the reason.">
