@@ -23,8 +23,8 @@ const LAYER_PAIRS: readonly { name: string; user: unknown; repo: unknown }[] = [
   },
   {
     name: "arrays replace wholesale, they do not concat",
-    user: { reviewLenses: ["security", "perf"] },
-    repo: { reviewLenses: [] },
+    user: { protectedBranches: ["release/2.4", "staging"] },
+    repo: { protectedBranches: [] },
   },
   {
     name: "a non-object override masks a user object entirely",
@@ -84,12 +84,12 @@ test("a wholesale replacement makes the whole subtree belong to the winning laye
 })
 
 test("an array is a leaf — provenance never walks into its elements", () => {
-  const user = { reviewLenses: ["security", "perf"] }
-  const repo = { reviewLenses: ["a11y"] }
-  assert.equal(provenanceOf(user, repo, ["reviewLenses"]), "repo")
+  const user = { protectedBranches: ["release/2.4", "staging"] }
+  const repo = { protectedBranches: ["develop"] }
+  assert.equal(provenanceOf(user, repo, ["protectedBranches"]), "repo")
   // A naive per-element walk would claim element 1 came from the user. It didn't:
   // mergeConfigLayers replaces arrays wholesale.
-  assert.deepEqual(mergeConfigLayers(user, repo), { reviewLenses: ["a11y"] })
+  assert.deepEqual(mergeConfigLayers(user, repo), { protectedBranches: ["develop"] })
 })
 
 test("setAt and deleteAt are immutable and create intermediates", () => {

@@ -307,7 +307,6 @@ full set is `docs/configuration.md`.
   "worktreesDir": ".workflow-worktrees", // per-task worktree isolation; false = shared-tree
   "taskBranch": "feature/",     // work-branch prefix; false = build on the branch already checked out
   "worktreeSetup": "npm ci",    // OPTIONAL: run in a fresh worktree (deps aren't checked out)
-  "reviewLenses": ["correctness", "security", "test-adequacy"], // OPTIONAL: multi-pass review
   "workflows": {                // OPTIONAL: per-kind sections; sitters off until "enabled": true
     "engineering": { "stageFanout": { "review": "axis" } },
     "pr-sitter": { "enabled": true, "query": "is:open author:@me" }
@@ -324,12 +323,13 @@ worktree is created on its first BUILD and removed only when the task
 `replan` bounce out of `in-review/` resumes on top of the previous iteration's
 work and its `worktreeSetup` output.
 
-**Multi-pass review.** `reviewLenses` (free-text lenses) and
-`workflows.<kind>.stageFanout: {"review": "axis"}` (one pass per required axis)
-both run REVIEW several times and take the **worst** verdict, so a single
-prompt-injected reviewer cannot wave a change through (threat model T1), at ~N×
-review time. Which of the two enforces axis coverage per pass, how they
-interact, and the unreviewed-axis warning are in `docs/configuration.md`.
+**Multi-pass review.** `workflows.<kind>.stageFanout` runs a check stage several
+times and takes the **worst** verdict, so a single prompt-injected reviewer
+cannot wave a change through (threat model T1), at ~N× stage time. `"axis"` gives
+one pass per required axis, each enforced against its own; a list of free-text
+lenses gives one pass each, enforced only if the list names every required axis.
+That difference, and the unreviewed-axis warning, are in
+`docs/configuration.md`. The retired top-level `reviewLenses` moved here.
 
 ## Verification
 

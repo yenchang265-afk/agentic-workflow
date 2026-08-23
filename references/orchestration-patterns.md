@@ -66,16 +66,16 @@ REVIEW stage → fan out ───┼─→ workflow-review (lens: security)    
 - The merge step is small enough to stay in the main context
 - Wall-clock latency matters
 
-**Examples in this repo:** the `reviewLenses` config (up to 5 lenses) runs one
+**Examples in this repo:** a `stageFanout` lens list (up to 5 lenses) runs one
 `workflow-review` pass per lens, then combines them with `worstOf` into a single
 machine-readable verdict (`packages/core/src/workflow/verdict.ts`; see
 `docs/design/improvements/04-verdict-quality.md`).
 On the OpenCode plugin a **per-axis fan-out runs its passes in parallel** (each
 pass gets its own session, which is what separates the per-pass verdict, axis
 requirement and evidence ledger), and `workflows.<kind>.stageConcurrency` clamps
-it. Free-text `reviewLenses` passes still run **sequentially** unless that knob
-opts them in — this page claimed parallel for a long time while both hosts
-serialized everything, which is the kind of drift worth naming. The Claude Code
+it. Free-text LENS passes (a `stageFanout` list) run in parallel on the same
+terms — the serial carve-out they used to have went with the retired
+`reviewLenses` key, so one rule now covers every focused pass. The Claude Code
 and Qwen Code hosts serialize every pass and warn if the knob is set.
 
 **Cost:** N parallel sub-agent contexts + one merge turn. Higher than direct invocation, but faster wall-clock and produces better reports because each sub-agent stays focused on its single perspective.
@@ -151,7 +151,7 @@ Claude Code has two parallelism primitives. Pattern 3 (parallel fan-out with mer
 | Status | Stable | Experimental — requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` |
 | Cost | Lower | Higher — each teammate is a separate Claude instance |
 
-**The personas in this repo work in both modes.** When spawned as subagents (e.g. the `reviewLenses` fan-out in Pattern 3), they report findings to the main session. When spawned as teammates (`Spawn a teammate using the workflow-review agent type…`), they can challenge each other's findings directly. The persona definition is the same; only the spawning context changes.
+**The personas in this repo work in both modes.** When spawned as subagents (e.g. the `stageFanout` review in Pattern 3), they report findings to the main session. When spawned as teammates (`Spawn a teammate using the workflow-review agent type…`), they can challenge each other's findings directly. The persona definition is the same; only the spawning context changes.
 
 One subtlety: the `skills` and `mcpServers` frontmatter fields in a persona are honored when it runs as a subagent but **ignored when it runs as a teammate** — teammates load skills and MCP servers from your project and user settings, the same as a regular session. If a persona depends on a specific skill or MCP server being loaded, configure it at the session level so it's available in both modes.
 
@@ -186,7 +186,7 @@ The fields that DO work in plugin agents are: `name`, `description`, `tools`, `d
 
 In Claude Code, parallel fan-out (Pattern 3) requires issuing **multiple Agent tool calls in a single assistant turn**. Sequential turns serialize execution. Any new orchestrator command should do the same.
 
-Note the `reviewLenses` / `stageFanout` passes are the exception, and not because of the agent runtime: the MCP server arms **one pass at a time** (one `armedPass`, one stage marker, one evidence ledger, all read by the guard hooks), so a second spawn in the same turn would have no identity to attribute its verdict to. Spawn those one per turn, in order, as the orchestration skill says.
+Note the `stageFanout` passes are the exception, and not because of the agent runtime: the MCP server arms **one pass at a time** (one `armedPass`, one stage marker, one evidence ledger, all read by the guard hooks), so a second spawn in the same turn would have no identity to attribute its verdict to. Spawn those one per turn, in order, as the orchestration skill says.
 
 ---
 

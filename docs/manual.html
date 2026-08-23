@@ -463,7 +463,7 @@ pnpm install                   <span class="c"># workspaces + builds core dist/<
         <div class="body">
           <p>Default <b>No</b>. Opting in walks three extras:</p>
           <p><b>Task tracker</b> — none / Jira / Azure DevOps. If set, also asks a deep-link base URL (must be http/https) and a default issue type. → <code>projectManagement</code>: {system, baseUrl?, defaultType?}</p>
-          <p><b>Review lenses</b> — comma-separated, trimmed, capped at 5. REVIEW then runs once per lens and takes the worst verdict. → <code>reviewLenses</code>: [ … ]</p>
+          <p><b>Multi-pass review</b> — yes/no. Yes runs REVIEW once per required axis, each pass enforced against its own. → <code>workflows.engineering.stageFanout</code>: {"review": "axis"}</p>
           <p><b>Max iterations</b> — default <code>3</code>; only written if you give a positive integer other than 3. → <code>maxIterations</code></p>
         </div>
       </details>
@@ -622,7 +622,6 @@ pnpm install                   <span class="c"># workspaces + builds core dist/<
             <tr><td><code>worktreesDir</code></td><td><span class="def">".workflow-worktrees"</span></td><td><b>On by default</b> — each loop runs in its own <code>git worktree</code> instead of switching branches in your checkout. Set <code>false</code> to opt back into shared-tree branch switching. A fresh worktree has no installed deps, so pair it with <code>worktreeSetup</code>.</td></tr>
             <tr><td><code>worktreeSetup</code></td><td><span class="def">unset</span></td><td>Shell command run in a fresh worktree, e.g. <code>"npm ci"</code>. <b>Shell-bearing: honored from the user-scope file only</b> — a cloned repo can't make the driver run a command.</td></tr>
             <tr><td><code>taskBranch</code></td><td><span class="def">"feature/"</span></td><td>Branch-name prefix the engineering loop cuts its work branch with (<code>&lt;prefix&gt;&lt;id&gt;</code>). Set <code>false</code> to cut nothing and build on the branch you already have checked out — that forces worktrees off, refuses to start on your default branch, sweeps your uncommitted changes into the loop's checkpoints, and allows only one run per working tree. Engineering only; sitters keep <code>feature/</code>.</td></tr>
-            <tr><td><code>reviewLenses</code></td><td><span class="def">[]</span></td><td>Run REVIEW once per lens and take the worst verdict. Max 5. Costs ~N× review time.</td></tr>
             <tr><td><code>agentModels</code></td><td><span class="def">unset</span></td><td>Agent name → model, for spawns that are <em>not</em> stage runs (draft authoring, the ad-hoc <code>workflow-plan</code>). Stage models live under <code>workflows.&lt;kind&gt;.stageModels</code>.</td></tr>
           </tbody>
         </table>
@@ -640,7 +639,7 @@ pnpm install                   <span class="c"># workspaces + builds core dist/<
             <tr><td><code>discoverChecks</code></td><td><span class="def">manifest</span></td><td>Whether a check stage with no pinned commands takes them from the approved plan's <code>agentic-checks</code> block. On for engineering's VERIFY. Frozen at plan time and capped by the stage's own bash allowlist. Not shell-bearing — the value space is one boolean.</td></tr>
             <tr><td><code>stageModels</code></td><td><span class="def">manifest</span></td><td>Stage name → model for that stage. Bound by the host (a hook rewrites the spawn), never asked of a model in prose.</td></tr>
             <tr><td><code>stageContext</code></td><td><span class="def">manifest</span></td><td>Stage name → per-artifact character ceilings on that stage's composed prompt. Matters once you point a stage at a small model.</td></tr>
-            <tr><td><code>stageFanout</code></td><td><span class="def">manifest</span></td><td>Stage name → <code>"axis"</code>: run that check stage once per required axis, each pass reviewing exactly one, merged worst-wins. Same ~N× cost as <code>reviewLenses</code> but keeps the axis-coverage guarantee (a gap stops the loop with ERROR). <code>"none"</code> turns a manifest-declared fan-out back off; <code>reviewLenses</code> wins over this on <code>review</code>.</td></tr>
+            <tr><td><code>stageFanout</code></td><td><span class="def">manifest</span></td><td>Stage name → <code>"axis"</code>, <code>"none"</code>, or a list of lenses. <code>"axis"</code> runs that check stage once per required axis, each pass reviewing exactly one and enforced against it (a gap stops the loop with ERROR). A lens list runs one pass per entry — same ~N× cost, but a free-text angle maps to no axis, so coverage is enforced only if the list names every required axis. A one-entry list is a downgrade: the single pass it replaces was enforced against all of them. <code>"none"</code> turns a manifest-declared fan-out back off.</td></tr>
             <tr><td><code>stageConcurrency</code></td><td><span class="def">unset</span></td><td>Stage name → how many of that stage's focused passes may run at once. Unset, a per-axis fan-out runs all its passes at once and everything else runs one at a time; <code>1</code> takes a fanned-out stage back to serial to clamp cost.</td></tr>
             <tr><td><code>maxDiffLines</code></td><td><span class="def">2000</span></td><td>Changed diff lines past which <code>review-sitter</code> declines a PR instead of reviewing it.</td></tr>
             <tr><td><code>planVisualization</code></td><td><span class="def">manifest</span></td><td>Whether the plan-writing stage is prompted to include mermaid diagram(s) when the change's shape warrants it. Agent-judged, never gate-enforced.</td></tr>
@@ -652,7 +651,6 @@ pnpm install                   <span class="c"># workspaces + builds core dist/<
       <div class="code"><div class="cbar"><span>.agentic-workflow.json — example</span><button class="copy">Copy</button></div><pre>{
   <span class="p">"codePlatform"</span>: "github",
   <span class="p">"worktreeSetup"</span>: "npm ci",
-  <span class="p">"reviewLenses"</span>: ["correctness", "security", "test-adequacy"],
   <span class="p">"workflows"</span>: {
     <span class="p">"engineering"</span>: {
       <span class="p">"stageChecks"</span>: { "verify": [{ "name": "tests", "command": "npm test" }] }

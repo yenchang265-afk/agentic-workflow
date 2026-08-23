@@ -5,7 +5,7 @@ import { stageLabel } from "./stage-label.js"
 /**
  * Fan-out accounting for focused (lens/axis) check stages. Pure.
  *
- * Turning `reviewLenses` or per-axis fan-out on multiplies both cost and
+ * Turning a `stageFanout` on — per-axis or a lens list — multiplies both cost and
  * artifact size with no signal in the run summary that it did — this is that
  * signal. One "arming" is a single firing of the stage: the samples of one run
  * entry sharing a stage and iteration. Its pass count is the number of

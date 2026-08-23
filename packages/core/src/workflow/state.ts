@@ -365,7 +365,7 @@ export interface WorkflowKindConfig {
   /** Stage name → per-artifact character ceilings for that stage's composed prompt; replaces the manifest stage's `context`. */
   readonly stageContext?: Readonly<Record<string, Readonly<Record<string, number>>>>
   /** Stage name → fan-out strategy for that stage; wins over the manifest stage's `fanout`. `"none"` turns one off. */
-  readonly stageFanout?: Readonly<Record<string, "axis" | "none">>
+  readonly stageFanout?: Readonly<Record<string, "axis" | "none" | readonly string[]>>
   /** Stage name → how many of that stage's focused passes may run at once. Default 1 (sequential). OpenCode only. */
   readonly stageConcurrency?: Readonly<Record<string, number>>
   /** Stage name → check commands the driver runs before that stage; replaces the manifest stage's `checks`. SHELL-BEARING (user-scope only). */
@@ -405,8 +405,6 @@ export interface Config {
   readonly notifyEvents?: readonly ("park" | "done" | "stop" | "error")[]
   /** Branch-name prefix the engineering loop cuts its work branch with (`<prefix><id>`); `false` ⇒ build on the branch already checked out. */
   readonly taskBranch: string | false
-  /** Extra REVIEW lenses; each runs one more focused review pass. */
-  readonly reviewLenses: readonly string[]
   /** Global code platform for PR-shaped work sources; per-kind override via `workflows.<kind>.codePlatform`. */
   readonly codePlatform?: CodePlatform
   /** What a ship gate publishes by default; overridable per ship. Unset ⇒ `pr`. */

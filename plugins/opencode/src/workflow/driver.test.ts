@@ -457,7 +457,6 @@ const testConfig: Config = {
   checkTimeoutMinutes: 10,
   worktreesDir: false,
   taskBranch: "feature/",
-  reviewLenses: [],
   workflows: {},
 }
 
@@ -3212,12 +3211,28 @@ test("recordVerdict still records a verdict from the stage the loop is actually 
 })
 
 // --- runStagePasses: a missing lens verdict is a broken channel, not a FAIL ---
-// Regression guard for the spurious-second-iteration bug: with reviewLenses
+// Regression guard for the spurious-second-iteration bug: with a lens fan-out
 // configured, a lens whose workflow_verdict call never lands used to combine as
 // null→FAIL (worstOf) and fire a rebuild of already-passing work; it must take
 // the same ERROR→recoverable-stop path as the single-pass case.
 
-const lensConfig: Config = { ...testConfig, reviewLenses: ["correctness", "security"] }
+const lensConfig: Config = { ...testConfig, workflows: { engineering: { stageFanout: { review: ["correctness", "security"] } } } }
+
+/**
+ * The same two lenses, pinned to one pass at a time.
+ *
+ * The halt tests below are about the INTERRUPT path — "after ESC, does anything
+ * else fire?" — and that question is only meaningful while passes are serial: a
+ * parallel fan-out has already started every pass before the first one can be
+ * interrupted, so "no further pass" would be asserting something the scheduler
+ * cannot provide (and the per-axis fan-out, parallel since before lenses moved
+ * here, never claimed it either). Pinning the concurrency keeps these tests
+ * measuring the halt path rather than the default they used to inherit.
+ */
+const serialLensConfig: Config = {
+  ...testConfig,
+  workflows: { engineering: { stageFanout: { review: ["correctness", "security"] }, stageConcurrency: { review: 1 } } },
+}
 
 /** Run the review stage with two lenses; `onCall(n, deps)` runs before the nth stage command returns. */
 const runLensReview = async (
@@ -3808,10 +3823,15 @@ test("lenses: an ESC interrupt during lens 1 fires no further lens and no verdic
   // driver still fired the verdict retry for lens 1 AND both passes of lens 2 —
   // up to 3 more agent turns the user had just asked to stop.
   const sessionID = "sess-lens-interrupt"
-  const { result, calls } = await runLensReview(sessionID, (call, deps) => {
-    // Record no verdict: without the interrupt this pass alone would retry.
-    if (call === 1) void onInterrupt(deps, sessionID)
-  })
+  const { result, calls } = await runLensReview(
+    sessionID,
+    (call, deps) => {
+      // Record no verdict: without the interrupt this pass alone would retry.
+      if (call === 1) void onInterrupt(deps, sessionID)
+    },
+    [],
+    serialLensConfig,
+  )
   assert.equal(calls(), 1, "no further agent turns after ESC")
   // A halted run returns quietly — never through the ERROR path, which would
   // report an unreachable verdict channel for a stage the user simply stopped.
@@ -3838,7 +3858,7 @@ test("lenses: one lens never records a verdict → ERROR naming the lens, never 
  * a lens set that cannot span the axes (the two-lens config every other test
  * here uses) keeps today's documented trade-off untouched.
  */
-const spanningLensConfig: Config = { ...testConfig, reviewLenses: FIVE }
+const spanningLensConfig: Config = { ...testConfig, workflows: { engineering: { stageFanout: { review: FIVE } } } }
 
 test("lenses spanning the required axes: a gap in the ACCUMULATED record stops with ERROR", async () => {
   const sessionID = "sess-lens-span-gap"
@@ -3923,6 +3943,7 @@ test("lenses: a stop mid-pass returns quietly — no ERROR, no retry, no warn", 
       clearWorkflow(sessionID) // a user `stop` lands while the first lens runs
     },
     warns,
+    serialLensConfig,
   )
   assert.equal(result.verdict, null)
   assert.equal(result.record, null)
@@ -4417,9 +4438,12 @@ test("fan-out: each pass is logged under its own axis in the `lens` slot the run
   }
 })
 
-test("fan-out: configured reviewLenses win, and each pass gets the lens contract", async () => {
+test("fan-out: a lens list runs lens passes, and each pass gets the lens contract", async () => {
   const sessionID = "sess-axis-vs-lenses"
-  const both: Config = { ...axisConfig, reviewLenses: ["a hostile attacker", "the next maintainer"] }
+  const both: Config = {
+    ...axisConfig,
+    workflows: { engineering: { stageFanout: { review: ["a hostile attacker", "the next maintainer"] } } },
+  }
   const { calls, fired } = await runAxisReview(
     sessionID,
     () => recordVerdict(sessionID, "review", worked(sessionID, { verdict: "PASS" })),

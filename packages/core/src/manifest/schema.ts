@@ -59,7 +59,7 @@ const SlugSchema = (label: string) =>
  * subagent pass with its own stage timeout, so the axis list is a direct
  * multiplier on an unattended loop's cost and wall-clock — an unbounded one is a
  * footgun the manifest should refuse, not a preference. 8 leaves headroom over
- * the engineering loop's five; config `reviewLenses` caps its own multiplier at 5.
+ * the engineering loop's five; a config lens list caps its own multiplier at 5.
  */
 export const FANOUT_MAX = 8
 
@@ -200,8 +200,9 @@ export const StageDefSchema = z.object({
    * pass would otherwise have had to supply in a single call — which is why
    * per-pass coverage narrows to the pass's own axis while the STAGE still
    * cannot advance with an axis uncovered (verdict.ts `uncoveredAxes`). That is
-   * the whole difference from config `reviewLenses`, which suppresses axis
-   * enforcement outright and guarantees nothing about coverage.
+   * the whole difference from a config LENS list (`stageFanout` given an array),
+   * whose free-text angles map to no axis, so per-pass enforcement is off and
+   * the stage-wide check survives only if the lenses name every required axis.
    *
    * Unset ⇒ one unfocused pass, byte-identical to having no fan-out at all.
    * A one-member enum rather than a boolean so call sites name the strategy
