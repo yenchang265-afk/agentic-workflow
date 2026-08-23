@@ -721,8 +721,18 @@ export const SHIP_BASE_FLAG = "--base"
 /** The task-gate flag that arms the plan gate's auto-approve (`approve <id> --auto-plan`). */
 export const AUTO_PLAN_FLAG = "--auto-plan"
 
+/** The task-gate batch flag (`approve --all`): approve every reviewed draft at once. */
+export const ALL_FLAG = "--all"
+
 export type GateOptionParse =
-  | { readonly ok: true; readonly publish?: ShipPublish; readonly base?: string; readonly autoPlan?: boolean; readonly rest: readonly string[] }
+  | {
+      readonly ok: true
+      readonly publish?: ShipPublish
+      readonly base?: string
+      readonly autoPlan?: boolean
+      readonly all?: boolean
+      readonly rest: readonly string[]
+    }
   | { readonly ok: false; readonly message: string }
 
 /**
@@ -757,6 +767,7 @@ export const parseGateOptions = (words: readonly string[]): GateOptionParse => {
   let publish: ShipPublish | undefined
   let base: string | undefined
   let autoPlan: boolean | undefined
+  let all: boolean | undefined
   const rest: string[] = []
   for (const word of words) {
     if (!word.startsWith("-")) {
@@ -765,6 +776,10 @@ export const parseGateOptions = (words: readonly string[]): GateOptionParse => {
     }
     if (word === AUTO_PLAN_FLAG) {
       autoPlan = true
+      continue
+    }
+    if (word === ALL_FLAG) {
+      all = true
       continue
     }
     if (word === SHIP_BASE_FLAG) return { ok: false, message: `"${SHIP_BASE_FLAG}" needs its value inline — pass ${SHIP_BASE_FLAG}=<branch>.` }
@@ -777,11 +792,14 @@ export const parseGateOptions = (words: readonly string[]): GateOptionParse => {
       continue
     }
     const mode = SHIP_PUBLISH_FLAGS[word]
-    if (!mode) return { ok: false, message: `Unknown option "${word}" — expected ${Object.keys(SHIP_PUBLISH_FLAGS).join(", ")}, ${SHIP_BASE_FLAG}=<branch>, ${AUTO_PLAN_FLAG}.` }
+    if (!mode) return { ok: false, message: `Unknown option "${word}" — expected ${Object.keys(SHIP_PUBLISH_FLAGS).join(", ")}, ${SHIP_BASE_FLAG}=<branch>, ${AUTO_PLAN_FLAG}, ${ALL_FLAG}.` }
     if (publish && publish !== mode) return { ok: false, message: `Conflicting publish options: --${publish} and --${mode} — pass one.` }
     publish = mode
   }
-  return { ok: true, rest, ...(publish ? { publish } : {}), ...(base ? { base } : {}), ...(autoPlan ? { autoPlan } : {}) }
+  // `--all` names no single task, so an id beside it is a contradiction —
+  // refused rather than picked over, for the same reason two publish modes are.
+  if (all && rest.length) return { ok: false, message: `${ALL_FLAG} takes no task id — drop "${rest[0]}", or drop the flag to approve that one task.` }
+  return { ok: true, rest, ...(publish ? { publish } : {}), ...(base ? { base } : {}), ...(autoPlan ? { autoPlan } : {}), ...(all ? { all } : {}) }
 }
 
 /**

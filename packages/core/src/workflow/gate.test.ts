@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { DEFAULT_CONFIG } from "../config.js"
 import { PLAN_HEADING, TASK_APPROVED_MARKER } from "../task/store.js"
 import { serializeTask } from "../task/schema.js"
-import { abandonTask, approveAny, approvePlan, approveTask, oneLineReason, rejectAny, removeTask, replanTask, REPLAN_REASON_MAX, retaskTask, shipAny, shipTask, type GateCtx, type GateResult } from "./gate.js"
+import { abandonTask, approveAllTasks, approveAny, approvePlan, approveTask, oneLineReason, rejectAny, removeTask, replanTask, REPLAN_REASON_MAX, retaskTask, shipAny, shipTask, type GateCtx, type GateResult } from "./gate.js"
 
 /**
  * The shared gate moves, driven against a tiny in-memory backlog. A fake shell
@@ -1080,6 +1080,52 @@ test("shipTask moves an in-review task to completed (no branch → no PR)", asyn
   assert.ok(!("pr" in (r.ok ? r.data : {})), "no PR attempted without a feature branch")
   assert.ok("/repo/docs/tasks/completed/t.md" in fs)
   assert.ok(!("epic" in (r.ok ? r.data : { epic: 1 })), "no epic keys on a slice-less ship — the omit-when-absent rule")
+})
+
+test("approveAllTasks queues every reviewed draft in priority order, epics excluded", async () => {
+  const { ctx, fs } = makeCtx({
+    "draft/epic-1.md": serializeTask({ title: "The set", body: "tracker", type: "epic" }),
+    "draft/b.md": serializeTask({ title: "Slice B", body: "y", priority: 1 }),
+    "draft/a.md": serializeTask({ title: "Slice A", body: "x", priority: 0 }),
+  })
+  const r = await approveAllTasks(ctx)
+  assert.ok(r.ok)
+  assert.match(r.message, /Approved 2 drafts: a, b — now queued/)
+  assert.deepEqual(r.ok ? r.data : {}, { all: true, approved: ["a", "b"] })
+  assert.ok("/repo/docs/tasks/queued/a.md" in fs && "/repo/docs/tasks/queued/b.md" in fs)
+  assert.ok("/repo/docs/tasks/draft/epic-1.md" in fs, "the tracking epic is never approved")
+})
+
+test("approveAllTasks keeps walking past a refused draft, and reports the partial batch", async () => {
+  // The task gate's secret scan refuses per draft; approved siblings must stay
+  // approved and the refusal must ride the message — a silently smaller batch
+  // is the failure mode.
+  const { ctx, fs } = makeCtx({
+    "draft/clean.md": serializeTask({ title: "Clean", body: "ordinary context" }),
+    "draft/leaky.md": serializeTask({ title: "Leaky", body: "api_key = supersecret99x" }),
+  })
+  const r = await approveAllTasks(ctx)
+  assert.ok(r.ok, "one refusal must not fail the whole batch")
+  assert.equal(r.ok ? r.variant : undefined, "warning")
+  assert.match(r.message, /1 refused — leaky:/)
+  assert.ok("/repo/docs/tasks/queued/clean.md" in fs)
+  assert.ok("/repo/docs/tasks/draft/leaky.md" in fs, "the refused draft stays put")
+})
+
+test("approveAllTasks with nothing to approve refuses, and approveAny routes the all flag first", async () => {
+  const none = await approveAllTasks(makeCtx({}).ctx)
+  assert.equal(none.ok, false)
+  assert.match(none.message, /No drafts awaiting approval/)
+  // The batch outranks the single-task resolution: a parked plan must not be
+  // approved by a flag that means "the drafts, all of them".
+  const { ctx, fs } = makeCtx({
+    "plan-review/p.md": serializeTask({ title: "Planned", body: `${PLAN_HEADING}\n\n1. Go.` }),
+    "draft/d.md": serializeTask({ title: "Draft", body: "x" }),
+  })
+  const r = await approveAny(ctx, "", "engineering", undefined, undefined, undefined, true)
+  assert.ok(r.ok)
+  assert.deepEqual(r.ok ? r.data : {}, { all: true, approved: ["d"] })
+  assert.ok("/repo/docs/tasks/plan-review/p.md" in fs, "the parked plan is untouched")
 })
 
 test("shipTask reports the epic's slice progress while siblings stay open", async () => {

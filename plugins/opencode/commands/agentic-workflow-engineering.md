@@ -1,7 +1,7 @@
 ---
 name: agentic-workflow:engineering
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix|config] | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] [--all] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix|config] | init | stop | status
 ---
 
 The engineering agentic loop — one command for authoring, the human gates,
@@ -175,6 +175,13 @@ Dispatch:
     plan review is a rubber stamp. The ship gate is never automated. A `replan`
     clears it (a rejected plan's revision parks for review), and so does a later
     plain `approve` on the same draft.
+  - **`--all` batches the TASK gate alone.** Every reviewed draft is approved
+    at once (priority order, tracking epics excluded) — for a slice set the
+    human already read end to end. It takes no id (an id beside it is
+    refused), arms no follow-up ask, and never touches the plan or ship
+    gates: those need a human to have read something specific, one item at a
+    time. Per-draft refusals (e.g. the secret scan) don't stop the batch —
+    they ride the outcome message.
 <!-- /aw:verb approve -->
 <!-- aw:verb replan -->
 - **`replan [id] [reason]`** — the sole rejection verb, and it chains the
@@ -327,6 +334,14 @@ only after seeing the file in its target folder.
     from the user-scope config only; moving them there is the fix), and the
     effective config with secrets masked.
 <!-- /aw:verb doctor -->
+<!-- aw:verb init -->
+- **`init`** — scaffold this repo for the loop: the plugin creates the
+  backlog's status folders, writes a safe-key `.agentic-workflow.json` when
+  none exists (it NEVER overwrites an existing one), and git-excludes the
+  backlog when `ignoreBacklog` is on. Idempotent — a repo already set up
+  reports what was kept and changes nothing. The natural next step its
+  report names is `new <idea>`.
+<!-- /aw:verb init -->
 
 ## The pipeline
 

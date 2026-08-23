@@ -2,12 +2,12 @@
 
 # Agentic loop —— 工程（engineering）工作流程改進計畫
 
-**本頁每一份計畫（01–38）都已實作並測試完成**，存放於共用的
+**本頁每一份計畫（01–40）都已實作並測試完成**，存放於共用的
 `@agentic-workflow/core` 套件（`packages/core/`）中，供 OpenCode 外掛和 Claude
 MCP 伺服器共同使用。這些文件保留作為這些功能的設計紀錄，而非待辦的
 backlog。計畫 10–13 已於 2026-08-02 落地；計畫 14 於 2026-08-03；計畫 15 於
 2026-08-07；計畫 16–18 於 2026-08-08；計畫 24–27 於 2026-08-11；計畫 32 於
-2026-08-17；計畫 33–38 於 2026-08-23。
+2026-08-17；計畫 33–40 於 2026-08-23。
 
 來源：目前的程式碼（所有引用的路徑與函式名稱均已對照撰寫當下的原始碼驗證
 過）、[`../threat-model.md`](../threat-model.md) 中列出的殘餘風險，以及
@@ -58,6 +58,9 @@ backlog。計畫 10–13 已於 2026-08-02 落地；計畫 14 於 2026-08-03；�
 | 36 | [Epic 的進度會被回報，收尾也會被主動提出](./36-epic-progress-closeout.zh-TW.md) | Slice set 的 tracking epic 永遠待在 `draft/`，文件寫明的關閉方式（「每個 child 都 ship 後手動 abandon」）沒有任何介面呈現——`epicSiblings` 只有一個消費者（task gate 的 walk）、`shipTask` 不碰 epic、沒人計算 set 的進度。現在 `shipTask` 在移動之後 best-effort 回報整個 set（`Epic <id>: 1/3 slices shipped; still open: …`，最後一片則是 `all N slices shipped — abandon <id> closes the tracker`，`data` 鏡射），`summarizeBacklog` 增加純粹從 `epic:` 連結導出的每-epic `EpicProgress` 列（被清空的 tracker 不產生列；Claude status 免費帶上），`nextActions` 在兩個 host 點名收尾。被 abandon 的 slice 刻意縮小 total——abandon 是文件寫明的縮減範圍方式 | `packages/core/src/workflow/gate.ts` 的 `epicShipOutcome` 與 ship 尾註、`task/store.ts` 的 `EpicProgress`/`epicProgress`/`epics` 鍵與收尾行、`ACTIVE_STATUSES` 改為 export；`gate.test.ts`、`store.test.ts` |
 | 37 | [一個接縫回答「哪些設定生效，為什麼我的沒有」](./37-effective-config-view.zh-TW.md) | repo 層的丟棄邏輯是三個私有函式、往沒人保存的 log 警告一次；沒有 CLI 印出解析後的設定；hub 的「effective」視圖合併原始層，把 loop 忽略的 repo 層 `stageChecks`/`worktreeSetup`/`ado.organization` 顯示為生效；`readRawConfigLayers` 只剝頂層 shell 鍵，文件卻宣稱與 loadConfig 對齊。現在 `droppedRepoKeys`/`sanitizeRepoLayer` 是每個介面共讀的唯一純接縫——`loadConfigWith` 的警告（文字逐字保留）、hub 的 effective/provenance/issues 視圖（回應加上 `droppedRepoKeys`，渲染為「Set here, ignored at runtime」）、`readRawConfigLayers`（現在套用完整丟棄集）、以及兩個 host 的 `doctor config`，回傳 `effectiveConfigReport`：各層路徑、被丟棄的鍵、host 實際載入且經 `maskConfigSecrets` 遮蔽的設定 | `packages/core/src/config-layers.ts` 的 `droppedRepoKeys`/`sanitizeRepoLayer`/`maskConfigSecrets`/`effectiveConfigReport`（`config.ts` 再匯出，其三個丟棄函式刪除）、`packages/hub/src/server/routes/config.ts` + `shared/api.ts` + `web/config/ConfigEditor.tsx` 的 sanitize 合併與 `droppedRepoKeys`、`plugins/opencode/src/workflow/driver.ts` 的 `doctor config` 分支 + `plugins/claude/mcp-server/src/server.ts` `workflow_doctor` 的 `config` 輸入；`config-layers.test.ts`、`config.test.ts` |
 | 38 | [Check admission 的拒絕加入 deny log](./38-check-refusal-telemetry.zh-TW.md) | 設計 29 的遙測只涵蓋 agent 接縫：stage 拒絕的計畫指名 discovered check 只有 warn 行，加上實際計數 `warnings.length` 的 `checksRefused`——parse 問題、拒絕、缺少執行檔混為一談——它要終結的飢餓留著一條無聲接縫。`ResolvedChecks` 增加結構化的 `refused`（每個 `RejectedCheck` 帶著 `command`），兩個 host 在 `resolveStageChecks` 呼叫點寫入 `source: "check"` 的 deny-log 條目（缺席 source 讀為 agent——舊條目不變），`DenyFinding.fromChecks` 讓 doctor 報告寫出「(a plan-discovered check)」，`checksRefused` 只計 admission 拒絕。缺少執行檔刻意不寫——那是環境事實，任何 allowlist 修改都答不了 | `packages/core/src/workflow/discovered-checks.ts` 的 `refused` 與 `RejectedCheck.command`、`workflow/deny-log.ts` 的 `source`/`fromChecks` 與報告標記、`plugins/opencode/src/workflow/driver.ts` 與 `plugins/claude/mcp-server/src/server.ts` 的條目寫入與誠實指標；`discovered-checks.test.ts`、`deny-log.test.ts` |
+
+| 39 | [`init` 在第一天就搭好一個 repo](./39-init-verb.zh-TW.md) | 沒有任何東西替 repo 做初始設定：狀態資料夾惰性出現、repo 設定要手寫、backlog 的 git-exclude 發生在第一次 claim——對 loop 沒問題，對 onboarding 的人全不可見（installer 刻意不碰 repo）。`initRepo` 建立 `tasksDir` 狀態資料夾、在不存在時寫入只含安全鍵的 `.agentic-workflow.json`、在 `ignoreBacklog` 下跑 claim 路徑同一個 `ensureExcluded`；OpenCode 像 `doctor` 一樣決定性處理，Claude/Qwen 得到 `workflow_init`。可重複執行且絕不覆寫（第二次執行回報 `kept`、不發出寫入——由測試釘住）；骨架只含 `tasksDir` + `maxIterations`，不含任何 shell-bearing 鍵；`tasksDir` 內不放占位檔（`auditBacklog` 會讀成損壞） | `packages/core/src/workflow/init.ts` 的 `initRepo`/`initConfigSkeleton`、`plugins/opencode/src/workflow/driver.ts` 的 `init` arm、`plugins/claude/mcp-server/src/server.ts` 的 `workflow_init`、`prompts/verbs/engineering.md` 的 verb 區塊與各 host 的 hint/router；`init.test.ts` |
+| 40 | [`approve --all` 批次過任務閘門，而且只有任務閘門](./40-approve-all.zh-TW.md) | `new` 產生人類一口氣審完的 slice set——然後閘門讓他們打 N 次 approve（多候選下的裸 `approve` 刻意是 ambiguity 拒絕）。`--all` 在 `parseGateOptions` 解析（每個 host 的 parser 自動繼承；bundled hook 原樣轉發 dash-word）、在 `approveAny` 最先路由、落在 `approveAllTasks`：每份已審閱草稿、依優先序、epic 除外、逐一 `approveTask`——單一草稿的拒絕（secret scan）不停整批、以 `warning` 搭上訊息。構造上只有任務閘門（計畫／出貨保持一次一個——那些需要人真的讀過特定的東西）；`--all` 旁的 id 在解析時被拒；批次結果不帶 `gate`/`id` 鍵，設計 19 的 fail-safe arm 讓兩個 host 的 follow-up 保持安靜，ask 機制零新增 | `packages/core/src/config.ts` 的 `ALL_FLAG` 與解析、`workflow/gate.ts` 的 `approveAllTasks` 與路由、`plugins/claude/mcp-server/src/server.ts` `workflow_approve` 的 `all` 參數與 CLI arm、`plugins/opencode/src/workflow/driver.ts` 的 approve arm、`prompts/verbs/engineering.md` 的旗標條目；`config.test.ts`、`gate.test.ts` |
 
 仍未解決的殘留事項：跨行程的 `index.lock` 競速與遮罩選項。（本清單原本列出的
 另外兩項已經完成——bash 工作樹釘選在 `packages/core/src/workflow/worktree-guard.ts`，

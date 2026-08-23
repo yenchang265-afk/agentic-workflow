@@ -19,6 +19,7 @@ import { effectivePlatformTools, stageDef, stageRequiresCriteria, type LoadedMan
 import { pollOnce } from "@agentic-workflow/core/scheduler/scheduler"
 import { appendSchedulerEvents, skipSetKey, type SchedulerEvent } from "@agentic-workflow/core/scheduler/events-log"
 import { aggregateDenials, appendDenyEntry, clearDenyLog, formatDenyFindings, readDenyLog } from "@agentic-workflow/core/workflow/deny-log"
+import { initRepo } from "@agentic-workflow/core/workflow/init"
 import {
   buildEntryState,
   buildWorkSources,
@@ -2446,6 +2447,20 @@ server.registerTool(
 )
 
 server.registerTool(
+  "workflow_init",
+  {
+    description:
+      "/agentic-workflow:engineering init — scaffold this repo for the backlog loop: create the tasksDir status folders, write a safe-key .agentic-workflow.json when none exists (NEVER overwrites an existing one), and git-exclude the backlog when ignoreBacklog is on. Idempotent — re-running reports what already existed and changes nothing.",
+    inputSchema: {},
+  },
+  async () => {
+    await loadCfg()
+    const r = await initRepo(sh, directory, config, log)
+    return ok(r)
+  },
+)
+
+server.registerTool(
   "workflow_doctor",
   {
     description:
@@ -2607,7 +2622,8 @@ server.registerTool(
  */
 const approveTask = (id: string): Promise<GateResult> => coreApproveTask(gateCtx(), id)
 const approvePlan = (id: string): Promise<GateResult> => coreApprovePlan(gateCtx(), id)
-const approveAny = (id: string, publish?: ShipPublish, base?: string, autoPlan?: boolean): Promise<GateResult> => coreApproveAny(gateCtx(), id, "engineering", publish, base, autoPlan)
+const approveAny = (id: string, publish?: ShipPublish, base?: string, autoPlan?: boolean, all?: boolean): Promise<GateResult> =>
+  coreApproveAny(gateCtx(), id, "engineering", publish, base, autoPlan, all)
 const shipAny = (id: string, publish?: ShipPublish, base?: string): Promise<GateResult> => coreShipAny(gateCtx(), id, "engineering", publish, base)
 const replanTask = (id: string, reason: string | undefined, liveTaskId: string | null): Promise<GateResult> =>
   coreReplanTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, reason)
@@ -2844,11 +2860,17 @@ server.registerTool(
         .describe(
           "Task gate only, and only when the user explicitly asked for --auto-plan: when this task's plan later parks, the plan gate is crossed automatically and BUILD follows. Never add it on your own - it removes a human review the user did not choose to skip. A replan or a fresh approve clears it; the ship gate is never automated.",
         ),
+      all: z
+        .boolean()
+        .optional()
+        .describe(
+          "Task gate only, and only when the user explicitly asked for --all: approve EVERY reviewed draft (priority order, tracking epics excluded) instead of one. Never add it on your own - it approves drafts the user may not have read. Takes no id; the plan and ship gates stay one-at-a-time.",
+        ),
     },
   },
-  async ({ id, publish, base, autoPlan }) => {
+  async ({ id, publish, base, autoPlan, all }) => {
     await loadCfg()
-    const r = await approveAny((id ?? "").trim(), publish, base, autoPlan)
+    const r = await approveAny((id ?? "").trim(), publish, base, autoPlan, all)
     return okGate(r)
   },
 )
@@ -3129,7 +3151,7 @@ async function runGate(argv: string[]): Promise<number> {
     }
     // The id comes from the parser's leftovers, never from a fresh scan of
     // `rest`: only the parser knows which bare-looking words it consumed.
-    result = await approveAny(opts.rest[0] ?? "", opts.publish, opts.base, opts.autoPlan)
+    result = await approveAny(opts.rest[0] ?? "", opts.publish, opts.base, opts.autoPlan, opts.all)
   } else if (verb === "reject-any") result = await rejectAny(remainder, readStageTaskId())
   else {
     // Legacy verbs require an explicit id.

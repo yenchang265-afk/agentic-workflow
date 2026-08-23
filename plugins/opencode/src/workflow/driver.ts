@@ -144,6 +144,7 @@ import {
   platformFor,
 } from "@agentic-workflow/core/config"
 import { aggregateDenials, appendDenyEntry, clearDenyLog, formatDenyFindings, readDenyLog } from "@agentic-workflow/core/workflow/deny-log"
+import { initRepo } from "@agentic-workflow/core/workflow/init"
 import { boundedShell } from "../bounded-shell.ts"
 import type { Config } from "../config.ts"
 import { splitVerb } from "../verb.ts"
@@ -3145,7 +3146,7 @@ export const handleApprove = async (deps: Deps, sessionID: string, args: string,
   // parser knows which bare-looking words it already consumed as flag values.
   const id = opts.rest[0] ?? ""
   try {
-    const r = await approveAny(gateCtx(deps, config), id, "engineering", opts.publish, opts.base, opts.autoPlan)
+    const r = await approveAny(gateCtx(deps, config), id, "engineering", opts.publish, opts.base, opts.autoPlan, opts.all)
     // A task gate leaves an obvious next question, and this host DOES get a
     // model turn after a handled verb (impl.ts overrides the command prompt with
     // this outcome). So the outcome carries the ask: nothing else can open a
@@ -3926,7 +3927,7 @@ export const autoAdvanceParkedPlan = async (
 const USAGE =
   `Usage: ${ECMD} new <idea> · retask <id> [note] · approve [id] [--base=<branch>] [--pr|--push|--local] · replan [id] [reason] · ` +
   "abandon <id> [reason] · remove <id> --force · plan <id> · " +
-  "claim [id] · watch [interval] · unwatch · recover <id> · kinds · doctor [fix|config] · stop · status"
+  "claim [id] · watch [interval] · unwatch · recover <id> · kinds · doctor [fix|config] · init · stop · status"
 const kindUsage = (kind: string): string => `Usage: /agentic-workflow:${kind} claim · watch [interval] · unwatch · stop · status`
 
 /**
@@ -4298,6 +4299,17 @@ export const handleCommand = async (
       `Recovering "${task.title}" — check git status/diff for leftovers from the interrupted run; building…`,
       "info",
     )
+  }
+
+  if (verb === "init") {
+    // One-shot scaffolding, deterministic like doctor: folders + a safe-key
+    // repo config, create-if-absent only. Nothing to spawn, nothing to ask.
+    try {
+      const r = await initRepo(deps.$, deps.directory, config, deps.log)
+      return report(client, r.message, "success")
+    } catch (err) {
+      return report(client, `Init failed: ${(err as Error).message}`, "error")
+    }
   }
 
   if (verb === "doctor") {

@@ -196,6 +196,14 @@
     rubber stamp. The ship gate is never automated. A `replan` clears it (a
     rejected plan's revision parks for review), and so does a later plain
     `approve` on the same draft.
+  - **`--all` batches the TASK gate alone.** Every reviewed draft is approved
+    at once (priority order, tracking epics excluded) — for a slice set the
+    human already read end to end. It takes no id (an id beside it is
+    refused), arms no follow-up ask, and never touches the plan or ship
+    gates: those need a human to have read something specific, one item at a
+    time. Per-draft refusals (e.g. the secret scan) don't stop the batch —
+    they ride the outcome message. On the fallback tool path it is
+    `workflow_approve`'s `all` argument, under the same user-typed-only rule.
 <!-- /aw:verb approve -->
 <!-- aw:verb replan -->
 - **`replan [id] [reason]`** — the sole rejection verb, and it chains the
@@ -329,6 +337,16 @@
     IGNORES (they are honored from the user-scope config only; moving them
     there is the fix to name), and the effective config with secrets masked.
 <!-- /aw:verb doctor -->
+<!-- aw:verb init -->
+- **`init`** — scaffold this repo for the loop: call
+  `mcp__agentic-workflow__workflow_init` and relay its report as given. It
+  creates the backlog's status folders, writes a safe-key
+  `.agentic-workflow.json` when none exists (it NEVER overwrites an existing
+  one — however partial, that file is the human's), and git-excludes the
+  backlog when `ignoreBacklog` is on. Idempotent — a repo already set up
+  reports what was kept and changes nothing. Spawn nothing; the natural next
+  step its report names is `new <idea>`.
+<!-- /aw:verb init -->
 <!-- aw:verb unknown -->
 - **anything else** (including a free-text goal) — do not run it. Show this
   usage instead.

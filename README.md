@@ -222,7 +222,7 @@ task files and `.agentic-workflow.json`) by hand.
   only if you set `ignoreBacklog: false`; the default keeps `docs/tasks/` out of
   git entirely, so prefer `abandon` unless you want the file gone
 - `/agentic-workflow:engineering plan <id>` · `claim [id]` · `watch [trigger]` (OpenCode) ·
-  `unwatch` · `recover <id>` · `stop` · `status` · `doctor [fix|config]` · `kinds` —
+  `unwatch` · `recover <id>` · `stop` · `status` · `doctor [fix|config]` · `init` · `kinds` —
   `plan` runs PLAN on one queued task and parks it, without waiting for a tick;
   `claim` pulls the next item — build-ready `in-progress/` work first, then an
   approved `queued/` task to plan — or, given a task id, runs exactly that

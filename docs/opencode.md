@@ -110,6 +110,14 @@ The loop (`/agentic-workflow:engineering`):
   approved automatically and the BUILD drive follows on the same session
   (`replan` clears it; a later plain `approve` on the draft clears it too;
   the ship gate is never automated)
+- `/agentic-workflow:engineering approve --all` — the task gate over every
+  reviewed draft at once (priority order, tracking epics excluded), for a
+  slice set read end to end; takes no id, and the plan/ship gates stay
+  one-at-a-time
+- `/agentic-workflow:engineering init` — scaffold the repo: create the
+  backlog's status folders, write a safe-key `.agentic-workflow.json` when
+  none exists (never overwrites), and git-exclude the backlog when
+  `ignoreBacklog` is on; idempotent
 - `/agentic-workflow:engineering claim [id]` — one-shot pull. Bare, it claims the
   next item, lowest priority number first: build-ready `in-progress/` work,
   then an approved `queued/` task to plan when no build work is left. With a

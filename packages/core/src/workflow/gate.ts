@@ -1331,7 +1331,10 @@ const completedTaskFor = (ctx: GateCtx, id: string): Promise<string | null> => r
  * never shadowed by a pile of drafts. Tracking epics are skipped in the id-less
  * scan — they are never approvable, so they must not create a false ambiguity.
  */
-export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering", publish?: ShipPublish, base?: string, autoPlan?: boolean): Promise<GateResult> => {
+export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering", publish?: ShipPublish, base?: string, autoPlan?: boolean, all?: boolean): Promise<GateResult> => {
+  // The batch form routes before any single-task resolution: `--all` names no
+  // task, and `parseGateOptions` already refused an id beside it.
+  if (all) return approveAllTasks(ctx, autoPlan)
   const tiers: readonly (readonly TaskStatus[])[] = [["plan-review", "in-review"], ["draft"]]
   const pick = await resolveGateTask(ctx, id, tiers, (t) => isEpicType(t.type))
   if (!pick.ok) {
@@ -1381,6 +1384,62 @@ export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering",
   if (pick.from === "draft") return approveTask(ctx, pick.id, autoPlan)
   if (pick.from === "plan-review") return approvePlan(ctx, pick.id)
   return shipTask(ctx, pick.id, kind, publish, base) // in-review
+}
+
+/** The most refusal lines a batch approve's message carries verbatim. */
+const APPROVE_ALL_REFUSALS_MAX = 5
+
+/**
+ * approve --all: the TASK gate over every reviewed draft at once, priority
+ * order, tracking epics excluded — for the slice-set morning where a human has
+ * read N sibling drafts and does not want to type N approves.
+ *
+ * Task gate ONLY, by construction: it lists `draft/` and calls `approveTask`
+ * per child. The plan and ship gates stay one-at-a-time forever — each needs a
+ * human to have READ something specific (a plan, a diff), and a batch form
+ * there approves documents nobody opened.
+ *
+ * Per-child refusals (the secret scan, an unparseable file) don't stop the
+ * walk: each draft gets its own verdict, approved siblings stay approved, and
+ * the refusals ride the message so a partial batch is legible rather than
+ * silently smaller. No follow-up ask is armed — `data` carries no `id`, so
+ * both hosts' task-gate follow-ups stay quiet (they require one) and the turn
+ * blocks with the summary, which is the fail-safe arm design 19 specifies.
+ */
+export const approveAllTasks = async (ctx: GateCtx, autoPlan?: boolean): Promise<GateResult> => {
+  const { client, directory, config, log } = ctx
+  let drafts: Task[]
+  try {
+    drafts = await listByStatus(client, directory, config.tasksDir, "draft", log)
+  } catch (err) {
+    return { ok: false, message: `Could not list draft/ — ${(err as Error).message}. Nothing was approved.` }
+  }
+  const targets = selectOrder(drafts.filter((t) => !isEpicType(t.type)))
+  if (!targets.length) return { ok: false, message: "No drafts awaiting approval.", variant: "info" }
+  const approved: string[] = []
+  const refusals: string[] = []
+  let lastPath = "" // GateResult's ok arm carries a path; for a batch, the last approved task's
+  for (const t of targets) {
+    const r = await approveTask(ctx, t.id, autoPlan)
+    if (r.ok) {
+      approved.push(t.id)
+      lastPath = r.path
+    } else refusals.push(`${t.id}: ${r.message}`)
+  }
+  const shown = refusals.slice(0, APPROVE_ALL_REFUSALS_MAX)
+  const refusedTail = refusals.length
+    ? ` ${refusals.length} refused — ${shown.join(" · ")}${refusals.length > shown.length ? ` (+${refusals.length - shown.length} more)` : ""}`
+    : ""
+  const head = approved.length
+    ? `Approved ${approved.length} draft${approved.length === 1 ? "" : "s"}: ${approved.join(", ")} — now queued. Plan one with plan <id>, or claim to plan them in priority order.`
+    : "Approved none."
+  const message = `${head}${refusedTail}`
+  // Deliberately NO `gate`/`id` keys: the follow-up machinery is per-task,
+  // and an absent id is what keeps it quiet on both hosts (fail-safe arm).
+  const data = { all: true, approved, ...(refusals.length ? { refused: refusals.length } : {}) }
+  return approved.length > 0
+    ? { ok: true, message, path: lastPath, data, ...(refusals.length ? { variant: "warning" as const } : {}) }
+    : { ok: false, message, data, variant: "warning" }
 }
 
 /** ship shortcut: id optional — ships the single in-review/ task when omitted. */

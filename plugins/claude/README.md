@@ -141,6 +141,11 @@ The loop (`/agentic-workflow:engineering`):
   markers); with `fix` it applies the unambiguous repairs. With `config` it
   reports the effective configuration instead — layer paths, the repo-layer
   keys the runtime ignores, and the config in force with secrets masked.
+- `/agentic-workflow:engineering init` — scaffold the repo: create the backlog's status
+  folders, write a safe-key `.agentic-workflow.json` when none exists (never
+  overwrites), and git-exclude the backlog when `ignoreBacklog` is on;
+  idempotent. `approve --all` batches the task gate over every reviewed
+  draft (epics excluded); the plan/ship gates stay one-at-a-time.
 - `/agentic-workflow:engineering stop` (alias `abort`) — abort the active loop (partial work
   stays on the loop branch).
 

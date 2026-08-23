@@ -92,6 +92,12 @@ FAIL/ERROR 判定，工作階段呼叫 `workflow_blocked`。兩者都會在下�
   加值：為那一個任務削薄計畫閘門——計畫暫存時自動核准，並在同一個
   session 接著 BUILD（`replan` 會清除它；之後對同一份草稿的普通
   `approve` 也會清除；出貨閘門永不自動化）
+- `/agentic-workflow:engineering approve --all`——對每一份已審閱的草稿一次過
+  任務閘門（依優先序，tracking epic 除外），給已從頭讀到尾的 slice set 用；
+  不帶 id，計畫／出貨閘門仍然一次一個
+- `/agentic-workflow:engineering init`——搭建這個 repo：建立 backlog 的狀態
+  資料夾、在不存在時寫入只含安全鍵的 `.agentic-workflow.json`（絕不覆寫）、
+  並在 `ignoreBacklog` 開啟時把 backlog 排除出 git；可重複執行
 - `/agentic-workflow:engineering claim [id]`——一次性拉取。不帶引數時認領下一個
   項目，優先數字最小者優先：先取建置就緒的 `in-progress/` 工作，沒有可建置的
   工作時，再取一個已核准的 `queued/` 任務來規劃。帶任務 id（短雜湊代碼可
