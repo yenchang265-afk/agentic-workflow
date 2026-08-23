@@ -356,18 +356,32 @@ export const taskToInput = (task: Task): TaskInput => ({
 })
 
 /**
- * Top-level frontmatter keys in `content` that `TaskFrontmatterSchema` does not
- * know.
+ * Frontmatter keys in `content` that `TaskFrontmatterSchema` does not know,
+ * dotted for a nested one (`tracker.areaPath`).
  *
  * zod STRIPS unknown keys, so `serializeTask` silently deletes them — harmless
  * when creating a file, destructive when rewriting one a human or a tracker sync
  * put extra fields on. A caller about to rewrite in place screens with this and
  * refuses, turning silent data loss into a visible message naming the keys.
  *
+ * It has to walk INTO the object-valued fields, not just list the top level.
+ * zod strips at every depth, and `tracker` is the one field a tracker sync
+ * actually writes: an ADO pairing carrying `tracker.areaPath` / `tracker.rev`
+ * screened clean, and every rewrite (`retask`'s plan strip, the `--auto-plan`
+ * flag, the hub's task editor) deleted those keys while reporting success —
+ * exactly the silent loss this exists to make visible, one level down from
+ * where it was looking.
+ *
+ * Only object-valued fields the schema DECLARES are descended into: an unknown
+ * top-level key is already reported whole, and naming its children too would
+ * just make the refusal noisier about the same file.
+ *
  * Returns `[]` when the frontmatter is absent or unparseable: there is nothing
  * this can *prove* would be lost, and the caller's own parse already refuses
  * such a file. Pure.
  */
+const NESTED_FRONTMATTER_SHAPES: Readonly<Record<string, z.ZodObject<z.ZodRawShape>>> = { tracker: TaskTrackerSchema }
+
 export const unknownFrontmatterKeys = (content: string): string[] => {
   const match = FRONTMATTER_RE.exec(content)
   if (!match) return []
@@ -383,7 +397,20 @@ export const unknownFrontmatterKeys = (content: string): string[] => {
   }
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return []
   const known = new Set(Object.keys(TaskFrontmatterSchema.shape))
-  return Object.keys(raw as Record<string, unknown>).filter((k) => !known.has(k))
+  const out: string[] = []
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!known.has(key)) {
+      out.push(key)
+      continue
+    }
+    const nested = NESTED_FRONTMATTER_SHAPES[key]
+    if (!nested || value === null || typeof value !== "object" || Array.isArray(value)) continue
+    const nestedKnown = new Set(Object.keys(nested.shape))
+    for (const child of Object.keys(value as Record<string, unknown>)) {
+      if (!nestedKnown.has(child)) out.push(`${key}.${child}`)
+    }
+  }
+  return out
 }
 
 /** A generated task file: its id (unique among `taken`), filename, and content. */

@@ -230,19 +230,48 @@ ado_mcp_token() {
   printf ':%s' "${AZURE_DEVOPS_EXT_PAT:-}" | base64 | tr -d '\n'
 }
 
+# The user-scope config files, in the order core's `resolveUserConfigPath()`
+# consults them: the env override (empty disables the layer outright), then the
+# XDG file, then the legacy dotted one. Hard-coding only the XDG path meant a
+# user whose org lived in `~/.agentic-workflow.json` was read as having none.
+ado_user_config_files() {
+  if [ -n "${AGENTIC_WORKFLOW_USER_CONFIG+x}" ]; then
+    [ -n "$AGENTIC_WORKFLOW_USER_CONFIG" ] && printf '%s\n' "$AGENTIC_WORKFLOW_USER_CONFIG"
+    return 0
+  fi
+  printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/agentic-workflow/agentic-workflow.json"
+  printf '%s\n' "$HOME/.agentic-workflow.json"
+}
+
+# Whether the REPO's config carries an `ado.organization`. Only to explain why
+# it is being ignored — never to use the value. See `ado_org_from_config`.
+ado_org_in_repo_config() {
+  command -v jq >/dev/null 2>&1 || return 1
+  [ -f "$REPO_DIR/.agentic-workflow.json" ] || return 1
+  [ -n "$(jq -r '.ado.organization // empty' "$REPO_DIR/.agentic-workflow.json" 2>/dev/null || true)" ]
+}
+
 # The organization NAME the server takes as its positional argument, read from
-# the configured organization URL (https://dev.azure.com/<org>). Read from the
-# user layer first, then the repo's config; empty when neither has one, in which
-# case registration is skipped and a manual note is printed instead of guessing.
+# the configured organization URL (https://dev.azure.com/<org>). Empty when no
+# user-scope config has one, in which case registration is skipped and a manual
+# note is printed instead of guessing.
+#
+# USER-SCOPE ONLY, and that is the whole point: `ado.organization` is one of
+# core's `ADO_USER_LAYER_ONLY_KEYS`, which `loadConfig` DROPS from a repo's
+# `.agentic-workflow.json` so that "a cloned repo cannot aim your PAT at a host
+# it chooses". Reading it from the repo layer here honoured exactly the key the
+# engine refuses to honour — and did something the engine never does with it:
+# registered an MCP server against it, in the user's global opencode config.
 ado_org_from_config() {
   [ -n "${ADO_ORG:-}" ] && { printf '%s' "$ADO_ORG"; return 0; }
   command -v jq >/dev/null 2>&1 || return 0
   local url="" f
-  for f in "$HOME/.config/agentic-workflow/agentic-workflow.json" "$REPO_DIR/.agentic-workflow.json"; do
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
     [ -f "$f" ] || continue
     url="$(jq -r '.ado.organization // empty' "$f" 2>/dev/null || true)"
     [ -n "$url" ] && break
-  done
+  done < <(ado_user_config_files)
   [ -n "$url" ] || return 0
   printf '%s' "${url%/}" | sed -E 's#.*/([^/]+)$#\1#'
 }
@@ -262,6 +291,11 @@ ensure_ado() {
     ok "Azure DevOps: AZURE_DEVOPS_EXT_PAT is set"
   else
     todo "Azure DevOps: export AZURE_DEVOPS_EXT_PAT=<pat> (Code read + PR contribute), or set ado.pat"
+  fi
+  # Never silent about the ignored repo value: without this, moving the read to
+  # the user layer would look exactly like "ADO registration stopped working".
+  if [ -z "$ADO_ORG" ] && ado_org_in_repo_config; then
+    note_manual "Azure DevOps: .agentic-workflow.json sets ado.organization, which is IGNORED — the engine honours it from your user config only (a cloned repo must not choose where your PAT is sent). Move it to ~/.config/agentic-workflow/agentic-workflow.json and re-run."
   fi
 }
 
@@ -376,14 +410,30 @@ register_mcp_opencode() {
   local tmp; tmp="$(mktemp)"
   # Merge without clobbering existing keys; our entries win only for their names.
   local filter='.mcp = (.mcp // {})'
+  # Every value that comes from OUTSIDE this script travels as a jq ARGUMENT,
+  # never as jq program text. `$pkg` is a constant and is here only so the array
+  # is never empty (`"${jqargs[@]}"` on an empty array is an unbound-variable
+  # error under `set -u` on bash 3.2, which is what macOS ships).
+  local -a jqargs=(--arg pkg "$ADO_MCP_PACKAGE")
   if [ "$WANT_BROWSER" -eq 1 ]; then
     filter="$filter"' | .mcp["chrome-devtools"] = {"type":"local","command":["npx","-y","chrome-devtools-mcp@latest","--isolated"],"enabled":true}'
   fi
   # Same fixed name as the Claude side — the stage prompts hard-code it.
+  #
+  # `$org`/`$pat` are interpolated by JQ, not by the shell. Spliced into the
+  # program text they were a straight injection: the org is read out of a config
+  # file, so a value carrying a `"` closed the string literal and everything
+  # after it parsed AS JQ — and jq comments (`#`) swallow the rest of the line.
+  # That let a config choose any key in the user's global opencode.json,
+  # `.mcp["<anything>"] = {"command":["sh","-c",…]}` included, which opencode
+  # launches on next start. The same splice broke the merge outright for any org
+  # or PAT containing a quote or backslash: jq failed, `2>/dev/null` ate the
+  # parse error, and the user got "edit it by hand".
   if [ "$WANT_ADO" -eq 1 ] && [ -n "$ADO_ORG" ]; then
-    filter="$filter"' | .mcp["azure-devops"] = {"type":"local","command":["npx","-y","'"$ADO_MCP_PACKAGE"'","'"$ADO_ORG"'","-d","repositories","-d","pipelines","-a","pat"],"environment":{"PERSONAL_ACCESS_TOKEN":"'"$(ado_mcp_token)"'"},"enabled":true}'
+    jqargs+=(--arg org "$ADO_ORG" --arg pat "$(ado_mcp_token)")
+    filter="$filter"' | .mcp["azure-devops"] = {"type":"local","command":["npx","-y",$pkg,$org,"-d","repositories","-d","pipelines","-a","pat"],"environment":{"PERSONAL_ACCESS_TOKEN":$pat},"enabled":true}'
   fi
-  if jq "$filter" "$cfg" > "$tmp" 2>/dev/null; then
+  if jq "${jqargs[@]}" "$filter" "$cfg" > "$tmp" 2>/dev/null; then
     mv "$tmp" "$cfg"
     ok "mcp(opencode): merged into $cfg"
   else

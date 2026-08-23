@@ -206,6 +206,36 @@ test("a malformed base branch is a 400, not something gh gets to interpret", asy
   cleanup(dir)
 })
 
+test("an unknown publish mode is a 400 — it must not fall through to the PR arm", async () => {
+  // The third field of this bare cast that decides what leaves the machine, and
+  // the one nobody screened. `shipPublishFor` is `override ?? config`, and
+  // `shipPr` tests `=== "local"` / `=== "push"` with PR as the fall-through — so
+  // an unrecognized mode did not degrade to the repo's `shipPublish`, it took the
+  // MOST side-effectful arm: pushed the branch and opened a PR.
+  const dir = makeRepo()
+  place(dir, "in-review", "ddd6-thing", true)
+  git(dir, "branch", "feature/ddd6-thing")
+
+  const res = await gate(depsFor(dir), "ship", { id: "ddd6-thing", expectStatus: "in-review", publish: "loc al" })
+  assert.equal(res.status, 400)
+  assert.match((res.body as { error: string }).error, /invalid publish mode/)
+  assert.ok(at(dir, "in-review", "ddd6-thing"), "a refused request must not have moved the task")
+  cleanup(dir)
+})
+
+test("an omitted publish mode still reaches core as omitted", async () => {
+  // The complement of the screen above: `undefined` must stay `undefined` so
+  // `shipPublishFor` applies the repo's `shipPublish`, rather than being
+  // normalized to a literal here and silently outranking the config.
+  const dir = makeRepo()
+  place(dir, "in-review", "ddd6-thing", true)
+
+  const res = await gate(depsFor(dir), "ship", { id: "ddd6-thing", expectStatus: "in-review" })
+  assert.equal(res.status, 200)
+  assert.equal((res.body as GateResult).ok, true)
+  cleanup(dir)
+})
+
 test("ship threads the dialog's base branch through to core", async () => {
   const dir = makeRepo()
   place(dir, "in-review", "ddd6-thing", true)
