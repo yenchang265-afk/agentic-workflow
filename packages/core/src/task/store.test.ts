@@ -1723,3 +1723,31 @@ test("unknownFrontmatterKeys names what serializeTask would drop", () => {
   assert.deepEqual(unknownFrontmatterKeys("no frontmatter at all"), [])
   assert.deepEqual(unknownFrontmatterKeys("---\n[: :[ broken\n---\nbody"), [])
 })
+
+/**
+ * zod strips at EVERY depth, so the screen has to look at every depth. `tracker`
+ * is the field this actually bites on: it is the one a tracker sync writes, and
+ * an ADO pairing routinely carries fields the schema never modelled. Screening
+ * only the top level reported "safe to rewrite" and every rewrite deleted them.
+ */
+test("unknownFrontmatterKeys names nested tracker keys serializeTask would drop", () => {
+  const content = ["---", "title: T", "tracker:", "  system: azure-devops", '  key: "1234"', "  areaPath: TeamWeb", "  rev: 7", "---", "body"].join("\n")
+  assert.deepEqual(unknownFrontmatterKeys(content), ["tracker.areaPath", "tracker.rev"])
+  // …and they really would be dropped — this is the loss the screen exists to catch.
+  const rewritten = serializeTask(taskToInput(parseTask("t.md", content, "/r/t.md")))
+  assert.ok(!rewritten.includes("areaPath"), rewritten)
+  assert.ok(!rewritten.includes("rev:"), rewritten)
+})
+
+test("a fully-populated tracker is not reported, and a malformed one is not descended into", () => {
+  const clean = serializeTask({ title: "T", tracker: { system: "jira", key: "P-1", url: "https://x.example/1", parent: "P-0" }, body: "b" })
+  assert.deepEqual(unknownFrontmatterKeys(clean), [])
+  // A scalar/list/null `tracker` has no children to lose; the caller's own parse
+  // is what refuses it. Never throw here — this runs on files that are broken.
+  for (const bad of ["tracker: nonsense", "tracker:\n  - a", "tracker:"]) {
+    assert.deepEqual(unknownFrontmatterKeys(`---\ntitle: T\n${bad}\n---\nbody`), [], bad)
+  }
+  // An UNKNOWN top-level object is reported whole, not child by child: the file
+  // is already refused, and listing its children only makes the refusal noisier.
+  assert.deepEqual(unknownFrontmatterKeys("---\ntitle: T\ncustom:\n  a: 1\n  b: 2\n---\nbody"), ["custom"])
+})
