@@ -78,7 +78,7 @@ import {
 import type { EvidenceContext, EvidenceItem, ObservedEvidence } from "@agentic-workflow/core/workflow/evidence"
 import { renderRunSummary, type Outcome, type StageSample, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
-import { hostStageEvidencePath, hostStageMarkerPath, hostVerdictNagPath, taskDrivenByStageMarker, taskNamedByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
+import { hostStageEvidencePath, hostStageMarkerPath, hostVerdictNagPath, taskDrivenByStageMarker, liveStageMarkers, taskNamedByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
 import { CHECKPOINT_LOCKFILE_EXCLUDES, commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
 import { ensureIsolation, releaseWorktree, rivalHoldsCurrentBranchLock, workflowId } from "@agentic-workflow/core/workflow/isolate"
 import {
@@ -2482,8 +2482,23 @@ server.registerTool(
     const hints = nextActions(summary, "/agentic-workflow:engineering")
     const anomalies = await auditBacklog(fsClient, directory, config.tasksDir)
     const pm = config.projectManagement
+    // Cross-process view: `active` is this server's own loop, so a drive in
+    // another process (an OpenCode watch worker, a second Claude session) read
+    // as `active: null` here — inviting a competing claim/recover that then
+    // bounced off refusals status never foreshadowed. The stage markers are
+    // the same oracle doctor/recover consult; this process's own marker is
+    // filtered by pid so the loop is not reported twice.
+    const elsewhere = (await liveStageMarkers(sh, directory, config.tasksDir)).filter((m) => m.pid !== process.pid)
     return ok({
       active: active ? { stage: active.stage, iteration: active.iteration + 1, task: active.task?.id ?? active.goal } : null,
+      ...(elsewhere.length
+        ? {
+            drivenElsewhere: elsewhere.map(
+              (m) =>
+                `${m.taskId ?? `a ${m.kind} item`} @ ${m.stage} (${m.host}${m.pid !== undefined ? ` pid ${String(m.pid)}` : ""}, stage deadline in ${String(Math.max(0, Math.ceil((m.deadline - Date.now()) / 60_000)))}m) — gate verbs and claim will refuse it while that loop is live`,
+            ),
+          }
+        : {}),
       backlog: summary,
       kinds: kindsReport(),
       ...(hints.length ? { nextActions: hints } : {}),

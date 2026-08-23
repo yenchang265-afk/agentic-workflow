@@ -8,6 +8,7 @@ import {
   clearOpencodeStageMarker,
   hostStageMarkerPath,
   hostVerdictNagPath,
+  liveStageMarkers,
   opencodeMarkerPath,
   opencodeStageMarker,
   STAGE_MARKER_HOSTS,
@@ -155,6 +156,27 @@ test("taskDrivenByStageMarker: live marker names the host; expired deadline or d
   fs.mkdirSync(path.join(dir, "docs/tasks/runs"), { recursive: true })
   fs.writeFileSync(opencodeMarkerPath(dir, "docs/tasks"), "not json")
   assert.equal(await taskDrivenByStageMarker($, dir, "docs/tasks", "f7k3-add-rate-limit", now), null)
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test("liveStageMarkers: reports every LIVE marker with its driving facts, under the same liveness rule", async () => {
+  // The cross-process status witness: a marker that taskDrivenByStageMarker
+  // would call live must appear here with the fields a status line renders,
+  // and a marker it would call dead (expired, dead pid, garbled) must not.
+  const dir = await mkdtemp(path.join(tmpdir(), "stage-marker-live-list-"))
+  const now = 1_000_000
+  const $ = fakeShell()
+  await writeOpencodeStageMarker($, dir, "docs/tasks", opencodeStageMarker(state, now + 60_000))
+
+  const live = await liveStageMarkers($, dir, "docs/tasks", now)
+  assert.deepEqual(live, [
+    { host: "opencode", taskId: "f7k3-add-rate-limit", stage: "build", kind: "engineering", deadline: now + 60_000, pid: process.pid },
+  ])
+  assert.deepEqual(await liveStageMarkers($, dir, "docs/tasks", now + 61_000), [], "an expired marker is not a live drive")
+  assert.deepEqual(await liveStageMarkers(fakeShell(new Set()), dir, "docs/tasks", now), [], "a dead writer pid is not a live drive")
+
+  fs.writeFileSync(opencodeMarkerPath(dir, "docs/tasks"), "not json")
+  assert.deepEqual(await liveStageMarkers($, dir, "docs/tasks", now), [], "a garbled marker degrades to nothing, never a throw")
   fs.rmSync(dir, { recursive: true, force: true })
 })
 
