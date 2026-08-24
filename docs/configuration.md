@@ -675,7 +675,7 @@ Unknown keys under `hub` are rejected (typo safety). See
 
 ### Editing this file from the hub
 
-The hub's **Config tab** reads and writes `.agentic-workflow.json`. Four behaviours
+The hub's **Config tab** reads and writes `.agentic-workflow.json`. Five behaviours
 are worth knowing, because each exists to prevent a specific way of losing data:
 
 - **It edits one layer at a time, and says which.** You pick *This repo* or
