@@ -22,13 +22,13 @@ REVIEW，作用於 docs/tasks 待辦（backlog）。
 **OpenCode**
 
 ```
-/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
+/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | approve --all | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | init | doctor [fix|config] | stop | status
 ```
 
 **Claude Code (MCP)**
 
 ```
-/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim [id] | recover <id> | kinds | doctor [fix] | stop | status
+/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | approve --all | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | recover <id> | kinds | init | doctor [fix|config] | stop | status
 ```
 
 （Claude Code 沒有常駐的 watcher；`claim` 就是一次性的拉取動詞。）
@@ -152,6 +152,25 @@ engineering 迴圈從不會自行推送或
 它——這樣合併決定仍然是你的，
 而「現在去推送並開一個 PR」這個步驟就不需要你親自動手了。
 
+Ship 把關點還帶有一個 diff 輔助資訊：一份已驗證的 `git diff --shortstat`
+會隨完成註記一起，被帶進 `status`、兩種 host 的終結報告，以及管理面板的
+審查卡片——若最後一次 REVIEW 通過，它的建議性發現（那些被刻意排除、不會
+觸發重建的發現）也會一起帶進去，讓核准與否的決定不必對實際改了什麼視而
+不見。
+
+### 切片組（`new` 拆解重大想法）
+
+`new <idea>` 可以把一個龐大的想法拆成多份子草稿，外加一份 `type: epic`
+的追蹤任務，而不是單一草稿。每份子任務都帶有結構化的 `epic: <epic-id>`
+frontmatter 連結，指回追蹤任務——這才是每個懂得切片組的把關點會讀取的
+東西，絕不是內文中給人看的 `Part of epic:` 散文行。任務把關點會讀這個
+連結兩次：省略 id 的 `approve` 若同時有多份草稿待審，會把它們列為待選項
+（並標出各自所屬的 epic，如果有的話）；核准其中一片之後，也會在該次動作
+完成後依優先順序，回報這組切片裡其他仍未核准的手足。`status`／
+`workflow_status` 同樣會回報每個尚未結束的追蹤任務其每個 epic 的切片進度，
+並在所有連結的切片都已出貨後，指出收尾動作（`abandon <epic-id>`）——
+追蹤用的 epic 本身永遠不會被核准、規劃或建置。
+
 ### 誰負責做什麼
 
 | 指令 | 由誰處理 | 子 agent | 寫入權限 | 載入的 skill | 產出 |
@@ -233,10 +252,18 @@ T3/T3b）：
   （一個被 agent 憑空發明的 `run/`）、落在所有狀態資料夾之外的任務檔案，
   以及在多個狀態資料夾中重複出現的同一個 id。會在 session 啟動時（兩種
   基底皆然）、`workflow_status` 中，以及認領時的警告中呈現。
-- **Doctor**（`workflow_doctor` / `/agentic-workflow:engineering doctor [fix]`）：
-  回報巡查結果加上被持有的認領標記；帶上 `fix` 時只會套用明確無歧義的
-  修復——把迷途項目救回 `draft/`（稽核 + 提交）、移除清空後的迷途資料夾、
-  釋放過期的孤兒認領標記。重複項目永遠是人類的決定。
+- **Doctor**（`workflow_doctor` / `/agentic-workflow:engineering doctor [fix|config]`）：
+  回報巡查結果，加上被持有的認領標記、迷途的計畫請求標記（任務已經離開
+  `queued/` 的請求），以及允許清單的拒絕紀錄（deny log）——被拒的 bash
+  指令與能放行它的設定變更；帶上 `fix` 時只會套用明確無歧義的修復——把
+  迷途項目救回 `draft/`（稽核 + 提交）、移除清空後的迷途資料夾、釋放過期的
+  孤兒認領標記、清除迷途的計畫請求、清除已回報的拒絕紀錄。重複項目永遠是
+  人類的決定。`doctor config` 則改為回報有效設定：各層設定檔的路徑、執行期
+  會忽略的 repo 層鍵值，以及遮罩機密後、實際生效的設定內容。
+- **Init**（`workflow_init` / `/agentic-workflow:engineering init`）：在第一天就為 repo
+  搭好骨架——建立待辦的狀態資料夾、在尚未存在設定檔時寫入只含安全鍵值的
+  `.agentic-workflow.json`（絕不覆蓋既有檔案），並在 `ignoreBacklog` 開啟時
+  把待辦從 git 中排除。具冪等性。
 
 watch 租約（每個 clone 一個 watch 模式的行程，橫跨所有類型）只在框架層級
 的 [`docs/architecture.md`](../architecture.md#watch-lease) 中記載一次。

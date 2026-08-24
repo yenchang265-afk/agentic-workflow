@@ -21,13 +21,13 @@ No configuration needed — the engineering loop runs by default. To disable it:
 **OpenCode**
 
 ```
-/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
+/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | approve --all | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | init | doctor [fix|config] | stop | status
 ```
 
 **Claude Code (MCP)**
 
 ```
-/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | recover <id> | kinds | doctor [fix] | stop | status
+/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | approve --all | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | recover <id> | kinds | init | doctor [fix|config] | stop | status
 ```
 
 (Claude Code has no standing watcher; `claim` is the one-shot pull verb.)
@@ -160,6 +160,28 @@ which the done note records on the task; `prBase` and a per-ship
 `--base=<branch>` override it — so the merge decision stays yours while the "now
 go push and open a PR" step doesn't.
 
+The ship gate also carries a diff aid: a validated `git diff --shortstat` of
+the run's work rides the done note (and, when the final REVIEW passed, its
+suggestion findings — the ones deliberately excluded from triggering a
+rebuild) into `status`, the terminal report on both hosts, and the hub's
+review cards, so the decision to approve isn't made blind to what actually
+changed.
+
+### Slice sets (`new` on a heavy idea)
+
+`new <idea>` can split a large idea into sibling child drafts plus a
+`type: epic` tracking task, rather than one draft. Each child carries a
+structured `epic: <epic-id>` frontmatter link back to the tracker — the thing
+every slice-aware gate reads, never the body's human-readable `Part of epic:`
+prose line. The task gate reads that link twice: an id-less `approve` over
+several pending drafts lists them as candidates to disambiguate (naming each
+one's epic, when it has one), and approving one slice reports the set's
+*other* still-open siblings in priority order right after the move.
+`status`/`workflow_status` reports each open tracker's per-epic slice
+progress the same way, naming the close-out move (`abandon <epic-id>`) once
+every linked slice has shipped — a tracking epic is never itself approved,
+planned, or built.
+
 ### Who does what
 
 | Command | Handled by | Subagent | Write access | Skills loaded | Produces |
@@ -255,12 +277,20 @@ backlog (threat model T3/T3b):
   `run/` an agent invented), task files outside every status folder, and one
   id duplicated across status folders. Surfaced at session start (both
   substrates), in `workflow_status`, and as warnings on claims.
-- **Doctor** (`workflow_doctor` / `/agentic-workflow:engineering doctor [fix]`): reports the sweep's
-  findings plus held claim markers and stray plan-request markers (a request
-  whose task has left `queued/`); with `fix` it applies only the
-  unambiguous repairs — rescue strays back to `draft/` (audited + committed),
-  remove emptied stray folders, release stale orphaned claim markers, drop
-  stray plan requests. Duplicates are always a human call.
+- **Doctor** (`workflow_doctor` / `/agentic-workflow:engineering doctor [fix|config]`): reports the sweep's
+  findings plus held claim markers, stray plan-request markers (a request
+  whose task has left `queued/`), and the allowlist deny log — refused bash
+  commands with the config change that would admit each; with `fix` it
+  applies only the unambiguous repairs — rescue strays back to `draft/`
+  (audited + committed), remove emptied stray folders, release stale
+  orphaned claim markers, drop stray plan requests, clear the reported deny
+  log. Duplicates are always a human call. `doctor config` reports the
+  effective configuration instead: the layer file paths, the repo-layer keys
+  the runtime ignores, and the config in force with secrets masked.
+- **Init** (`workflow_init` / `/agentic-workflow:engineering init`): scaffolds a repo on day
+  one — creates the backlog's status folders, writes a safe-key
+  `.agentic-workflow.json` when none exists (never overwrites one), and
+  git-excludes the backlog when `ignoreBacklog` is on. Idempotent.
 
 The watch lease (one watch-mode process per clone, across every kind) is
 documented once, framework-level, in

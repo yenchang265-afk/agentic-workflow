@@ -95,16 +95,32 @@ skill／參考檢查清單符號連結是 git 追蹤的，會保留下來。要�
   把一份暫存的計畫（或以 id 指定、觸發上限的 `in-progress/` 任務）
   送回 `queued/`，原因會被稽核記錄。（也以 `workflow_reject` 這個 MCP
   工具的形式對外開放。）
+- `/agentic-workflow:engineering abandon <id> [reason]` —— 取消一項任務：移到
+  `abandoned/`，也就是「不會再做」的終結資料夾，原因會被稽核記錄。可從
+  任何非終結資料夾執行（已出貨的 `completed/` 任務會被拒絕）。檔案會
+  保留，因此這個動作是可逆的——這是取消任務該用的動詞，也是每個子任務
+  都出貨後、收尾一個追蹤用 epic 的方式。（也以 `workflow_abandon` 對外
+  開放。）
+- `/agentic-workflow:engineering remove <id> --force` —— 硬刪除一項任務：和其他
+  動詞不同，檔案會被刪除而不是移動。單獨的 `remove <id>` 不會刪除任何
+  東西，只會回報該 id 解析到哪一份任務；`--force` 才是確認——這很重要，
+  因為 id 支援前綴解析，打錯字的短代號可能會指到另一份真實存在的任務。
+  只有在待辦有被 git 追蹤時，檔案才會留在 git 歷史裡，而 `ignoreBacklog`
+  預設為 `true`，所以強制刪除通常是永久的——優先使用 `abandon`。（也以
+  `workflow_remove` 對外開放，接受相同的 `force` 參數。）
 
 迴圈本身（`/agentic-workflow:engineering`）：
 
 - `/agentic-workflow:engineering plan <id>` —— 立即為一份已核准的 `queued/`
   任務執行 PLAN 階段：它會寫入計畫、把任務暫存在 `plan-review/`，然後
   迴圈就在那裡結束（驅動的 agent 接著會透過 AskUserQuestion 就地
-  提供把關選項）。從 `plan` 無法到達建置——由 `claim` 驅動建置。
-- `/agentic-workflow:engineering claim` —— 一次性拉取下一個已可建置的
-  `in-progress/` 任務（優先權數字最小的優先；無計畫的 `queued/` 任務
-  絕不會被自動規劃——請用 `plan <id>`）——是 OpenCode 上
+  提供把關選項）。從 `plan` 無法到達建置——`claim <id>` 會立即建置
+  該任務；省略 id 的 `claim` 則依優先順序驅動建置。
+- `/agentic-workflow:engineering claim [id]` —— 一次性拉取。省略 id 時，
+  它會認領下一項工作（優先權數字最小的優先）：已可建置的 `in-progress/`
+  任務優先，沒有建置工作時才輪到一份已核准的 `queued/` 任務去規劃。
+  帶上任務 id 時，會透過 `workflow_start({id})` 立即執行該任務——已可
+  建置就跑 BUILD，否則跑它的 PLAN 階段——是 OpenCode 上
   `/agentic-workflow:engineering watch` 的拉取式對應物；這個 host 上沒有
   常駐的 watch。
 - `/agentic-workflow:engineering status` —— 目前執行中的迴圈，加上一份
@@ -182,9 +198,9 @@ sitter 在 `/agentic-workflow:pr-sitter` 上。
   唯讀 bash 白名單、worktree 固定、階段期限，以及 Azure DevOps 寫入
   攔截；UserPromptSubmit hooks（`gate-command`/`gate-parse`）在 agent
   的回合開始前處理確定性的 `approve` 把關，並注入所呼叫動詞的指示
-  （`verb-slice`）；以及 SessionStart hooks，
-  負責調和被中斷的迴圈，並把設定中的 `ado.pat` 匯出到 session 環境
-  變數中，供 sitter 的 ADO 階段使用。
+  （`verb-slice`）；以及一個 SessionStart hook（`reconcile`），負責調和被
+  中斷的迴圈。Azure DevOps 只透過 Azure DevOps MCP 伺服器存取——PAT 會
+  直接進入該伺服器自己的啟動環境，絕不會進入 agent 的 session 環境。
 - `mcp-server/` —— `agentic-workflow` MCP 伺服器
   （`mcp__agentic-workflow__workflow_*` 工具），重複使用原本的純狀態機，
   並移植了它的 git／待辦／持久化 IO。
@@ -202,7 +218,19 @@ OpenCode 外掛**完全相同**——該 host 最後一個自有欄位
 語法檢查；`workflows.<kind>.trigger` 可以被解析，但在這個
 只能拉取的 host 上是無作用的（`workflow_claim` 仍然是手動觸發方式）；
 已移除的 `gateBeforeBuild`/`interviewBeforePlan` 這兩個欄位會被靜靜
-忽略。
+忽略。`workflows.<kind>.stageModels` 與 `agentModels` 都會在這裡繫結，
+而且都不依賴協調用的模型自己配合：一個 `PreToolUse` hook
+（`hooks/stamp-spawn-model.mjs`）會在工具真正執行前，改寫產生 spawn
+呼叫裡的 `model`。階段模型搭著 MCP 伺服器已經在寫的階段標記走，並以
+agent 為鍵，所以一個重新觸發的階段仍會保持繫結；`agentModels` 則涵蓋
+背後沒有階段的 spawn（`new`／`retask` 裡的起草、以及臨時性的
+`/agentic-workflow:plan`），並直接從設定各層讀取。
+
+有一個 host 限制值得知道：**Claude Code 的 spawn 工具只接受
+`sonnet`、`opus`、`haiku`、`fable` 這幾個模型別名。** 設定成這幾個家族
+裡的一個 id 會自動幫你對應（例如 `anthropic/claude-sonnet-4-5` →
+`sonnet`）；其他任何值都會保持未繫結並附上警告，因為這個工具遇到不
+認得的 `model` 時，是讓整個 spawn 直接失敗，而不是退回預設值。
 
 ## Known limitations
 

@@ -49,7 +49,13 @@ FAIL/ERROR 判定，工作階段呼叫 `workflow_blocked`。兩者都會在下�
 層級 `~/.config/agentic-workflow/agentic-workflow.json`（遵循 `$XDG_CONFIG_HOME`，
 且當此檔案不存在時仍會讀取舊有的 `~/.agentic-workflow.json` 作為後備；
 儲存庫層級優先）之上——見
-[configuration.md](configuration.md)。
+[configuration.md](configuration.md)。一個分趟的檢查階段
+（`stageFanout`／`fanout: "axis"`，或一份視角清單）預設會**同時**跑完
+它的每一趟，各自在自己的手足 session 上，除非
+`workflows.<kind>.stageConcurrency` 另有指示。這兩者都**僅限
+OpenCode**——見 configuration.md 中
+[Workflow kinds](configuration.md#workflow-kinds-workflows) 底下的
+`stageConcurrency` 條目。
 
 ## 指令
 
@@ -81,6 +87,17 @@ FAIL/ERROR 判定，工作階段呼叫 `workflow_blocked`。兩者都會在下�
   動詞：把一份暫存的計畫（或一個觸發上限、以 id 指定的
   `in-progress/` 任務）連同稽核過的原因一起送回 `queued/`；下一次
   PLAN 必須處理這個原因
+- `/agentic-workflow:engineering abandon <id> [reason]`——取消一項任務：移到
+  `abandoned/`，也就是「不會再做」的終結資料夾，原因會被稽核記錄。可從
+  任何非終結資料夾執行（已出貨的 `completed/` 任務會被拒絕）。檔案會
+  保留，因此這個動作是可逆的——這是取消任務該用的動詞，也是每個子任務
+  都出貨後、收尾一個追蹤用 epic 的方式
+- `/agentic-workflow:engineering remove <id> --force`——硬刪除一項任務：和其他
+  動詞不同，檔案會被刪除而不是移動。單獨的 `remove <id>` 不會刪除任何
+  東西，只會回報該 id 解析到哪一份任務；`--force` 才是確認——這很重要，
+  因為 id 支援前綴解析，打錯字的短代號可能會指到另一份真實存在的任務。
+  只有在待辦有被 git 追蹤時，檔案才會留在 git 歷史裡，而 `ignoreBacklog`
+  預設為 `true`，所以強制刪除通常是永久的——優先使用 `abandon`
 
 迴圈本身（`/agentic-workflow:engineering`）：
 
@@ -132,10 +149,10 @@ FAIL/ERROR 判定，工作階段呼叫 `workflow_blocked`。兩者都會在下�
 - `/agentic-workflow:engineering recover <id>`——從狀態快照（或其已持久化
   的計畫）恢復一個提早停止的進行中任務——不論是崩潰/重啟，還是使用者
   **中斷（ESC）**——從它抵達的確切階段接續
-- `/agentic-workflow:engineering kinds`——列出本儲存庫提供的工作流程類型，
-  以及哪些已啟用（`.agentic-workflow.json` 中的
-  `workflows.<kind>.enabled`）；每一個已啟用的類型都有自己的
-  `/agentic-workflow:<kind>` 指令
+- `/agentic-workflow:engineering kinds`——列出本儲存庫提供的工作流程類型與其
+  狀態：`(enabled)` / `(disabled)`，每個 sitter 類型後面都會附上
+  `experimental`。每一個已啟用的類型都有自己的 `/agentic-workflow:<kind>`
+  指令。提示訊息（toast）也會指名目前實際生效的設定檔
 - `/agentic-workflow:engineering stop`（別名 `abort`）——中止、清除狀態
   並退出 watch 模式；**會丟棄快照**（刻意的終結——不像 ESC 暫停，
   沒有東西可以恢復）

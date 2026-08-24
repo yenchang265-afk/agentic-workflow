@@ -188,7 +188,10 @@ pnpm install
 - `/agentic-workflow:engineering approve [id]` —— 唯一的按資料夾驅動的把關點：草稿 → 已排入佇列
   （任務把關）、plan-review → 進行中（計畫把關）、in-review → 已完成
   （發布，在你審查分支 diff 之後）。省略 id 的 `approve` 會推進目前唯一
-  停在迴圈等待點上的任務；兩個等待點都沒有任務時，才退而推進唯一的一份草稿
+  停在迴圈等待點上的任務；兩個等待點都沒有任務時，才退而推進唯一的一份草稿。
+  `approve --all` 會一次對所有已審閱的草稿批次執行任務把關（依優先順序，
+  追蹤用的 epic 除外）——適合一口氣讀完並核准整組切片；計畫把關與發布把關
+  仍然一次只能處理一項
 - `/agentic-workflow:engineering replan [id] [reason]` —— 拒絕動詞：把一份暫存的計畫（或以 id
   指定、觸發了上限的任務）送回 `queued/` 重新規劃
 - `/agentic-workflow:engineering abandon <id> [reason]` —— 取消一項任務：移到 `abandoned/`，
@@ -266,6 +269,9 @@ pnpm install
 - `packages/core/workflows/` —— 宣告式的工作流程類型，每種類型一個目錄
   （`engineering/`、`pr-sitter/`、`review-sitter/`、`dep-sitter/`、
   `main-sitter/`）：每種類型一份 `workflow.json` 清單 + `stages/*.md` 提示詞範本
+- `packages/ado-mcp/` —— `@agentic-workflow/ado-mcp`：Azure DevOps MCP
+  伺服器（`@azure-devops/mcp`）的客戶端——是這個儲存庫裡唯一會接觸
+  Azure DevOps 的地方，並且是透過 core 只依型別編寫的 `AdoGateway` 埠
 - `packages/hub/` —— **管理面板（測試版）**：帶有工作流程監視器和視覺化工作流程建立器的本機 web 應用程式（[packages/hub/README.md](packages/hub/README.md)）
 - `plugins/opencode/src/` —— OpenCode 外掛：host 接線、在
   `session.idle` 上執行引擎的驅動程式、設定擴充
@@ -274,6 +280,9 @@ pnpm install
   自我托管）；`.opencode/skills` 符號連結到 `skills/`
 - `plugins/claude/` —— Claude Code 外掛：指令、agents、hooks，以及驅動
   迴圈的內建 MCP 伺服器（其 host 墊片位於 `mcp-server/src/shim.ts`）
+- `plugins/qwen/` —— Qwen Code 外掛（**實驗性**）：生成出來的
+  agents/verbs/skills/hooks，重複使用 Claude 外掛的 MCP 伺服器，外加手寫的
+  commands（[plugins/qwen/README.md](plugins/qwen/README.md)）
 - `skills/`、`references/` —— 階段 agent 和臨時請求所使用的工作流程庫
   （三個外掛共用）
 - `docs/tasks/` —— `/agentic-workflow:engineering` 各動詞讀取的檔案系統任務待辦

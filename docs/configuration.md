@@ -675,7 +675,7 @@ Unknown keys under `hub` are rejected (typo safety). See
 
 ### Editing this file from the hub
 
-The hub's **Config tab** reads and writes `.agentic-workflow.json`. Four behaviours
+The hub's **Config tab** reads and writes `.agentic-workflow.json`. Five behaviours
 are worth knowing, because each exists to prevent a specific way of losing data:
 
 - **It edits one layer at a time, and says which.** You pick *This repo* or
@@ -688,6 +688,12 @@ are worth knowing, because each exists to prevent a specific way of losing data:
   one your file still carries survives a save untouched. They're listed under
   *Preserved, not editable* — which also means a top-level typo appears there
   instead of vanishing silently.
+- **Repo-file keys the runtime only honors from user scope get their own
+  panel.** Shell-bearing settings and the Azure DevOps destination/credentials
+  are dropped from the repo layer before merging, so the effective view
+  already excludes them; *Set here, ignored at runtime* lists each one so a
+  repo-file setting that silently isn't taking effect has an explanation, not
+  just a mystery.
 - **`ado.pat` never reaches the browser.** It's replaced by a placeholder;
   leaving it untouched keeps the stored value. Writing a PAT into a repo file
   that **isn't gitignored is refused** — prefer `AZURE_DEVOPS_EXT_PAT`.

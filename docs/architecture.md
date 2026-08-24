@@ -127,7 +127,12 @@ The reference kind — the original PLAN / BUILD → VERIFY → REVIEW workflow,
 behavior-identical to when it was hardcoded. Its full pipeline diagram, the
 who-does-what breakdown, and the backlog integrity rails that protect
 `docs/tasks/` now live in their own file:
-**[`docs/workflows/engineering.md`](workflows/engineering.md)**.
+**[`docs/workflows/engineering.md`](workflows/engineering.md)**. That file also
+covers `new`'s slice-set mode (a heavy idea splits into sibling child drafts
+plus a `type: epic` tracker, linked by a structured `epic:` frontmatter key)
+and the ship gate's diff aid (a validated `git diff --shortstat` and a passing
+review's suggestion findings ride the done note into the terminal report and
+the hub's review cards).
 
 Verdicts across every kind are only trusted through the `workflow_verdict` plugin
 tool — a stage agent claiming "PASS" in prose is ignored. `workflow_verdict`

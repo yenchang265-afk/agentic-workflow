@@ -36,7 +36,7 @@ verdict、gate）呼叫內建的 `agentic-workflow` MCP 伺服器，並用 **`ag
 
 | 指令 | 作用 |
 |---|---|
-| `/agentic-workflow:engineering` | engineering 迴圈：`new`、`retask`、`approve`、`replan`、`remove`、`plan`、`claim [id]`、`recover`、`kinds`、`doctor`、`stop`、`status` |
+| `/agentic-workflow:engineering` | engineering 迴圈：`new`、`retask`、`approve`、`approve --all`、`replan`、`abandon`、`remove`、`plan`、`claim [id]`、`recover`、`kinds`、`init`、`doctor [fix\|config]`、`stop`、`status` |
 | `/agentic-workflow:pr-sitter` | PR sitter：`claim [<pr>]`、`status`、`stop` |
 | `/agentic-workflow:review-sitter` | review sitter |
 | `/agentic-workflow:dep-sitter` | 相依套件 sitter（實驗性） |
