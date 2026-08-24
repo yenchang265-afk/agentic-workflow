@@ -121,7 +121,12 @@ flowchart TB
 參考類型——原本的 PLAN / BUILD → VERIFY → REVIEW 工作流程，行為和它
 還是寫死的程式碼時完全一致。它完整的流水線圖、誰做什麼的拆解，以及
 保護 `docs/tasks/` 的待辦完整性防護欄，現在都收在自己的檔案裡：
-**[`docs/workflows/engineering.md`](workflows/engineering.md)**。
+**[`docs/workflows/engineering.md`](workflows/engineering.md)**。該檔案也
+說明了 `new` 的切片組模式（一個重大想法會拆成多份子草稿，外加一份
+`type: epic` 追蹤任務，由結構化的 `epic:` frontmatter 鍵連結）以及 ship
+把關點的 diff 輔助資訊（一份已驗證的 `git diff --shortstat`，加上一次
+通過的 REVIEW 所給的建議性發現，會隨完成註記一起帶進終結報告與管理
+面板的審查卡片）。
 
 跨所有類型的裁定，只透過 `workflow_verdict` 這個外掛工具取信——一個階段
 agent 在文字裡宣稱「PASS」會被忽略。`workflow_verdict` 接受目前作用中

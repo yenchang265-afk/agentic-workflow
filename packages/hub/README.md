@@ -24,7 +24,8 @@ cwd.
 per task waiting on a human, across every enabled backlog kind, longest-waiting
 first, each carrying the evidence a gate decision needs: how long it has waited,
 what the last run did, which stage failed, how much of the iteration budget it
-burned, and what the plan opens with. `GET /api/review`.
+burned, the branch and diffstat of its diff, and what the plan opens with.
+`GET /api/review`.
 
 **Loop monitor** — a board per kind, derived from its manifest: gate columns,
 task cards carrying the human gate moves (approve / replan / ship), and run
@@ -107,7 +108,8 @@ happened. It is in-memory and session-scoped; git remains the durable record.
   up for free. Each row carries the age (derived from the task's own audit
   trail — core stores no timestamps, and an untimestamped task reads "age
   unknown" rather than pretending to be new), the last run's outcome, the stage
-  that failed, iteration burn against the cap, and the opening of the plan. A
+  that failed, iteration burn against the cap, the branch and diffstat of the
+  run's diff (when the done note recorded one), and the opening of the plan. A
   run's id is its task's id, so every row links straight to its run log.
   `GET /api/review`.
 
@@ -300,7 +302,11 @@ happened. It is in-memory and session-scoped; git remains the durable record.
   `ado.pat` into something you may well commit. Keys core's schema doesn't know
   (the `hub` section, a host-only key, a retired one) are preserved and
   listed as preserved, since the editor writes raw JSON rather than a parsed
-  object. Per-kind knobs get advisory warnings — the loop reads them
+  object. Repo-file keys the runtime honors from user-scope only (shell-bearing
+  settings, the ADO destination/credentials) get their own "Set here, ignored
+  at runtime" panel naming each one — the effective view already excludes them,
+  and the panel is how you find out why a repo-file setting isn't taking
+  effect. Per-kind knobs get advisory warnings — the loop reads them
   positionally, so a typo is otherwise silently ignored. Saving reloads the hub;
   so does a hand-edit in `$EDITOR`. See
   [docs/configuration.md](../../docs/configuration.md).

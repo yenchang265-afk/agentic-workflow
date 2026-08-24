@@ -160,6 +160,28 @@ which the done note records on the task; `prBase` and a per-ship
 `--base=<branch>` override it — so the merge decision stays yours while the "now
 go push and open a PR" step doesn't.
 
+The ship gate also carries a diff aid: a validated `git diff --shortstat` of
+the run's work rides the done note (and, when the final REVIEW passed, its
+suggestion findings — the ones deliberately excluded from triggering a
+rebuild) into `status`, the terminal report on both hosts, and the hub's
+review cards, so the decision to approve isn't made blind to what actually
+changed.
+
+### Slice sets (`new` on a heavy idea)
+
+`new <idea>` can split a large idea into sibling child drafts plus a
+`type: epic` tracking task, rather than one draft. Each child carries a
+structured `epic: <epic-id>` frontmatter link back to the tracker — the thing
+every slice-aware gate reads, never the body's human-readable `Part of epic:`
+prose line. The task gate reads that link twice: an id-less `approve` over
+several pending drafts lists them as candidates to disambiguate (naming each
+one's epic, when it has one), and approving one slice reports the set's
+*other* still-open siblings in priority order right after the move.
+`status`/`workflow_status` reports each open tracker's per-epic slice
+progress the same way, naming the close-out move (`abandon <epic-id>`) once
+every linked slice has shipped — a tracking epic is never itself approved,
+planned, or built.
+
 ### Who does what
 
 | Command | Handled by | Subagent | Write access | Skills loaded | Produces |

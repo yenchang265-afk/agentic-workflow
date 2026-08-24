@@ -269,6 +269,9 @@ pnpm install
 - `packages/core/workflows/` —— 宣告式的工作流程類型，每種類型一個目錄
   （`engineering/`、`pr-sitter/`、`review-sitter/`、`dep-sitter/`、
   `main-sitter/`）：每種類型一份 `workflow.json` 清單 + `stages/*.md` 提示詞範本
+- `packages/ado-mcp/` —— `@agentic-workflow/ado-mcp`：Azure DevOps MCP
+  伺服器（`@azure-devops/mcp`）的客戶端——是這個儲存庫裡唯一會接觸
+  Azure DevOps 的地方，並且是透過 core 只依型別編寫的 `AdoGateway` 埠
 - `packages/hub/` —— **管理面板（測試版）**：帶有工作流程監視器和視覺化工作流程建立器的本機 web 應用程式（[packages/hub/README.md](packages/hub/README.md)）
 - `plugins/opencode/src/` —— OpenCode 外掛：host 接線、在
   `session.idle` 上執行引擎的驅動程式、設定擴充
@@ -277,6 +280,9 @@ pnpm install
   自我托管）；`.opencode/skills` 符號連結到 `skills/`
 - `plugins/claude/` —— Claude Code 外掛：指令、agents、hooks，以及驅動
   迴圈的內建 MCP 伺服器（其 host 墊片位於 `mcp-server/src/shim.ts`）
+- `plugins/qwen/` —— Qwen Code 外掛（**實驗性**）：生成出來的
+  agents/verbs/skills/hooks，重複使用 Claude 外掛的 MCP 伺服器，外加手寫的
+  commands（[plugins/qwen/README.md](plugins/qwen/README.md)）
 - `skills/`、`references/` —— 階段 agent 和臨時請求所使用的工作流程庫
   （三個外掛共用）
 - `docs/tasks/` —— `/agentic-workflow:engineering` 各動詞讀取的檔案系統任務待辦
