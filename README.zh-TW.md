@@ -188,7 +188,10 @@ pnpm install
 - `/agentic-workflow:engineering approve [id]` —— 唯一的按資料夾驅動的把關點：草稿 → 已排入佇列
   （任務把關）、plan-review → 進行中（計畫把關）、in-review → 已完成
   （發布，在你審查分支 diff 之後）。省略 id 的 `approve` 會推進目前唯一
-  停在迴圈等待點上的任務；兩個等待點都沒有任務時，才退而推進唯一的一份草稿
+  停在迴圈等待點上的任務；兩個等待點都沒有任務時，才退而推進唯一的一份草稿。
+  `approve --all` 會一次對所有已審閱的草稿批次執行任務把關（依優先順序，
+  追蹤用的 epic 除外）——適合一口氣讀完並核准整組切片；計畫把關與發布把關
+  仍然一次只能處理一項
 - `/agentic-workflow:engineering replan [id] [reason]` —— 拒絕動詞：把一份暫存的計畫（或以 id
   指定、觸發了上限的任務）送回 `queued/` 重新規劃
 - `/agentic-workflow:engineering abandon <id> [reason]` —— 取消一項任務：移到 `abandoned/`，

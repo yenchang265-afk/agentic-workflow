@@ -209,7 +209,9 @@ task files and `.agentic-workflow.json`) by hand.
   (task gate), plan-review → in-progress (plan gate), in-review → completed
   (ship, after you review the branch diff). Id-less `approve` advances the
   single task at a loop wait-gate, falling back to a lone draft when neither
-  gate has anything waiting
+  gate has anything waiting. `approve --all` batches the task gate alone over
+  every reviewed draft at once (priority order, tracking epics excluded) — for
+  a slice set read end to end; the plan and ship gates stay one-at-a-time
 - `/agentic-workflow:engineering replan [id] [reason]` — the rejection verb: a parked plan (or
   a cap-tripped task, by id) back to `queued/` for re-planning
 - `/agentic-workflow:engineering abandon <id> [reason]` — cancel a task: it moves to

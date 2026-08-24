@@ -22,13 +22,13 @@ REVIEW，作用於 docs/tasks 待辦（backlog）。
 **OpenCode**
 
 ```
-/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
+/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | approve --all | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | init | doctor [fix|config] | stop | status
 ```
 
 **Claude Code (MCP)**
 
 ```
-/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim [id] | recover <id> | kinds | doctor [fix] | stop | status
+/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | approve --all | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | recover <id> | kinds | init | doctor [fix|config] | stop | status
 ```
 
 （Claude Code 沒有常駐的 watcher；`claim` 就是一次性的拉取動詞。）
@@ -233,10 +233,18 @@ T3/T3b）：
   （一個被 agent 憑空發明的 `run/`）、落在所有狀態資料夾之外的任務檔案，
   以及在多個狀態資料夾中重複出現的同一個 id。會在 session 啟動時（兩種
   基底皆然）、`workflow_status` 中，以及認領時的警告中呈現。
-- **Doctor**（`workflow_doctor` / `/agentic-workflow:engineering doctor [fix]`）：
-  回報巡查結果加上被持有的認領標記；帶上 `fix` 時只會套用明確無歧義的
-  修復——把迷途項目救回 `draft/`（稽核 + 提交）、移除清空後的迷途資料夾、
-  釋放過期的孤兒認領標記。重複項目永遠是人類的決定。
+- **Doctor**（`workflow_doctor` / `/agentic-workflow:engineering doctor [fix|config]`）：
+  回報巡查結果，加上被持有的認領標記、迷途的計畫請求標記（任務已經離開
+  `queued/` 的請求），以及允許清單的拒絕紀錄（deny log）——被拒的 bash
+  指令與能放行它的設定變更；帶上 `fix` 時只會套用明確無歧義的修復——把
+  迷途項目救回 `draft/`（稽核 + 提交）、移除清空後的迷途資料夾、釋放過期的
+  孤兒認領標記、清除迷途的計畫請求、清除已回報的拒絕紀錄。重複項目永遠是
+  人類的決定。`doctor config` 則改為回報有效設定：各層設定檔的路徑、執行期
+  會忽略的 repo 層鍵值，以及遮罩機密後、實際生效的設定內容。
+- **Init**（`workflow_init` / `/agentic-workflow:engineering init`）：在第一天就為 repo
+  搭好骨架——建立待辦的狀態資料夾、在尚未存在設定檔時寫入只含安全鍵值的
+  `.agentic-workflow.json`（絕不覆蓋既有檔案），並在 `ignoreBacklog` 開啟時
+  把待辦從 git 中排除。具冪等性。
 
 watch 租約（每個 clone 一個 watch 模式的行程，橫跨所有類型）只在框架層級
 的 [`docs/architecture.md`](../architecture.md#watch-lease) 中記載一次。

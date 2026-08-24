@@ -19,20 +19,27 @@ sections below cover each.
    `prompts/verbs/engineering.md`; the state machine is the diagram below):
    `new <idea>` interviews you into a planless draft; `retask <id>` reshapes a
    planless task in place; `approve [id]` is the one folder-driven forward gate
-   and `replan [id]` the sole rejection; `abandon <id>` is the reversible
-   cancellation (file kept in `abandoned/` — how a tracking epic is closed);
-   `remove <id> --force` hard-deletes from any folder (bare `remove` is a dry
-   run; both refused while a loop drives the task or a claim is held);
-   `claim [id]`, or a `watch [trigger]` worker session (`unwatch` reverses it),
-   drives BUILD→VERIFY→REVIEW unattended on plan-approved tasks, falling back
-   to planning an approved `queued/` task (with an id, `claim` runs exactly
-   that task instead of the priority walk); `plan <id>` plans one now — either
-   way PLAN parks the plan in `plan-review/` for your gate and exits;
-   `recover <id>` resumes a run that stopped early (crash or ESC); `stop`/`abort`
-   ends a run outright; `status`, `kinds`, and `doctor [fix]` report the loop +
-   backlog, list enabled kinds, and audit/repair backlog damage (doctor also
-   reports the allowlist deny log — refused bash commands with the config
-   change that would admit each). See the
+   and `replan [id]` the sole rejection; `approve --all` batches the task gate
+   alone over every reviewed draft at once (priority order, tracking epics
+   excluded) — the plan and ship gates stay one-at-a-time; `abandon <id>` is
+   the reversible cancellation (file kept in `abandoned/` — how a tracking
+   epic is closed); `remove <id> --force` hard-deletes from any folder (bare
+   `remove` is a dry run; both refused while a loop drives the task or a claim
+   is held); `claim [id]`, or a `watch [trigger]` worker session (`unwatch`
+   reverses it), drives BUILD→VERIFY→REVIEW unattended on plan-approved tasks,
+   falling back to planning an approved `queued/` task (with an id, `claim`
+   runs exactly that task instead of the priority walk); `plan <id>` plans one
+   now — either way PLAN parks the plan in `plan-review/` for your gate and
+   exits; `recover <id>` resumes a run that stopped early (crash or ESC);
+   `stop`/`abort` ends a run outright; `init` scaffolds a repo on day one (the
+   backlog's status folders, a safe-key `.agentic-workflow.json` when none
+   exists — never overwrites, and git-excluding the backlog when
+   `ignoreBacklog` is on — idempotent); `status`, `kinds`, and `doctor [fix]`
+   report the loop + backlog, list enabled kinds, and audit/repair backlog
+   damage (doctor also reports the allowlist deny log — refused bash commands
+   with the config change that would admit each — and `doctor config` reports
+   the effective configuration instead: layer file paths, the repo-layer keys
+   the runtime ignores, and the config in force with secrets masked). See the
    `workflow-orchestration` skill for the pipeline, gates, and verdict
    contracts, and `task-backlog-management` for driving it from `docs/tasks/`.
    That pipeline is the **engineering workflow kind** — the default of several
