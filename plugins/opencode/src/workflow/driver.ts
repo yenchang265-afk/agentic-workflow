@@ -1102,7 +1102,7 @@ const runStageChecks = async (
   loaded: LoadedManifest,
   state: WorkflowState,
   stage: Stage,
-): Promise<{ state: WorkflowState; source: ChecksSource; ran: number; refused: number; detail: string }> => {
+): Promise<{ state: WorkflowState; source: ChecksSource; ran: number; refused: number; dropped: number; detail: string }> => {
   const dir = workTree(deps, state)
   const { defs, source, warnings, refused } = await resolveStageChecks({
     $: deps.$,
@@ -1136,9 +1136,14 @@ const runStageChecks = async (
     }
   }
   const detail = clampedChecksDetail(warnings)
-  // `refused` counts admission refusals alone — parse issues and missing
-  // binaries stay in `warnings`/`detail`, where they always were.
-  const provenance = { source, ran: defs.length, refused: refused.length, detail }
+  // TWO counts, because two consumers ask different questions and sharing one
+  // number is what made them disagree across hosts. `refused` is the
+  // `checksRefused` METRIC: admission refusals alone, the only class a config
+  // change answers. `dropped` is every command of the fence that did not run —
+  // refusals plus parse issues plus missing binaries — which is what
+  // `checksProvenanceNote` needs to decide whether the commands that ran are
+  // the ones the plan named.
+  const provenance = { source, ran: defs.length, refused: refused.length, dropped: warnings.length, detail }
   // A zero-defs iteration must clear any PRIOR iteration's results for this
   // stage, not merely skip writing new ones — `state` here is the carried-over
   // WorkflowState, and leaving `state.checks[stage]` untouched lets a stale
@@ -2230,7 +2235,10 @@ const driveChain = async (
         stage: step.action.stage,
         source: checked.source,
         ran: checked.ran,
-        refused: checked.refused,
+        // `dropped`, not `refused`: a fence whose command was skipped for a
+        // missing binary is just as much "not what the plan named" as a refused
+        // one, and the note is the only durable record of it. See the parameter.
+        dropped: checked.dropped,
         detail: checked.detail,
         fencePresent: hasChecksFence(step.state.artifacts.plan ?? ""),
         discovering: discoverChecksFor(config, loaded.manifest.kind, stageDef(loaded.manifest, step.action.stage)),
@@ -3312,7 +3320,15 @@ export const armTaskGateAsk = (sessionID: string, data: Record<string, unknown> 
   const id = data ? taskGateId(data) : null
   if (!id) {
     // The plan and ship gates legitimately do not ask; only a MISSING gate is a
-    // defect worth reporting.
+    // defect worth reporting — EXCEPT the batch task gate (`approve --all`),
+    // which names no single task and therefore carries no `gate`/`id` BY
+    // DESIGN (`approveAllTasks`: an absent id is what keeps both hosts' per-task
+    // follow-ups quiet). Without this arm every successful batch approve told
+    // the user their core dist was stale and to run `pnpm install` — a wrong
+    // instruction, which is the one thing a diagnostic must never be. `data.all`
+    // is the batch's own marker, so a core dist too old to set it falls through
+    // to the stale-dist warning, i.e. to the behaviour that predates the batch.
+    if (data?.all === true) return ""
     if (data?.gate === undefined) {
       void log(
         "warn",

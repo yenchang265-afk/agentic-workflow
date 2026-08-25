@@ -1468,6 +1468,26 @@ test("a gate result with no gate says so, instead of dropping the ask silently",
 })
 
 /**
+ * `approve --all` is the ONE task-gate success that names no task, so it carries
+ * no `gate`/`id` by design — which is exactly the shape the stale-dist warning
+ * above fires on. It told every batch-approving user to run `pnpm install`
+ * against a dist that was perfectly current: a wrong instruction, which is the
+ * one thing a diagnostic must never be.
+ */
+test("a batch approve arms no ask and, unlike a stale dist, says nothing about it", () => {
+  resetAskState()
+  const warnings: string[] = []
+  const log = (level: string, message: string) => void (level === "warn" && warnings.push(message))
+  const batch = { all: true, approved: ["a-1", "b-2"] }
+  assert.equal(armTaskGateAsk("sess-batch", batch, log), "", "a batch names no single task to ask about")
+  assert.deepEqual(warnings, [], "the batch's absent gate is by design, not a stale core dist")
+  // And the stale-dist arm still fires for everything else, so narrowing the
+  // warning did not disarm it.
+  armTaskGateAsk("sess-batch", { approved: true }, log)
+  assert.equal(warnings.length, 1)
+})
+
+/**
  * The fail-OPEN exit, which must stay open (a false refusal strands an approved
  * task no verb can plan) but must no longer be silent: "the human said yes" and
  * "we could not tell" produced the same outcome and the same empty log.

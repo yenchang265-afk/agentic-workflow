@@ -28,6 +28,7 @@ import {
  */
 export {
   ADO_USER_LAYER_ONLY_KEYS,
+  ALLOWLIST_WIDENING_KEYS,
   CD_TWIN_PREFIX,
   CONFIG_FILE,
   SHELL_BEARING_WORKFLOW_KEYS,
@@ -1385,7 +1386,9 @@ export const loadConfigWith = async <T>(
     const message =
       d.family === "ado"
         ? `${CONFIG_FILE} sets "${d.path}" — ignored: the Azure DevOps destination and credentials are honored from the user-scope config only, so a cloned repo cannot aim your PAT at a host it chooses. Move it to your user config (~/.agentic-workflow.json).`
-        : `${CONFIG_FILE} sets "${d.path}" — ignored: shell-bearing keys are honored from the user-scope config only. Move it to your user config (~/.agentic-workflow.json).`
+        : d.family === "allowlist"
+          ? `${CONFIG_FILE} sets "${d.path}" — ignored: the stage bash allowlist is widened from the user-scope config only, so a cloned repo cannot grant its own stage agents (or its plan's discovered checks) commands you did not allow. Move it to your user config (~/.agentic-workflow.json).`
+          : `${CONFIG_FILE} sets "${d.path}" — ignored: shell-bearing keys are honored from the user-scope config only. Move it to your user config (~/.agentic-workflow.json).`
     await client.app.log({ body: { service: "agentic-workflow", level: "warn", message } }).catch(() => {
       /* the drop matters, the log is best-effort */
     })

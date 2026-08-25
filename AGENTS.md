@@ -466,6 +466,29 @@ reads neither config nor manifest — and an absent field means no strip, i.e.
 exactly the old behaviour. A rewrite that renames the verb (`cat x` →
 `rtk read x`) is beyond any derivation and stays an extras job.
 
+### The repo layer may not decide what runs — including indirectly
+
+`.agentic-workflow.json` ships with any cloned repo, so `droppedRepoKeys` keeps
+the keys that name shell (`worktreeSetup`, `notifyCommand`,
+`workflows.<kind>.{scannerCommand,stageChecks}`) and the ADO destination out of
+the repo layer. The rule the list keeps failing is that it is not about SHELL —
+it is about AUTHORITY over what executes, and the boundary a repo must not touch
+is the bash allowlist itself. `bashAllowlistExtra` sat outside the drop set for
+exactly that reason and was two executions at once: `stageBashGlobs` stamps it
+onto the Claude stage marker and (through OpenCode's `config` hook) appends it
+AFTER the `"*": deny` sentinel, where last-match-wins makes `["*"]` an
+unrestricted stage shell; and the same composed list is `admissibleChecks`'
+gate, the ONLY cap on the driver-run commands a plan's `agentic-checks` fence
+names — and a plan document is repo content too.
+
+So when adding a top-level config key, ask what it AUTHORISES, not whether its
+value is a command: a key that widens an allowlist, names a tool, or picks the
+directory a write lands in belongs in `ALLOWLIST_WIDENING_KEYS` (or its own
+sibling list) with a warning of its own. `Config` in `state.ts` declares neither
+allowlist key structurally — they are read through `bashAllowlistExtras` /
+`bashAllowlistPrefixes` off an `unknown` — which is part of why they were easy
+to miss; a new key read that way needs its drop decision made deliberately.
+
 ### On the model-driven hosts, the spawn is the protocol's weakest link
 
 OpenCode has a driver, so its loop cannot get out of step with itself. Claude Code
