@@ -6,7 +6,7 @@
 > `codePlatform` 開啟（或重複使用）一個 draft PR——GitHub 或 Azure
 > DevOps。以下的稽核完成語意（人工觸發、附註 + commit、原始 `mv` 依然
 > 可用）不變；PR 建立是在這些語意之上盡力而為（best-effort）——push/PR
-> 失敗絕不會阻擋或回滾這次移動。詳見 `packages/core/src/loop/ship-pr.ts`。
+> 失敗絕不會阻擋或回滾這次移動。詳見 `packages/core/src/workflow/ship-pr.ts`。
 
 ## Context
 

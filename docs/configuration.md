@@ -129,8 +129,10 @@ Its first question is the **scope** — where to write:
   directory), which it prompts for. Per-project settings live here.
 - **user scope** — the shared user-scope file (`$AGENTIC_WORKFLOW_USER_CONFIG`, else
   `~/.config/agentic-workflow/agentic-workflow.json`), read for every repo you drive. Settings shared across
-  repos (the `ado` block, review lenses) belong here; a repo file overrides it
-  field by field (see [Layers & precedence](#layers--precedence) above).
+  repos (review lenses, the tracker) belong here — and the layers above make the
+  `ado` destination/credential keys and the two `bashAllowlist*` keys honored
+  **only** here; a repo file overrides everything else field
+  by field (see [Layers & precedence](#layers--precedence) above).
 
 Force the scope non-interactively with `--user` or `--repo`. It never overwrites
 an existing file and is skipped under piped/CI runs. Other flags: `--no-config`
