@@ -2,11 +2,11 @@
 # Bootstrap ALL dependencies the agentic-workflow needs, then run the plugin
 # installer.
 #
-# install.sh installs the *plugins* (npm workspaces + symlinks + the bundled
+# install.sh installs the *plugins* (pnpm workspaces + symlinks + the bundled
 # MCP server) but assumes the system prerequisites already exist. This script
-# fills that gap: it verifies/installs the system CLIs (Node 22.13+, git, curl, gh,
-# Chrome), registers the chrome-devtools MCP server the loop's skills expect,
-# and finally delegates to ./install.sh all.
+# fills that gap: it verifies/installs the system CLIs (Node 22.13+, pnpm, git,
+# curl, gh, Chrome), registers the chrome-devtools MCP server the loop's skills
+# expect, and finally delegates to ./install.sh all.
 #
 # Auth is never automated — the script only reminds you to run `gh auth login`
 # and (for Azure DevOps) export AZURE_DEVOPS_EXT_PAT at the end. Re-run any
@@ -36,7 +36,7 @@ Usage:
   ./bootstrap.sh --check-only     # report status of every dependency, change nothing
   ./bootstrap.sh -h | --help
 
-Covers: Node.js >=22.13, git, curl, gh (GitHub CLI), Google Chrome, the
+Covers: Node.js >=22.13, pnpm, git, curl, gh (GitHub CLI), Google Chrome, the
 chrome-devtools MCP server, and the in-repo JS deps (via ./install.sh). Azure
 DevOps needs npx (bundled with Node) to launch the Azure DevOps MCP server,
 plus a PAT (AZURE_DEVOPS_EXT_PAT). Auth steps are printed, never run for you.
@@ -145,6 +145,41 @@ ensure_node() {
     ok "node $(node -v)"
   else
     note_manual "Node install did not yield >= $NODE_VERSION_MIN — check PATH / nvm shadowing"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# pnpm — the package manager the repo PINS
+# ---------------------------------------------------------------------------
+# Not optional and not interchangeable: the root package.json sets
+# `packageManager: pnpm@...` and its preinstall script (`npx only-allow pnpm`)
+# refuses npm outright, so install.sh exits 1 when pnpm is missing rather than
+# falling back. A bootstrap that installed every system CLI and then handed off
+# to an installer that cannot run is the failure this step exists to prevent.
+#
+# Corepack ships with Node >= 16 and is the pinned-version-aware path, so it is
+# tried first; `npm i -g pnpm` is the fallback for a Node built without it.
+ensure_pnpm() {
+  if command -v pnpm >/dev/null 2>&1; then
+    ok "pnpm $(pnpm --version 2>/dev/null)"
+    return 0
+  fi
+  todo "pnpm not found (install.sh requires it — the repo refuses npm at preinstall)"
+  if [ "$CHECK_ONLY" -eq 1 ]; then
+    note_manual "pnpm: corepack enable && corepack prepare pnpm@latest --activate (or npm i -g pnpm)"
+    return 0
+  fi
+  if command -v corepack >/dev/null 2>&1; then
+    corepack enable >/dev/null 2>&1 || true
+    corepack prepare pnpm@latest --activate >/dev/null 2>&1 || true
+  fi
+  if ! command -v pnpm >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+    npm install -g pnpm >/dev/null 2>&1 || true
+  fi
+  if command -v pnpm >/dev/null 2>&1; then
+    ok "pnpm $(pnpm --version 2>/dev/null)"
+  else
+    note_manual "pnpm: corepack enable && corepack prepare pnpm@latest --activate (or npm i -g pnpm)"
   fi
 }
 
@@ -451,6 +486,7 @@ echo
 
 echo "== system CLIs =="
 ensure_node
+ensure_pnpm
 ensure_simple git git git
 ensure_simple curl curl curl
 ensure_gh

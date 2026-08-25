@@ -51,8 +51,9 @@ persuading the agent the check passed.
   tool call is a FAIL. Injected text cannot call tools by itself.
 - **Residual:** an injection that persuades the *agent* to call the tool
   with PASS. Mitigated by the iteration cap, the human diff review after
-  REVIEW, and the loop never pushing. Optionally hardened further by
-  `reviewLenses`: REVIEW runs once per lens and the loop takes the worst
+  REVIEW, and the loop never pushing. Optionally hardened further by lens
+  mode (`stageFanout: {"review": ["security", …]}`, which absorbed the retired
+  top-level `reviewLenses`): REVIEW runs once per lens and the loop takes the worst
   verdict, so a single persuaded reviewer can't flip the outcome — an
   injection would have to survive every lens's independent pass. Residual
   shrinks to N simultaneous persuasions.
@@ -78,7 +79,13 @@ would all have been available to VERIFY/REVIEW.
 - **Control:** VERIFY and REVIEW run under a bash **allowlist** (default
   deny) of inspection and test commands, plus `webfetch: deny`. BUILD keeps
   broad access but only runs after a human approved its plan, on an
-  isolated branch, and never pushes.
+  isolated branch, and never pushes. The allowlist is widenable
+  (`bashAllowlistExtra`, `bashAllowlistPrefix`) but **from the user layer
+  only** — a watched repo's `.agentic-workflow.json` cannot widen it
+  (`ALLOWLIST_WIDENING_KEYS` drops both with a warning at load). That
+  boundary is what makes every other repo-layer drop on this page
+  enforceable: a repo that could grant `"*"` would not need `stageChecks` or
+  `worktreeSetup` to reach a shell.
 - **Residual:** `npm run *` / `make test*` execute repo-defined scripts —
   an attacker who can commit to the repo can run code inside VERIFY. That
   is the same trust you already extend to CI. There is no network egress
@@ -247,12 +254,14 @@ push to any branch, comment anywhere, sometimes merge.
   (`platformAllowlist.github`/`.ado` merged at stage-marker time, so only the
   resolved platform's CLI is admitted), but the OpenCode agent frontmatter is
   static YAML and deliberately carries **both** platforms' globs. PAT at-rest
-  note: besides the env var, the PAT may sit as `ado.pat` in the (gitignored)
-  repo `.agentic-workflow.json` or the user-scope
+  note: besides the env var, the PAT may sit as `ado.pat` in the **user-scope**
   `~/.config/agentic-workflow/agentic-workflow.json` (honoring `$XDG_CONFIG_HOME`,
-  with the legacy `~/.agentic-workflow.json` still read as a fallback) — the
-  user file lives outside every repo so it can never be committed, but it is
-  plaintext on disk; keep it `chmod 600`. The env var wins over both files.
+  with the legacy `~/.agentic-workflow.json` still read as a fallback) — and
+  there only: `ADO_USER_LAYER_ONLY_KEYS` drops `ado.organization`, `ado.pat` and
+  `ado.mcp` from a repo's `.agentic-workflow.json` with a warning, so a repo
+  file can neither supply a credential nor redirect an authenticated request.
+  The user file lives outside every repo so it can never be committed, but it is
+  plaintext on disk; keep it `chmod 600`. The env var wins over the file.
 
 ### T9. Ledger tampering replays or suppresses work
 

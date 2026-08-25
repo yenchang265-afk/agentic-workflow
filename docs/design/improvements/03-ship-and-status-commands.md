@@ -7,7 +7,7 @@ English | [繁體中文](03-ship-and-status-commands.zh-TW.md)
 > The audited-completion semantics below (human-invoked, note + commit,
 > raw `mv` still works) are unchanged; PR creation is best-effort on top of
 > them — a push/PR failure never blocks or rolls back the move. See
-> `packages/core/src/loop/ship-pr.ts`.
+> `packages/core/src/workflow/ship-pr.ts`.
 
 ## Context
 

@@ -47,10 +47,13 @@ into the project the loop will drive (interactive terminals only):
   --repo                          # write config to the project's .agentic-workflow.json (default)
   -y, --yes                       # non-interactive: seed a defaults .agentic-workflow.json, no prompts
 
-Every run (regardless of the above) also seeds a fully-expanded user-scope config
-at ${XDG_CONFIG_HOME:-~/.config}/agentic-workflow/agentic-workflow.json — every
-field at its default, every sitter listed with enabled:false — if one doesn't
-already exist there, so every knob is visible without reading docs/configuration.md.
+Every run (regardless of the above) also seeds a user-scope config at
+${XDG_CONFIG_HOME:-~/.config}/agentic-workflow/agentic-workflow.json — every
+field that HAS a default written at that default, every sitter listed with
+enabled:false — if one doesn't already exist there, so the common knobs are
+visible without reading docs/configuration.md. The keys with no default (ado,
+projectManagement, notifyCommand, worktreeSetup, agentModels, prBase) are left
+out rather than invented; docs/configuration.md documents those.
 Never overwrites an existing file; a pre-XDG ~/.agentic-workflow.json is still read
 as a fallback and left untouched.
 
@@ -708,10 +711,16 @@ ensure_user_defaults() {
 {
   "maxIterations": 3,
   "tasksDir": "docs/tasks",
+  "ignoreBacklog": true,
   "stageTimeoutMinutes": 60,
+  "checkTimeoutMinutes": 10,
   "codePlatform": "github",
+  "shipPublish": "pr",
+  "protectedBranches": [],
   "worktreesDir": ".workflow-worktrees",
   "taskBranch": "feature/",
+  "bashAllowlistExtra": [],
+  "bashAllowlistPrefix": [],
   "workflows": {
     "pr-sitter": { "enabled": false, "query": "is:open author:@me" },
     "review-sitter": { "enabled": false, "query": "is:open review-requested:@me" },
@@ -729,22 +738,30 @@ EOF
       return
     fi
   fi
-  ok "wrote $target_config (user scope, full defaults — shared across every repo you drive)"
-  echo "         Every field has a sane default; edit any of them, or flip a sitter's"
+  ok "wrote $target_config (user scope, defaults — shared across every repo you drive)"
+  echo "         Every field here is at its default; edit any of them, or flip a sitter's"
   echo "         \"enabled\" to true, to change behavior. What's here:"
   echo "           maxIterations (3)                 — cap on verify/review-FAIL re-builds"
   echo "           tasksDir (\"docs/tasks\")           — root of the task backlog"
+  echo "           ignoreBacklog (true)               — keep the backlog out of the repo's git history"
   echo "           stageTimeoutMinutes (60)           — wall-clock cap per stage"
+  echo "           checkTimeoutMinutes (10)           — wall-clock cap per driver-run check command"
   echo "           codePlatform (\"github\")            — or \"ado\" (needs an \"ado\" section)"
+  echo "           shipPublish (\"pr\")                 — what the ship gate publishes: \"pr\"/\"push\"/\"local\""
+  echo "           protectedBranches ([])             — extra refs the loop must never push to"
   echo "           worktreesDir (\".workflow-worktrees\")   — per-task git worktree isolation; false to opt out"
   echo "           taskBranch (\"feature/\")           — work-branch prefix; false to build on your current branch"
+  echo "           bashAllowlistExtra ([])            — extra bash globs for allowlisted stages (user scope only)"
+  echo "           bashAllowlistPrefix ([])           — command prefixes a rewriting proxy adds (user scope only)"
   echo "           workflows.pr-sitter    (off) — watches your own open PRs"
   echo "           workflows.review-sitter (off) — comments on PRs awaiting your review"
   echo "           workflows.dep-sitter   (off) — opens draft PRs for vulnerable/outdated deps"
   echo "           workflows.main-sitter  (off) — opens a draft PR when the default branch's CI goes red"
   echo "         Multi-pass REVIEW is per stage, not global: set"
   echo "           workflows.engineering.stageFanout.review to \"axis\" (one enforced pass per axis)."
-  echo "         See docs/configuration.md for every constraint and the ado/projectManagement sections."
+  echo "         See docs/configuration.md for every constraint, and for the keys with no"
+  echo "         default that are deliberately absent here (ado, projectManagement,"
+  echo "         notifyCommand, notifyEvents, worktreeSetup, agentModels, prBase)."
 }
 
 # Pick a target from the detected hosts when the user didn't name one. Echoes

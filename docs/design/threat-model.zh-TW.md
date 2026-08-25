@@ -47,8 +47,9 @@ agent 該項檢查已經通過。
   正處於該檢查階段之迴圈的 session。逐字稿中的裁定文字僅供診斷用；沒有
   對應的工具呼叫即視為 FAIL。被注入的文字本身無法呼叫工具。
 - **殘餘風險：** 一次成功說服 agent 以 PASS 呼叫工具的注入。透過疊代上限、
-  REVIEW 之後的人工 diff 審查，以及迴圈本身從不推送來緩解。可選擇以
-  `reviewLenses` 進一步強化：REVIEW 會依每個視角（lens）各執行一次，迴圈取
+  REVIEW 之後的人工 diff 審查，以及迴圈本身從不推送來緩解。可選擇以視角模式
+  （`stageFanout: {"review": ["security", …]}`，它吸收了已退役的頂層
+  `reviewLenses`）進一步強化：REVIEW 會依每個視角（lens）各執行一次，迴圈取
   最差的裁定，因此單一個被說服的審查者無法翻轉結果——一次注入必須通過
   每一個視角各自獨立的一輪才行。殘餘風險縮小為需要 N 次同時成功的說服。
 
@@ -71,7 +72,11 @@ agent 該項檢查已經通過。
 - **控制措施：** VERIFY 和 REVIEW 在一份 bash **白名單**（預設拒絕）之下
   執行，僅涵蓋檢查與測試相關指令，並加上 `webfetch: deny`。BUILD 保有較廣
   的存取權，但只會在人類核准其計畫之後、於一個隔離分支上執行，且從不
-  推送。
+  推送。白名單可以被放寬（`bashAllowlistExtra`、`bashAllowlistPrefix`），
+  但**只在使用者層級生效**——被監看的儲存庫自己的 `.agentic-workflow.json`
+  無法放寬它（`ALLOWLIST_WIDENING_KEYS` 會在載入時把兩者連同警告一起丟棄）。
+  這條邊界正是本頁其他所有 repo 層丟棄規則得以成立的基礎：一個能授予 `"*"`
+  的儲存庫，根本不需要 `stageChecks` 或 `worktreeSetup` 就能取得 shell。
 - **殘餘風險：** `npm run *` / `make test*` 會執行儲存庫自行定義的腳本——
   能夠對儲存庫提交（commit）的攻擊者就能在 VERIFY 內執行程式碼。這與你
   原本就已經賦予 CI 的信任程度相同。除了 webfetch 之外沒有網路對外連線
@@ -219,12 +224,14 @@ sitter 是以周遭環境中 `gh` 憑證所能做到的一切權限來執行—�
   （`platformAllowlist.github`/`.ado` 會在階段標記時合併，因此只有解析出
   的那個平台的 CLI 會被允許），但 OpenCode 的 agent frontmatter 是靜態
   YAML，刻意同時攜帶了兩個平台的萬用字元。PAT 靜態存放的說明：除了環境
-  變數之外，PAT 也可能以 `ado.pat` 的形式存放在（已加入 gitignore 的）
-  儲存庫 `.agentic-workflow.json`，或使用者層級的
+  變數之外，PAT 也可能以 `ado.pat` 的形式存放在**使用者層級**的
   `~/.config/agentic-workflow/agentic-workflow.json`（遵循 `$XDG_CONFIG_HOME`，
   且當此檔案不存在時仍會讀取舊有的 `~/.agentic-workflow.json` 作為後備）
-  中——使用者層級的檔案位於所有儲存庫之外，因此絕不會被提交，但它在磁碟
-  上仍是明文；請把它設為 `chmod 600`。環境變數的優先順序高於這兩個檔案。
+  中——而且僅限於此：`ADO_USER_LAYER_ONLY_KEYS` 會把 `ado.organization`、
+  `ado.pat` 與 `ado.mcp` 連同警告一起從儲存庫的 `.agentic-workflow.json`
+  丟棄，因此 repo 層的檔案既不能提供憑證，也不能改寫已驗證請求的目的地。
+  使用者層級的檔案位於所有儲存庫之外，因此絕不會被提交，但它在磁碟
+  上仍是明文；請把它設為 `chmod 600`。環境變數的優先順序高於該檔案。
 
 ### T9. 竄改帳本會重放或壓下該做的工作
 
