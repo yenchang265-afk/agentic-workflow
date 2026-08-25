@@ -84,6 +84,18 @@ postinstall 等級的風險，而且是無聲的。在儲存庫層設定這些�
 警告（指名該鍵，巢狀的兩個還會指名 kind）；同一段落的其他鍵仍然生效，
 使用者層級的同名值也會保留。
 
+**bash 允許清單的兩個鍵也適用同一條規則，理由則再往前推一層**：
+`bashAllowlistExtra` 與 `bashAllowlistPrefix` 只在「使用者層級」生效。兩者
+本身都不是 shell——它們是「授權 shell」的東西。extras 會加進每個有允許清單
+的 stage agent 的授權裡（在 opencode 上是接在產生的 `"*": deny` 哨兵之後，
+而該 host 是最後匹配者勝出），而同一份組合出來的清單，也正是已核可計畫中
+`agentic-checks` 區塊所列、由 driver 直接執行的指令要通過的准入閘門——而計畫
+文件同樣存放在 `<tasksDir>/`，也就是儲存庫內容。因此儲存庫層的
+`"bashAllowlistExtra": ["*"]` 等於在首次認領時執行任意程式碼，而且穿過的正是
+上述規則賴以成立的那道邊界。這兩個鍵描述的是迴圈所在的「機器」（裝在本機的
+專案專用 runner、rtk 之類會改寫指令的 proxy），那正是使用者層級的用途。在
+儲存庫層設定任一個都會被捨棄並發出指名該鍵的警告；檔案中其餘的鍵仍然生效。
+
 依慣例把 `codePlatform` 和 `workflows` 留在儲存庫檔案裡：使用者層級的值
 會悄悄套用到*每一個*儲存庫。如果使用者檔案裡放了 PAT，請保護它
 （`chmod 600 ~/.config/agentic-workflow/agentic-workflow.json`）；`AZURE_DEVOPS_EXT_PAT` 環境
@@ -510,7 +522,9 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 - **`bashAllowlistExtra`**——附加在**每個宣告了允許清單的階段**（檢查階段，
   以及 pr-sitter 的 publish 這類帶允許清單的工作階段）之後的額外 bash
   glob，接在 manifest 自己的 `bashAllowlist` 後面。這是專案／使用者層級的
-  逃生口，用於內建 manifest 不可能預知的環境。你很少需要自己反推 glob：
+  逃生口，用於內建 manifest 不可能預知的環境。**僅限使用者層級**——它放寬的
+  正是其他「僅限使用者層級」規則所倚賴的那道邊界，所以被複製的儲存庫不得設定
+  它（見上方的分層章節）。你很少需要自己反推 glob：
   `/agentic-workflow:engineering doctor` 會從拒絕紀錄回報每一條被拒的指令，
   並附上能放行它的 `bashAllowlistExtra`/`bashAllowlistPrefix` 修改
   （見設計 29）：
@@ -550,7 +564,8 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 
 - **`bashAllowlistPrefix`**——改寫指令的代理程式加在階段真正要跑的指令
   前面的那個前綴。每個前綴都只是把該階段**已經宣告**的 glob 重新表達
-  一次，因此不會授權任何新東西：
+  一次，因此不會授權任何新東西。**僅限使用者層級**，與上面的 extras 相同——
+  proxy 是機器的屬性，不是儲存庫的屬性：
 
   ```json
   {

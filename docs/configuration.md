@@ -87,6 +87,20 @@ drops it with a warning naming the key (and, for the nested two, the kind); the
 rest of that section still applies, and a user-layer value in the same section
 survives.
 
+**The bash-allowlist knobs follow the same rule, for the same reason one step
+removed**: `bashAllowlistExtra` and `bashAllowlistPrefix` are honored from the
+**user layer only**. Neither is shell itself — they are what AUTHORISES shell.
+The extras land in every allowlisted stage agent's grants (on opencode they are
+appended after the generated `"*": deny` sentinel, where last-match-wins), and
+the same composed list is the admission gate for the driver-run commands an
+approved plan's `agentic-checks` block names — and a plan document lives in
+`<tasksDir>/`, i.e. in repo content too. A repo-layer `"bashAllowlistExtra":
+["*"]` was therefore arbitrary code execution on the first claim, through the
+one boundary the rules above are defended by. Both describe the machine the loop
+runs on (a project-specific runner installed here, an rtk-style rewriting proxy),
+which is what the user layer is for. Set either in the repo layer and it is
+dropped with a warning naming the key; every other key in the file still applies.
+
 **The ADO destination and credentials follow the same rule**, for the same
 reason applied to a different asset: `ado.organization`, `ado.pat`,
 `ado.mcp` is honored from the **user
@@ -559,7 +573,10 @@ it. The warnings are advisory: they annotate a save, never block it. See
   declares an allowlist** (check stages, and allowlisted work stages like
   pr-sitter's publish), after the manifest's own `bashAllowlist`. The
   per-project/per-user escape hatch for an environment the shipped manifests
-  cannot know. You rarely have to reverse-engineer the glob yourself:
+  cannot know. **User scope only** — it widens the boundary every other
+  user-layer-only rule is defended by, so a cloned repo must not be able to set
+  it (see the layering section above). You rarely have to reverse-engineer the
+  glob yourself:
   `/agentic-workflow:engineering doctor` reports every denied command from the
   deny log with the exact `bashAllowlistExtra`/`bashAllowlistPrefix` change
   that would admit it (see design 29):
@@ -601,7 +618,9 @@ it. The warnings are advisory: they annotate a save, never block it. See
 
 - **`bashAllowlistPrefix`** — command prefixes a rewriting proxy puts in front
   of the command a stage actually asked for. Each one re-expresses the globs the
-  stage **already declares**, so nothing new is granted:
+  stage **already declares**, so nothing new is granted. **User scope only**,
+  like the extras above — the proxy is a property of the machine, not of the
+  repo:
 
   ```json
   {

@@ -1175,7 +1175,12 @@ const runStageChecks = async (state: WorkflowState, stage: string): Promise<Work
     stage,
     source,
     ran: defs.length,
-    refused: warnings.length,
+    // Every command of the fence that did not run — refusals PLUS parse issues
+    // PLUS missing binaries — which is a different question from the
+    // `checksRefused` metric above (admission refusals alone). They were one
+    // number until the metric was narrowed; keeping this one whole is what
+    // makes the note fire on a partially-dropped fence. See the parameter.
+    dropped: warnings.length,
     detail: info.detail,
     fencePresent: hasChecksFence(state.artifacts.plan ?? ""),
     discovering: discoverChecksFor(config, activeManifest().manifest.kind, stageDef(activeManifest().manifest, stage)),

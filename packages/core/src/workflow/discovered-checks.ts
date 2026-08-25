@@ -600,8 +600,9 @@ export const resolveStageChecks = async (args: {
  * own once-per-run bookkeeping).
  *
  * Two cases speak, both "the outcome would otherwise be silent on disk":
- *  1. The plan carries a fence but its commands are not what ran (refusals, or
- *     config/manifest preempted it) — the pre-existing note, wording preserved.
+ *  1. The plan carries a fence but its commands are not what ran (any dropped
+ *     command — refused, unparseable, or a missing binary — or config/manifest
+ *     preempting the fence) — the pre-existing note, wording preserved.
  *  2. A DISCOVERING stage ran with no fence at all and zero commands. The park
  *     forecast covers this for plans parked after it shipped, but a plan
  *     approved before it — or a config changed between park and run — reaches
@@ -635,14 +636,29 @@ export const checksProvenanceNote = (args: {
   readonly stage: string
   readonly source: ChecksSource
   readonly ran: number
-  readonly refused: number
+  /**
+   * How many of the fence's commands did NOT run — admission refusals, parse
+   * issues and missing binaries alike, i.e. `warnings.length`.
+   *
+   * NOT the `checksRefused` metric, which counts admission refusals alone
+   * (`ResolvedChecks.refused`) because that is the only class a config change
+   * answers. This predicate asks a different question — "are the commands that
+   * ran the ones the plan named?" — and a binary the environment lacks makes
+   * the answer no just as surely as a refusal does. The two were one number
+   * once; when the metric was narrowed, the OpenCode host narrowed this with it
+   * and a partially-dropped fence stopped writing the note the ship gate reads,
+   * while the Claude host kept the old input — so the two hosts wrote different
+   * audit trails for the same run. Named `dropped` so the next narrowing of
+   * `refused` cannot silently claim this parameter too.
+   */
+  readonly dropped: number
   /** Clamped warning summary, "" when none. */
   readonly detail: string
   readonly fencePresent: boolean
   readonly discovering: boolean
 }): string | null => {
-  const { stage, source, ran, refused, detail, fencePresent, discovering } = args
-  if (fencePresent && (source !== "discovered" || refused > 0)) {
+  const { stage, source, ran, dropped, detail, fencePresent, discovering } = args
+  if (fencePresent && (source !== "discovered" || dropped > 0)) {
     return `Discovered checks at ${stage.toUpperCase()}: ${ran} ran${detail ? `; ${detail}` : ` (source: ${source})`}`
   }
   if (discovering && !fencePresent && source === "none") {

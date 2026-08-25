@@ -45,6 +45,7 @@ var mergeConfigLayers = (base, override) => {
 var SHELL_BEARING_KEYS = ["worktreeSetup", "notifyCommand"];
 var SHELL_BEARING_WORKFLOW_KEYS = ["scannerCommand", "stageChecks"];
 var ADO_USER_LAYER_ONLY_KEYS = ["organization", "pat", "mcp"];
+var ALLOWLIST_WIDENING_KEYS = ["bashAllowlistExtra", "bashAllowlistPrefix"];
 var sanitizeRepoLayer = (repoRaw) => {
   if (!isPlainObject(repoRaw))
     return repoRaw;
@@ -54,6 +55,9 @@ var sanitizeRepoLayer = (repoRaw) => {
     return rest;
   };
   for (const key of SHELL_BEARING_KEYS)
+    if (key in out)
+      out = without(out, key);
+  for (const key of ALLOWLIST_WIDENING_KEYS)
     if (key in out)
       out = without(out, key);
   const workflows = out["workflows"];

@@ -174,11 +174,37 @@ export const SHELL_BEARING_WORKFLOW_KEYS = ["scannerCommand", "stageChecks"] as 
  */
 export const ADO_USER_LAYER_ONLY_KEYS = ["organization", "pat", "mcp"] as const
 
+/**
+ * Top-level keys that widen the bash ALLOWLIST — the boundary every other drop
+ * on this list is defended by. The fourth sibling, and the one that made the
+ * other three bypassable: a repo cannot supply `stageChecks` or `worktreeSetup`,
+ * but a repo-layer `bashAllowlistExtra: ["*"]` reaches
+ *
+ *  - `stageBashGlobs`, which stamps the Claude/Qwen stage marker and (via the
+ *    OpenCode `config` hook's `applyBashAllowlistConfig`) appends `"*": allow`
+ *    AFTER the generated `"*": deny` sentinel, where last-match-wins makes the
+ *    stage agent's bash unrestricted; and
+ *  - `resolveStageChecks`, whose `admissibleChecks` gate is the ONLY thing
+ *    capping the driver-run commands a plan document may name — and a plan
+ *    document lives in `<tasksDir>/`, i.e. in repo content, claimable on the
+ *    first watch tick.
+ *
+ * So the pair is arbitrary code execution from a merely-cloned repo, wearing
+ * the name of a config knob. Both describe the MACHINE the loop runs on (a
+ * project-specific runner on this box, an rtk-style rewriting proxy), which is
+ * what the user layer is for — the same argument `worktreeSetup` already
+ * makes. `bashAllowlistPrefix` rides along even though it widens nothing on its
+ * own: it is a repo string spliced in FRONT of the stage's own globs and hopped
+ * off every segment before the write backstops classify it, and there is no
+ * repo-shaped reason to set it.
+ */
+export const ALLOWLIST_WIDENING_KEYS = ["bashAllowlistExtra", "bashAllowlistPrefix"] as const
+
 /** Which drop rule claimed a repo-layer key — decides the warning's wording. */
 export interface DroppedRepoKey {
   /** Dotted path as the config file spells it, e.g. `workflows.engineering.stageChecks`. */
   readonly path: string
-  readonly family: "shell" | "workflowShell" | "ado"
+  readonly family: "shell" | "workflowShell" | "ado" | "allowlist"
 }
 
 /**
@@ -191,6 +217,7 @@ export const droppedRepoKeys = (repoRaw: unknown): DroppedRepoKey[] => {
   if (!isPlainObject(repoRaw)) return []
   const out: DroppedRepoKey[] = []
   for (const key of SHELL_BEARING_KEYS) if (key in repoRaw) out.push({ path: key, family: "shell" })
+  for (const key of ALLOWLIST_WIDENING_KEYS) if (key in repoRaw) out.push({ path: key, family: "allowlist" })
   const workflows = repoRaw["workflows"]
   if (isPlainObject(workflows)) {
     for (const [kind, section] of Object.entries(workflows)) {
@@ -223,6 +250,7 @@ export const sanitizeRepoLayer = (repoRaw: unknown): unknown => {
     return rest
   }
   for (const key of SHELL_BEARING_KEYS) if (key in out) out = without(out, key)
+  for (const key of ALLOWLIST_WIDENING_KEYS) if (key in out) out = without(out, key)
   const workflows = out["workflows"]
   if (isPlainObject(workflows)) {
     const cleaned: Record<string, unknown> = {}

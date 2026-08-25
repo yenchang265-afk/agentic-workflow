@@ -618,7 +618,7 @@ const note = (over: Partial<Parameters<typeof checksProvenanceNote>[0]> = {}) =>
     stage: "verify",
     source: "discovered",
     ran: 2,
-    refused: 0,
+    dropped: 0,
     detail: "",
     fencePresent: true,
     discovering: true,
@@ -632,11 +632,23 @@ test("checksProvenanceNote is silent for the healthy discovered case", () => {
 test("checksProvenanceNote keeps the pre-existing wording for a degraded fence", () => {
   // Refusals under a fence.
   assert.equal(
-    note({ ran: 1, refused: 1, detail: 'discovered check "lint" refused: x' }),
+    note({ ran: 1, dropped: 1, detail: 'discovered check "lint" refused: x' }),
     'Discovered checks at VERIFY: 1 ran; discovered check "lint" refused: x',
   )
   // A fence preempted by config/manifest checks.
   assert.equal(note({ source: "config", ran: 3 }), "Discovered checks at VERIFY: 3 ran (source: config)")
+})
+
+test("checksProvenanceNote speaks for a fence partly dropped by the environment, not only by refusals", () => {
+  // Three commands named, one skipped for a missing binary: the two that ran
+  // are NOT what the plan named, so the ship gate has to see it. `dropped`
+  // counts every warning (refusals + parse issues + missing binaries); the
+  // `checksRefused` metric counts refusals alone, and feeding THAT number here
+  // is what silently stopped this note firing on one host.
+  assert.equal(
+    note({ ran: 2, dropped: 1, detail: 'discovered check "e2e" skipped: "playwright" is not installed here' }),
+    'Discovered checks at VERIFY: 2 ran; discovered check "e2e" skipped: "playwright" is not installed here',
+  )
 })
 
 test("checksProvenanceNote speaks when a discovering stage runs fence-less with zero checks", () => {

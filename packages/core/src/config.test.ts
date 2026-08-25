@@ -18,6 +18,8 @@ import {
   unknownStageCheckKeys,
   unknownStageConcurrencyKeys,
   DEFAULT_CONFIG,
+  bashAllowlistExtras,
+  bashAllowlistPrefixes,
   DEFAULT_ENABLED_KINDS,
   defaultTrackerSystem,
   enabledWorkflowKinds,
@@ -1359,6 +1361,37 @@ test("stageBashGlobs composes base + extras + prefix twins, and keeps an allowli
   // just the extras.
   const unrestricted = { ...stageWith(), name: "build", kind: "work", bashAllowlist: [] } as StageDef
   assert.deepEqual(stageBashGlobs(unrestricted, "github", config), [])
+})
+
+test("loadConfig ignores a repo-layer bashAllowlistExtra/Prefix and warns — the allowlist is the boundary", async () => {
+  // The drop set's whole point is that a merely-cloned repo cannot choose what
+  // the loop executes. `bashAllowlistExtra` is not shell itself, so it slipped
+  // the net — and it AUTHORISES shell in both seams at once: `stageBashGlobs`
+  // stamps the stage agent's grants (on OpenCode as `"*": allow` appended after
+  // the generated `"*": deny` sentinel, where last-match-wins), and the same
+  // list is the admission gate for the driver-run commands a plan document's
+  // `agentic-checks` fence names — and a plan document is repo content too.
+  const warns: string[] = []
+  const client = repoLayerClient({ bashAllowlistExtra: ["*"], bashAllowlistPrefix: ["rtk"], maxIterations: 4 }, warns)
+  const c = await loadConfig(client, "/repo", { userConfigPath: null })
+  // Read through the same helpers the seams use — `Config` declares neither key
+  // structurally, which is exactly why they were easy to forget in the drop set.
+  assert.deepEqual(bashAllowlistExtras(c), [], "a repo cannot widen the allowlist")
+  assert.deepEqual(bashAllowlistPrefixes(c), [])
+  assert.equal(c.maxIterations, 4, "its innocent siblings still apply")
+  assert.ok(warns.some((m) => m.includes("bashAllowlistExtra")))
+  assert.ok(warns.some((m) => m.includes("bashAllowlistPrefix")))
+  const def = { ...stageWith(), name: "verify", kind: "check", bashAllowlist: ["npm test*"] } as StageDef
+  assert.deepEqual(stageBashGlobs(def, "github", c), ["npm test*"], "the stage keeps exactly its manifest grants")
+})
+
+test("the user layer still owns bashAllowlistExtra — the drop narrows WHO may set it, not whether it works", async () => {
+  const userPath = tempUserFile(JSON.stringify({ bashAllowlistExtra: ["just ci*"], bashAllowlistPrefix: ["rtk"] }))
+  const c = await loadConfig(repoLayerClient({ bashAllowlistExtra: ["*"] }, []), "/repo", { userConfigPath: userPath })
+  assert.deepEqual(bashAllowlistExtras(c), ["just ci*"], "the repo's value never merges over the user's")
+  const def = { ...stageWith(), name: "verify", kind: "check", bashAllowlist: ["npm test*"] } as StageDef
+  assert.ok(stageBashGlobs(def, "github", c).includes("just ci*"))
+  assert.ok(stageBashGlobs(def, "github", c).includes("rtk npm test*"))
 })
 
 test("discoverChecks is NOT shell-bearing — a repo may set the boolean but never the commands", async () => {
