@@ -128,10 +128,18 @@ const main = async () => {
   const serverJs = process.env.AGENTIC_WORKFLOW_SERVER_JS || path.join(pluginRoot, "mcp-server", "dist", "server.js")
 
   const distExists = fs.existsSync(serverJs)
+  // Bounded: Claude Code kills a hook at its own deadline (60s by default) and
+  // DROPS the whole envelope — the GateResult AND the block — so a slow gate
+  // (cold node start + a commit on a WSL /mnt/c tree) used to end as a silent
+  // double-dispatch: the move had landed, the block was lost, and the model
+  // ran the verb again via MCP. Killing the CLI ourselves 10s earlier keeps
+  // the envelope ours: decideGateOutcome turns ETIMEDOUT into a fail-CLOSED
+  // block naming what to check before retrying.
   const res = distExists
     ? spawnSync("node", [serverJs, ...args], {
         cwd,
         encoding: "utf8",
+        timeout: 50_000,
         env: { ...process.env, AGENTIC_WORKFLOW_DIR: process.env.AGENTIC_WORKFLOW_DIR ?? cwd },
       })
     : {}

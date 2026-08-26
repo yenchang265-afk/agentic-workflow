@@ -287,14 +287,16 @@ happened. It is in-memory and session-scoped; git remains the durable record.
     never `0%`: "no pass recorded a cap" and "no pass tripped the cap" are
     different findings. Passes excluded from a rate are counted and stated.
 
-  Known limits, both stated in the tab's footer rather than hidden:
+  Known limits, stated in the tab's footer rather than hidden:
   the **cache hit rate covers opencode-driven runs only** (the Claude host never
   calls the LLM itself, so it observes no tokens; the transcript-attribution
   fallback the per-run token panel uses is deliberately *not* used here, because
   a ratio of two time-window estimates would disagree with the observed one with
-  no way to reconcile them). And **stage names are not namespaced by kind** — all
-  kinds append to the same flat `runs/`, and a run-log summary does not record
-  its kind, so `build` in engineering and `build` in a sitter tally into one row.
+  no way to reconcile them). Stage rows are namespaced by kind (a sitter's
+  `build` renders as `pr-sitter/build`), with one caveat: **runs recorded before
+  kinds were stamped carry no kind** and tally into the bare engineering rows —
+  the right call for a history that is almost entirely engineering, but a very
+  old sitter run can be misfiled there.
 - **Config**: read and write `.agentic-workflow.json`. It edits **one layer at a
   time** (this repo, or user-scope) and badges every field with where its
   effective value actually comes from — the merged view is never written back,

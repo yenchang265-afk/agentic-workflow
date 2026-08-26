@@ -2247,7 +2247,9 @@ test("approve --auto-plan arms the flag on the queued file (typed-verb path)", a
 })
 
 test("autoAdvanceParkedPlan crosses the plan gate and queues the BUILD drive", async () => {
-  const parked = serializeTask({ title: "Chore", autoPlan: true, body: `${PLAN_HEADING}\n\n1. Step.` })
+  // Contract-clean plan (Verification section present): the caveat guard must
+  // not fire, or the rubber-stamp path this flag exists for stops working.
+  const parked = serializeTask({ title: "Chore", autoPlan: true, body: `${PLAN_HEADING}\n\n1. Step.\n\n### Verification\n\n- criterion → \`npm test\`` })
   const files = { "docs/tasks/plan-review/my-task.md": parked }
   const { client, toasts } = makeClientFS(files)
   const log: string[] = []
@@ -2269,7 +2271,7 @@ test("autoAdvanceParkedPlan crosses the plan gate and queues the BUILD drive", a
  * still the point — the watcher's next tick claims a build-ready task.
  */
 test("autoAdvanceParkedPlan crosses the gate without claiming when it cannot chain", async () => {
-  const parked = serializeTask({ title: "Chore", autoPlan: true, body: `${PLAN_HEADING}\n\n1. Step.` })
+  const parked = serializeTask({ title: "Chore", autoPlan: true, body: `${PLAN_HEADING}\n\n1. Step.\n\n### Verification\n\n- criterion → \`npm test\`` })
   const files = { "docs/tasks/plan-review/my-task.md": parked }
   const { client, toasts } = makeClientFS(files)
   const log: string[] = []
@@ -2284,6 +2286,32 @@ test("autoAdvanceParkedPlan crosses the gate without claiming when it cannot cha
     "no claim marker may be taken for a BUILD nothing will consume",
   )
   assert.match(toasts.map((t) => t.message).join("\n"), /build-ready; the next claim\/watch tick builds it/)
+})
+
+/**
+ * --auto-plan means "skip the question when there is nothing to ask". A plan
+ * the manual gate would have caveated (here: no ### Verification subsection,
+ * so no discovered checks will ever run) must NOT be crossed automatically —
+ * the caveat the human gate shows at decision time would otherwise be seen by
+ * no one, and the cost lands a whole iteration later. The plan stays parked,
+ * the flag stays on the file, and a manual approve still crosses anyway.
+ */
+test("autoAdvanceParkedPlan declines to cross past plan caveats", async () => {
+  const parked = serializeTask({ title: "Chore", autoPlan: true, body: `${PLAN_HEADING}\n\n1. Step.` })
+  const files = { "docs/tasks/plan-review/my-task.md": parked }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  const advanced = await autoAdvanceParkedPlan(deps, "sess-auto-caveat", testConfig, "my-task", { chain: true })
+
+  assert.deepEqual(advanced, { crossed: false, chained: false })
+  assert.ok(!log.some((c) => c.startsWith("mv ")), "no gate move may run past a caveat")
+  assert.ok(!log.some((c) => c.startsWith("mkdir ") && c.includes(".claims")), "no BUILD claim either")
+  const toastText = toasts.map((t) => t.message).join("\n")
+  assert.match(toastText, /stays parked/)
+  assert.match(toastText, /Verification/)
+  assert.match(toastText, /approve my-task/)
 })
 
 /**

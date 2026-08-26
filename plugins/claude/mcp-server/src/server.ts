@@ -78,13 +78,14 @@ import {
 import type { EvidenceContext, EvidenceItem, ObservedEvidence } from "@agentic-workflow/core/workflow/evidence"
 import { renderRunSummary, type Outcome, type StageSample, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
-import { hostStageEvidencePath, hostStageMarkerPath, hostVerdictNagPath, taskDrivenByStageMarker, taskNamedByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
+import { hostStageEvidencePath, hostStageMarkerPath, hostVerdictNagPath, taskDrivenByStageMarker, liveStageMarkers, taskNamedByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
 import { CHECKPOINT_LOCKFILE_EXCLUDES, commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
 import { ensureIsolation, releaseWorktree, rivalHoldsCurrentBranchLock, workflowId } from "@agentic-workflow/core/workflow/isolate"
 import {
   approveAny as coreApproveAny,
   approvePlan as coreApprovePlan,
   approveTask as coreApproveTask,
+  planCaveats,
   findAnyStatus as coreFindAnyStatus,
   rejectAny as coreRejectAny,
   abandonTask as coreAbandonTask,
@@ -954,7 +955,30 @@ const adoGatewayDep = (): { adoGateway?: AdoGateway } => {
   return gateway ? { adoGateway: gateway } : {}
 }
 
-const gateCtx = (): GateCtx => ({ $: sh, client: fsClient, log, directory, config, isDriving: (id) => active?.task?.id === id, ...adoGatewayDep() })
+/**
+ * Per-command cap on the shell a gate verb runs — design 21's bound, extended
+ * to this host (it stopped at OpenCode, and the hang class is host-agnostic: a
+ * gate move on a slow tree left the MCP call `running` forever with the
+ * orchestrator's turn wedged behind it). Generous on purpose: the slowest
+ * legitimate gate command is the ship's `git push` / `gh pr create`, and
+ * cutting one short costs a caveated ship a human can finish by hand — where
+ * NOT capping cost a call that never returned. The shim's `.timeout` kills the
+ * child and resolves exit 124 (`timeout(1)`'s convention), which core reads as
+ * an ordinary failed command: the move still reports, only the best-effort
+ * bookkeeping is skipped. Deliberately NOT applied to the plain `sh`:
+ * checkpoint commits, worktree setup and `runChecks` legitimately run long and
+ * carry their own regime. (No core gate path calls `.timeout` itself, so the
+ * initial cap is never widened; a caller that did would narrow via the shim.)
+ */
+const GATE_SHELL_TIMEOUT_MS = 60_000
+const boundedGateSh: typeof sh = (strings, ...exprs) => {
+  // `.timeout` is optional on the host interface; this shim always ships it,
+  // but degrade to the unbounded call rather than crash if that ever changes.
+  const p = sh(strings, ...exprs)
+  return p.timeout?.(GATE_SHELL_TIMEOUT_MS) ?? p
+}
+
+const gateCtx = (): GateCtx => ({ $: boundedGateSh, client: fsClient, log, directory, config, isDriving: (id) => active?.task?.id === id, ...adoGatewayDep() })
 
 /**
  * The shared terminal context for this host — the ports core's `runTerminal`
@@ -1842,6 +1866,9 @@ server.registerTool(
         iteration: active.iteration,
         ms: Date.now() - lastFireAt,
         startedAt: new Date(lastFireAt).toISOString(),
+        // Same lens attribution as the ordinary arm below — the pass that hung
+        // is precisely the one a metrics reader wants named.
+        ...(armedPass?.stage === stage && armedPass.pass.focus ? { lens: armedPass.pass.focus } : {}),
         ...promptSizeFields(),
       })
       await runTerminal(action)
@@ -2271,6 +2298,26 @@ const runPark = async (
   // ordinary parked descriptor plus the failure, which the human gate handles.
   const parkedTask = await findByIdIn(sh, directory, config.tasksDir, "plan-review", id)
   if (parkedTask?.autoPlan === true) {
+    // --auto-plan means "skip the question when there is nothing to ask". The
+    // manual gate shows these caveats at the exact moment the approval is
+    // still the human's to withhold; crossing past them automatically would
+    // mean the one plan defect whose cost is paid an iteration later (no
+    // ### Verification subsection — so no discovered checks will run) is seen
+    // by NO ONE. Fail toward human review — same shape as the failed-approve
+    // degrade below: the plan stays parked, the flag stays on the file, and a
+    // manual approve still crosses anyway.
+    const caveats = planCaveats(parkedTask)
+    if (caveats.length > 0) {
+      return {
+        action: { kind: "park", message: action.message },
+        path: report.path,
+        gate: { kind: "plan", id },
+        next:
+          `auto-plan declined to cross the plan gate: ${caveats.join("; ")}. ` +
+          `Fall back to the human gate: show the user the plan summary and these caveats, then ask with ${dialect.askTool} — ` +
+          `Approve anyway (workflow_plan_approve("${id}") then workflow_start("${id}")), Replan with a reason (workflow_replan("${id}", reason)), or Park for later.`,
+      }
+    }
     const gateResult = await approvePlan(id)
     if (gateResult.ok) {
       return {
@@ -2440,8 +2487,23 @@ server.registerTool(
     const hints = nextActions(summary, "/agentic-workflow:engineering")
     const anomalies = await auditBacklog(fsClient, directory, config.tasksDir)
     const pm = config.projectManagement
+    // Cross-process view: `active` is this server's own loop, so a drive in
+    // another process (an OpenCode watch worker, a second Claude session) read
+    // as `active: null` here — inviting a competing claim/recover that then
+    // bounced off refusals status never foreshadowed. The stage markers are
+    // the same oracle doctor/recover consult; this process's own marker is
+    // filtered by pid so the loop is not reported twice.
+    const elsewhere = (await liveStageMarkers(sh, directory, config.tasksDir)).filter((m) => m.pid !== process.pid)
     return ok({
       active: active ? { stage: active.stage, iteration: active.iteration + 1, task: active.task?.id ?? active.goal } : null,
+      ...(elsewhere.length
+        ? {
+            drivenElsewhere: elsewhere.map(
+              (m) =>
+                `${m.taskId ?? `a ${m.kind} item`} @ ${m.stage} (${m.host}${m.pid !== undefined ? ` pid ${String(m.pid)}` : ""}, stage deadline in ${String(Math.max(0, Math.ceil((m.deadline - Date.now()) / 60_000)))}m) — gate verbs and claim will refuse it while that loop is live`,
+            ),
+          }
+        : {}),
       backlog: summary,
       kinds: kindsReport(),
       ...(hints.length ? { nextActions: hints } : {}),

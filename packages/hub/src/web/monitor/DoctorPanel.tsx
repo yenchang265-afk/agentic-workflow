@@ -17,7 +17,7 @@ import { useResource } from "../resource.js"
  */
 
 const nonEmpty = (r: DoctorReport): boolean =>
-  r.findings.length > 0 || r.heldClaims.length > 0 || r.strayRequests.length > 0
+  r.findings.length > 0 || r.heldClaims.length > 0 || r.strayRequests.length > 0 || (r.deniedCommands?.length ?? 0) > 0
 
 export const DoctorPanel = () => {
   const { repoId } = useRepo()
@@ -33,10 +33,16 @@ export const DoctorPanel = () => {
   if (!data) return null
   if (!nonEmpty(data) && !result) return <p className="doctor-clean">Backlog is clean — nothing to repair.</p>
 
-  // Only strays and empty dirs and claims and stray requests are auto-fixable;
-  // duplicates never are.
+  // Only strays and empty dirs and claims and stray requests and the deny log
+  // are auto-fixable; duplicates never are. Fixing the deny log means
+  // acknowledging it — the report above carried the aggregate, so the raw log
+  // is cleared instead of re-reported forever (same semantics as the CLI).
   const fixable =
-    data.strayFiles.length + data.unknownDirs.length + data.heldClaims.length + data.strayRequests.length
+    data.strayFiles.length +
+    data.unknownDirs.length +
+    data.heldClaims.length +
+    data.strayRequests.length +
+    (data.deniedCommands?.length ?? 0)
 
   const runFix = async (): Promise<void> => {
     try {
@@ -80,6 +86,20 @@ export const DoctorPanel = () => {
         </p>
       )}
 
+      {data.deniedCommands && data.deniedCommands.length > 0 && (
+        <>
+          <p className="doctor-note">
+            Commands the stage allowlists refused, with the config change that would admit each — repair acknowledges
+            them and clears the log:
+          </p>
+          <ul className="doctor-findings">
+            {data.deniedCommands.map((d) => (
+              <li key={d}>{d}</li>
+            ))}
+          </ul>
+        </>
+      )}
+
       {data.duplicates.length > 0 && (
         <p className="doctor-note doctor-note--warn">
           Duplicate ids never auto-resolved (the hub can’t know which copy is canonical):{" "}
@@ -119,6 +139,7 @@ export const DoctorPanel = () => {
               result.releasedClaims.length ? `released ${result.releasedClaims.length} claim(s)` : "",
               result.revokedRequests.length ? `dropped ${result.revokedRequests.length} stray request(s)` : "",
               result.claimsSkipped ? "claims skipped (watcher live)" : "",
+              result.denyLogCleared ? "deny log cleared" : "",
               result.failed?.length ? `${result.failed.length} left for you` : "",
             ]
               .filter(Boolean)

@@ -921,7 +921,21 @@ test("criteriaIssue rejects a PASS with missing or incomplete criteria, naming t
   assert.match(missing ?? "", /returns 429 over limit/)
   assert.match(missing ?? "", /\{ criterion, pass \}/)
   const partial = criteriaIssue({ verdict: "PASS", criteria: [{ criterion: "returns 429 over limit", pass: true }] }, criteriaCtx())
-  assert.match(partial ?? "", /carried 1 criteria entry/)
+  assert.match(partial ?? "", /carried 1 distinct criteria entry/)
+})
+
+test("criteriaIssue counts DISTINCT entries — duplicates cannot pad coverage", () => {
+  // Two copies of criterion 1 (case/whitespace variants included) is one
+  // criterion accounted for, not two.
+  const padded: VerdictRecord = {
+    verdict: "PASS",
+    criteria: [
+      { criterion: "returns 429 over limit", pass: true },
+      { criterion: "  Returns 429  over limit ", pass: true },
+    ],
+  }
+  const issue = criteriaIssue(padded, criteriaCtx())
+  assert.match(issue ?? "", /carried 1 distinct criteria entry/)
 })
 
 test("criteriaIssue admits a PASS covering every bullet, and ignores blank entries", () => {

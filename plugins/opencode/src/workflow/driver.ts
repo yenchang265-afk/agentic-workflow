@@ -7,6 +7,7 @@ import { type Task } from "@agentic-workflow/core/task/schema"
 import { advance, composePrompt, firstStep, withCheckResults } from "@agentic-workflow/core/workflow/engine"
 import {
   clearOpencodeStageMarker,
+  liveStageMarkers,
   opencodeStageMarker,
   taskDrivenByStageMarker,
   taskNamedByStageMarker,
@@ -88,7 +89,7 @@ import {
 import type { AdoGateway } from "@agentic-workflow/core/source/ado-gateway"
 import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
 import { clearState, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
-import { abandonTask, approveAny, approvePlan, rejectAny, removeTask, retaskTask, type GateCandidate, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
+import { abandonTask, approveAny, approvePlan, planCaveats, rejectAny, removeTask, retaskTask, type GateCandidate, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
 import { runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
@@ -2596,6 +2597,9 @@ const forgetWatching = (sessionID: string): boolean => {
   const was = watching.delete(sessionID)
   stopWatchTimer(sessionID)
   lastSkipReason.delete(sessionID)
+  // Cleared with the reason, or an unwatch → re-watch dedupes its fresh
+  // watch's first skip event against the dead watch's last one.
+  lastSkipEventKey.delete(sessionID)
   watchKindFilter.delete(sessionID)
   return was
 }
@@ -3910,6 +3914,24 @@ export const autoAdvanceParkedPlan = async (
   try {
     const parked = await findByIdIn(deps.$, deps.directory, config.tasksDir, "plan-review", id)
     if (parked?.autoPlan !== true) return { crossed: false, chained: false }
+    // --auto-plan means "skip the question when there is nothing to ask". The
+    // manual gate shows these caveats at the exact moment the approval is
+    // still the human's to withhold; crossing past them automatically would
+    // mean the one plan defect whose cost is paid an iteration later (no
+    // ### Verification subsection — so no discovered checks will run) is seen
+    // by NO ONE. Fail toward human review: the plan stays parked, the flag
+    // stays on the file, and a manual approve still crosses anyway.
+    const caveats = planCaveats(parked)
+    if (caveats.length > 0) {
+      const summary = caveats.join("; ")
+      await deps.log("warn", `auto-plan: declined to auto-approve "${id}" — ${summary}`)
+      void toast(
+        deps.client,
+        `Auto-plan: "${id}" stays parked in plan-review/ — ${summary}. Review the plan, then approve ${id} to cross anyway, or replan ${id} <reason>.`,
+        "warning",
+      )
+      return { crossed: false, chained: false }
+    }
     const r = await approvePlan(gateCtx(deps, config), id)
     if (!r.ok) {
       await deps.log("warn", `auto-plan: could not approve the parked plan for "${id}": ${r.message}`)
@@ -4082,7 +4104,11 @@ export const handleCommand = async (
     return report(client, `Claiming the next ${kind} item — it starts when this turn settles.`, "info")
   }
 
-  if ((verb === "stop" || verb === "abort") && !rest) {
+  // `rest` is deliberately ignored: `stop now`, `stop the loop`, or a pasted
+  // trailing word must still stop — this is the verb a user reaches for when a
+  // loop has run away, and bouncing it to the usage message is hostile exactly
+  // then.
+  if (verb === "stop" || verb === "abort") {
     // EVERY mutation ahead of EVERY await, exactly as `onInterrupt` orders its
     // own. The stage may settle inside any of the awaits below, so the halt has
     // to be visible before the first one — and the pass aborts further down
@@ -4495,17 +4521,29 @@ export const handleCommand = async (
     const cadence = watchTimers.get(sessionID)?.describe
     const kindScope = watchKindFilter.get(sessionID)
     const watchLabel = cadence ? `Watching${kindScope ? ` ${kindScope}` : ""} (${cadence})` : "Watching"
+    // Cross-process view: this arm used to answer from getWorkflow alone, so a
+    // watch worker in another terminal driving task X read as "No active loop"
+    // here — inviting a competing claim that bounced off refusals status never
+    // foreshadowed. The stage markers are the same oracle recover/doctor
+    // consult; our own process's marker is filtered by pid so a status typed
+    // in the driving session doesn't report its own loop twice.
+    const elsewhere = (await liveStageMarkers(deps.$, deps.directory, config.tasksDir)).filter((m) => m.pid !== process.pid)
+    const elsewhereLine = elsewhere.length
+      ? ` · driven elsewhere: ${elsewhere
+          .map((m) => `${m.taskId ?? `a ${m.kind} item`} @ ${m.stage} (${m.host}${m.pid !== undefined ? ` pid ${String(m.pid)}` : ""}, deadline in ${String(Math.max(0, Math.ceil((m.deadline - Date.now()) / 60_000)))}m)`)
+          .join("; ")}`
+      : ""
     if (!state) {
       // Prefer the remembered skip reason over a bare "no claimable task" —
       // it says WHY the watcher isn't picking anything up.
       const why = lastSkipReason.get(sessionID)
       const idle = engineering ? "no claimable task right now." : `no claimable ${kind} item right now.`
       const head = isWatching ? `${watchLabel} — ${why ?? idle}` : "No active loop."
-      return report(client, `${head}${backlogLine}${kindsLine}`, "info")
+      return report(client, `${head}${backlogLine}${elsewhereLine}${kindsLine}`, "info")
     }
     const what = state.task ? `task ${state.task.id}` : state.goal
     const prefix = isWatching ? `${watchLabel}. ` : ""
-    return report(client, `${prefix}Loop: ${state.stage} · iteration ${state.iteration + 1} · ${what}${backlogLine}${kindsLine}`, "info")
+    return report(client, `${prefix}Loop: ${state.stage} · iteration ${state.iteration + 1} · ${what}${backlogLine}${elsewhereLine}${kindsLine}`, "info")
   }
 
   // The loop is a pure executor — there is no free-text mode. Anything

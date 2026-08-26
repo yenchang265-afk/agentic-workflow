@@ -134,8 +134,43 @@ const FENCE_RE = /^[ \t]*```[ \t]*agentic-checks[ \t]*\r?\n([\s\S]*?)^[ \t]*```[
  * 1 and reads as a real test failure) cannot arise from a command that was read
  * rather than assumed. Ordering only — never a table of commands per ecosystem,
  * which would be wrong for every repo it did not anticipate. Pure.
+ *
+ * `allowedGlobs` renders the consumer's actual allowlist patterns into the
+ * instruction. Before it, the block said "each on the VERIFY stage's own bash
+ * allowlist" to an author with no bash and no way to probe — the commands were
+ * judged at admission against a list the author never saw, and the cheapest
+ * fix point (write time) was the only uninstrumented one: a monorepo plan
+ * naming `pnpm --filter web test` in a perfectly readable way was refused an
+ * iteration later behind one warning line. Optional so a config-less caller
+ * (the hub's creator preview) composes byte-identically to before.
  */
-export const checkDiscoveryBlock = (planStage: string, consumer: string): string =>
+
+/** Longest allowlist rendering the discovery block will carry (chars). */
+const MAX_ALLOWLIST_RENDER = 2000
+
+/**
+ * The globs sentence for `checkDiscoveryBlock`, clamped: the engineering
+ * VERIFY allowlist is dozens of patterns, and an unbounded paste would let a
+ * pathological `bashAllowlistExtra` balloon every PLAN prompt. The clamp cuts
+ * whole patterns, never mid-pattern, and names how many were elided.
+ */
+const allowlistSentence = (globs: readonly string[]): string => {
+  const shown: string[] = []
+  let length = 0
+  for (const g of globs) {
+    length += g.length + 4
+    if (length > MAX_ALLOWLIST_RENDER) break
+    shown.push(`\`${g}\``)
+  }
+  const elided = globs.length - shown.length
+  return (
+    `That allowlist's patterns are: ${shown.join(" · ")}${elided > 0 ? ` — and ${elided} more` : ""}. ` +
+    "A command is admitted only if it matches one (a trailing * matches any arguments), so write each command in a shape listed here — " +
+    "the workspace selector, module qualifier, or global flags a monorepo needs must appear where the pattern puts them."
+  )
+}
+
+export const checkDiscoveryBlock = (planStage: string, consumer: string, allowedGlobs?: readonly string[]): string =>
   [
     `CHECK DISCOVERY: inside the \`### Verification\` subsection, the ${planStage} stage's plan SHOULD end with a`,
     // The info string is SPELLED OUT rather than shown as a literal fence. A
@@ -167,6 +202,7 @@ export const checkDiscoveryBlock = (planStage: string, consumer: string): string
     "and stops the server itself — never the serve command.",
     `At most ${MAX_DISCOVERED_CHECKS} commands, each on the ${consumer.toUpperCase()} stage's own bash allowlist —`,
     "anything else is dropped with a warning, and a command whose binary is not installed here is dropped too.",
+    ...(allowedGlobs && allowedGlobs.length ? [allowlistSentence(allowedGlobs)] : []),
     'Add "timeoutMinutes" to a command the project runs long (an integration or e2e suite): the default cap fits a',
     "unit-test run, and one slow command in the list must not force every fast one to share its budget.",
     "Omit the block when you cannot name a command you have verified; the loop then checks as it does today.",
@@ -509,6 +545,34 @@ export const previewDiscoveredChecks = (manifest: WorkflowManifest, config: Conf
     admitted: accepted.length,
     issues: [...issues, ...rejected.map((r) => `discovered check "${r.name}" refused: ${r.reason}`)],
   }
+}
+
+/**
+ * The consumer stage's effective allowlist as the PLAN author should see it:
+ * the manifest's platform-effective globs plus `bashAllowlistExtra`. The
+ * prefix twins (`bashAllowlistPrefix`) are deliberately omitted — admission
+ * tolerates a proxy-prefixed command, but the shapes a plan should WRITE are
+ * the bare ones. Undefined when discovery is not in play: no discovering
+ * stage, or config/manifest checks preempt it (then the fence is never read
+ * and rendering a list would be noise). Kept beside `previewDiscoveredChecks`
+ * so this composition cannot drift from the one admission actually applies.
+ *
+ * `config` optional for the same reason as `discoveringStage`'s: a config-less
+ * caller composes from the manifest alone (default platform, no extras), which
+ * is byte-identical to a default config — the unset-knob pin in engine.test.ts
+ * holds across the pair. Pure.
+ */
+export const discoveryAllowlist = (manifest: WorkflowManifest, config?: Config): readonly string[] | undefined => {
+  if (!Array.isArray(manifest.stages)) return undefined
+  const consumer = discoveringStage(manifest, config)
+  if (!consumer) return undefined
+  const def = manifest.stages.find((s) => s.name === consumer)
+  if (!def) return undefined
+  if ((config && configuredChecks(config, manifest.kind, def)) || def.checks.length) return undefined
+  return [
+    ...effectiveAllowlist(def, config ? platformFor(config, manifest.kind) : "github"),
+    ...(config ? bashAllowlistExtras(config) : []),
+  ]
 }
 
 /** Where a stage's check commands came from. */

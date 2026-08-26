@@ -753,6 +753,36 @@ export const abandonTask = async (ctx: GateCtx, id: string, reason?: string): Pr
   }
 }
 
+/**
+ * The plan-quality caveats the plan gate warns about beside an approval — the
+ * exact list `approvePlan` renders on its success message. Exported for the
+ * auto-plan crossings on both hosts: the human gate shows these at the moment
+ * the approval is still the human's to withhold, so an automatic crossing must
+ * first check that nothing would have been shown. `--auto-plan` means "skip
+ * the question when there is nothing to ask", never "cross whatever the plan
+ * looks like" — a plan with no `### Verification` subsection is precisely the
+ * defect whose cost is paid an iteration later, and the caveat the manual gate
+ * would have put in front of the human is otherwise seen by no one. Pure.
+ */
+export const planCaveats = (task: Task): string[] => {
+  const planText = extractPlan(task) ?? ""
+  return [
+    !hasVerificationSection(planText)
+      ? "the plan has no ### Verification subsection — the acceptance-criteria map is missing and no discovered checks will run"
+      : undefined,
+    planHeadingCount(task.body) > 1
+      ? "the body carries more than one ## Implementation Plan heading — superseded plan text remains in the task's prose"
+      : undefined,
+    // Repeated here rather than left to the park note because the two gates
+    // have different readers: the park suffix is a toast at the moment the plan
+    // lands, and this list is in front of whoever holds the approval. An
+    // unprovable dependency is the one plan defect whose cost is paid a whole
+    // iteration later, in a BUILD that fails on an install rather than on the
+    // work.
+    unverifiedDepsCaveat(planText),
+  ].filter((c): c is string => !!c)
+}
+
 /** approve-plan: a plan-review/ task with an Implementation Plan → in-progress/. */
 export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult> => {
   const { $, directory, config } = ctx
@@ -795,22 +825,7 @@ export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult>
   // would strand the task with no verb better than the replan the human just
   // decided against. The caveats ride the success message the human is reading
   // at the exact moment "approve anyway" is still their call.
-  const planText = extractPlan(task) ?? ""
-  const caveats = [
-    !hasVerificationSection(planText)
-      ? "the plan has no ### Verification subsection — the acceptance-criteria map is missing and no discovered checks will run"
-      : undefined,
-    planHeadingCount(task.body) > 1
-      ? "the body carries more than one ## Implementation Plan heading — superseded plan text remains in the task's prose"
-      : undefined,
-    // Repeated here rather than left to the park note because the two gates
-    // have different readers: the park suffix is a toast at the moment the plan
-    // lands, and this is the message in front of the human at the moment the
-    // approval is still theirs to withhold. An unprovable dependency is the one
-    // plan defect whose cost is paid a whole iteration later, in a BUILD that
-    // fails on an install rather than on the work.
-    unverifiedDepsCaveat(planText),
-  ].filter((c): c is string => !!c)
+  const caveats = planCaveats(task)
   const caveatNote = caveats.length > 0 ? ` Note: ${caveats.join("; ")}.` : ""
   const actor = await gitActor($, directory)
   const moved = await noteThenMove(ctx, task, "in-progress", "Plan approved — parked for execution", actor)

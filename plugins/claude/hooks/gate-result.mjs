@@ -11,6 +11,13 @@
  *   dist/server.js, so the model can only flounder or fabricate success.
  * - the CLI ran and its last stdout line parses as a GateResult
  *   ({ok, message}) → BLOCK with that verdict, success or refusal alike.
+ * - the spawn TIMED OUT (the hook's own deadline killed it) → BLOCK. A timeout
+ *   is not a crash: the CLI was mid-flight, so the move may already have
+ *   LANDED with the GateResult lost in the kill — failing open would invite
+ *   the model to run the verb again via MCP, a double-move on exactly the
+ *   slow trees that time out. A false block costs one typed command after a
+ *   manual check; the asymmetry is the same as decideGateOutcome's not-built
+ *   arm.
  * - anything else (spawn error, crash, half-built dist — non-zero exit with
  *   no GateResult on stdout) → FAIL OPEN, per the hook's documented contract.
  */
@@ -28,6 +35,17 @@ export const missingDistMessage = (label, installer = "plugins/claude/install.sh
  */
 export const decideGateOutcome = ({ distExists, spawnError, status, stdout }, label, installer) => {
   if (!distExists) return { action: "block", message: missingDistMessage(label, installer), ok: false }
+  // Timed out — the CLI was killed mid-flight, so the move may or may not have
+  // landed. Block (see the contract above); never fall through to the fail-open
+  // arm, whose premise ("the CLI never got to the gate logic") does not hold.
+  if (spawnError && spawnError.code === "ETIMEDOUT")
+    return {
+      action: "block",
+      message:
+        `agentic-workflow: the "${label}" gate timed out before reporting. The move may or may not have landed — ` +
+        "check which status folder the task sits in (status, or the backlog under docs/tasks/) before retrying.",
+      ok: false,
+    }
   // Could not even run node (binary missing, spawn failure) — fail open.
   if (spawnError || status === null || status === undefined) return { action: "pass" }
   let parsed = null

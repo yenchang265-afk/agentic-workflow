@@ -238,8 +238,8 @@ task files and `.agentic-workflow.json`) by hand.
 - `/agentic-workflow:review-sitter` · `/agentic-workflow:dep-sitter` ·
   `/agentic-workflow:main-sitter` — the same `claim` / `watch` (OpenCode) /
   `unwatch` / `stop` / `status` verbs, each scoped to its own kind
-  (`review-sitter` needs no config; `dep-sitter` and `main-sitter` are opt-in
-  via `workflows.<kind>.enabled`)
+  (every sitter is experimental and opt-in via `workflows.<kind>.enabled` —
+  only `engineering` runs without config)
 
 Full command reference: [docs/opencode.md](docs/opencode.md) (OpenCode) ·
 [`plugins/claude/README.md`](plugins/claude/README.md) (Claude Code — no

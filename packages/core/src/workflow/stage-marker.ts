@@ -196,21 +196,79 @@ export const taskDrivenByStageMarker = async (
   now: number = Date.now(),
 ): Promise<StageMarkerHost | null> => {
   for (const host of STAGE_MARKER_HOSTS) {
-    const out = await $`cat ${hostStageMarkerPath(directory, tasksDir, host)}`.quiet().nothrow()
-    if (out.exitCode !== 0) continue
-    try {
-      const m = JSON.parse(out.stdout.toString()) as { taskId?: unknown; deadline?: unknown; pid?: unknown }
-      if (m.taskId !== taskId) continue
-      if (typeof m.deadline !== "number" || m.deadline <= now) continue // stage window over — dead either way
-      // Shared with the claim stamp's writer probe (`liveness.ts`) so the two
-      // oracles cannot drift; see there for the EPERM caveat.
-      if (typeof m.pid === "number" && Number.isInteger(m.pid) && m.pid > 0) {
-        if (!(await pidAlive($, m.pid))) continue
-      }
-      return host
-    } catch {
-      continue
-    }
+    const m = await liveMarkerFor($, directory, tasksDir, host, now)
+    if (m?.taskId === taskId) return host
   }
   return null
+}
+
+/** One host's LIVE stage marker, as much of it as a status line needs. */
+export interface LiveStageMarker {
+  readonly host: StageMarkerHost
+  readonly taskId: string | null
+  readonly stage: string
+  readonly kind: string
+  /** Wall-clock ms deadline of the stage attempt — display-only, like the marker's own. */
+  readonly deadline: number
+  readonly pid?: number
+}
+
+/**
+ * Read one host's marker and judge it live — the SAME rule
+ * `taskDrivenByStageMarker` applies (deadline in the future, and a carried pid
+ * must still exist), factored so the two readers cannot drift. Null for a
+ * missing, garbled, expired, or dead-writer marker.
+ */
+const liveMarkerFor = async (
+  $: Shell,
+  directory: string,
+  tasksDir: string,
+  host: StageMarkerHost,
+  now: number,
+): Promise<LiveStageMarker | null> => {
+  const out = await $`cat ${hostStageMarkerPath(directory, tasksDir, host)}`.quiet().nothrow()
+  if (out.exitCode !== 0) return null
+  try {
+    const m = JSON.parse(out.stdout.toString()) as Record<string, unknown>
+    if (typeof m["deadline"] !== "number" || m["deadline"] <= now) return null // stage window over — dead either way
+    // Shared with the claim stamp's writer probe (`liveness.ts`) so the two
+    // oracles cannot drift; see there for the EPERM caveat.
+    const pid = m["pid"]
+    if (typeof pid === "number" && Number.isInteger(pid) && pid > 0) {
+      if (!(await pidAlive($, pid))) return null
+    }
+    return {
+      host,
+      taskId: typeof m["taskId"] === "string" ? m["taskId"] : null,
+      stage: typeof m["stage"] === "string" ? m["stage"] : "unknown",
+      kind: typeof m["kind"] === "string" ? m["kind"] : "engineering",
+      deadline: m["deadline"],
+      ...(typeof pid === "number" ? { pid } : {}),
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Every host's LIVE stage marker — the cross-process "a loop is at <stage> on
+ * <task> right now" witness, for `status`. Before this, status on both hosts
+ * answered from its own process alone (`getWorkflow` / the in-memory `active`),
+ * so a watch worker in another terminal driving task X read as "no active
+ * loop" here — inviting a competing `claim X` that then bounced off refusals
+ * status never foreshadowed. Callers that should not report THEMSELVES filter
+ * by their own pid. Best-effort like every marker read.
+ */
+export const liveStageMarkers = async (
+  $: Shell,
+  directory: string,
+  tasksDir: string,
+  now: number = Date.now(),
+): Promise<LiveStageMarker[]> => {
+  const live: LiveStageMarker[] = []
+  for (const host of STAGE_MARKER_HOSTS) {
+    const m = await liveMarkerFor($, directory, tasksDir, host, now)
+    if (m) live.push(m)
+  }
+  return live
 }
