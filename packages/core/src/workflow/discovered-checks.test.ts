@@ -10,6 +10,7 @@ import {
   checksProvenanceNote,
   clampedChecksDetail,
   commandBinaries,
+  discoveringStage,
   discoveryAllowlist,
   hasChecksFence,
   noMachineChecksBlock,
@@ -598,6 +599,28 @@ test("discoveryAllowlist: the consumer's globs when discovery is live, undefined
   assert.equal(discoveryAllowlist({} as unknown as WorkflowManifest, CONFIG), undefined)
   // Config-less composes from the manifest alone — same list as a default config.
   assert.deepEqual(discoveryAllowlist(manifestWith(stage({ discoverChecks: true }))), live)
+})
+
+test("discoveringStage agrees with discoveryAllowlist: a stage whose checks are preempted does not consume a fence", () => {
+  // The PLAN prompt's CHECK DISCOVERY block is gated on `discoveringStage`, while
+  // `discoveryAllowlist`/`previewDiscoveredChecks` gate on preemption too — so if
+  // this returned the stage while they returned undefined/null, the plan author
+  // would be told to write an `agentic-checks` fence that `resolveStageChecks`
+  // (precedence config → manifest → discovered) then silently ignores, directly
+  // contradicting the park-time preview. All three must move together.
+  assert.equal(discoveringStage(manifestWith(stage({ discoverChecks: true })), CONFIG), "verify")
+  // Config `stageChecks.verify` supplies the commands — discovery is never reached.
+  const configured = parseConfig({ workflows: { engineering: { stageChecks: { verify: [{ name: "mine", command: "npm test" }] } } } })
+  assert.equal(discoveringStage(manifestWith(stage({ discoverChecks: true })), configured), undefined)
+  // Manifest `checks` preempt discovery the same way.
+  assert.equal(
+    discoveringStage(manifestWith(stage({ discoverChecks: true, checks: [{ name: "shipped", command: "npm test" }] })), CONFIG),
+    undefined,
+  )
+  // Config-less caller (the hub creator preview) still sees a plain discovering stage.
+  assert.equal(discoveringStage(manifestWith(stage({ discoverChecks: true }))), "verify")
+  // …but a manifest that ships both loses discovery even without a config.
+  assert.equal(discoveringStage(manifestWith(stage({ discoverChecks: true, checks: [{ name: "shipped", command: "npm test" }] }))), undefined)
 })
 
 test("previewDiscoveredChecks forecasts admitted and refused with the consumer's own allowlist", () => {
