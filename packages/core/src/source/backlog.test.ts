@@ -457,3 +457,22 @@ test("a queued task the index hasn't caught up on reports itself, and instructs 
   // The fallback keeps its wording for the case it was written for.
   assert.match(claimSkipReason(2, 0, 0, [], []).message, /no persisted plan/)
 })
+
+test("a build-ready task the index hasn't caught up on reports itself, and instructs nothing", () => {
+  // The queued-pool twin of the test above, one pool over. `claimableCount` is
+  // the count of in-progress bodies that PASSED the claim predicate, so a
+  // positive one is proof those tasks carry a persisted plan — yet reaching
+  // the skip reporter with it fell through to "in-progress task(s) have no
+  // persisted plan (… replan <id>)", `actionable: true`, which the OpenCode
+  // watcher toasts. Acting on that advice throws away a plan the human had
+  // already approved. The condition is the same transient one: `claimFirst`
+  // won a marker and `reverify` then found the file gone from the real FS.
+  const r = claimSkipReason(2, 2, 0, [], [])
+  assert.match(r.message, /taken or moved before the claim landed/)
+  assert.equal(r.actionable, false, "a transient re-list must not toast an instruction")
+  assert.doesNotMatch(r.message, /replan/, "and must never propose discarding an approved plan")
+  // Held markers still outrank it — a held claim is the actionable case.
+  assert.match(claimSkipReason(2, 2, 0, [], ["h"]).message, /held/)
+  // And a started-but-unclaimed pool still routes to recover, not to this arm.
+  assert.match(claimSkipReason(2, 0, 0, ["a"], []).message, /already started/)
+})

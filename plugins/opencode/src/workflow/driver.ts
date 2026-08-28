@@ -34,6 +34,7 @@ import {
   teardownIsolation as coreTeardownIsolation,
 } from "@agentic-workflow/core/workflow/isolate"
 import {
+  ACTIVE_STATUSES,
   appendNote,
   appendRunLog,
   auditNote,
@@ -57,6 +58,7 @@ import {
   markClaimed,
   moveTask,
   nextActions,
+  pairingCoverage,
   refreshWorkClaim,
   releaseClaim,
   releaseOrphanedClaims,
@@ -127,6 +129,8 @@ import {
   enforcesAxisCoverage,
   ignoredUserConfigPaths,
   modelFor,
+  pairingLine,
+  pairingView,
   parseGateOptions,
   effectiveConfigReport,
   passAxes,
@@ -2572,6 +2576,23 @@ const backlogSummary = async (deps: Deps, config: Config) => {
   return summarizeBacklog(byStatus, claimedIds)
 }
 
+/**
+ * The `pairing` roll-up for `status`, or null when no tracker is configured.
+ *
+ * Only the ACTIVE folders are listed (`ACTIVE_STATUSES`, which is all
+ * `pairingCoverage` looks at) rather than reusing `backlogSummary`'s full
+ * per-status map: this runs on every `status`, and `completed/` is the folder
+ * that grows without bound.
+ */
+const backlogPairing = async (deps: Deps, config: Config) => {
+  if (!config.projectManagement) return null
+  const byStatus = {} as Record<TaskStatus, Task[]>
+  for (const status of ACTIVE_STATUSES) {
+    byStatus[status] = await listByStatus(deps.client, deps.directory, config.tasksDir, status, deps.log)
+  }
+  return pairingView(config.projectManagement, pairingCoverage(byStatus))
+}
+
 /** Human-readable one-liner of the backlog roll-up. Pure. */
 const formatBacklog = (s: Awaited<ReturnType<typeof backlogSummary>>): string => {
   const c = s.counts
@@ -4507,6 +4528,13 @@ export const handleCommand = async (
     // not just this session's loop (engineering only: other kinds have no
     // backlog folders). Detailed flag lists go to the log.
     const summary = engineering ? await backlogSummary(deps, config).catch(() => null) : null
+    // The `pairing` roll-up `docs/configuration.md` promises this very command
+    // — the tracker system, the paired/unpaired split, and (via
+    // `projectManagement.baseUrl`) each paired task's deep link. Only the
+    // Claude host's `workflow_status` had one, so on the host the doc names it
+    // was missing entirely and `baseUrl` reached nothing anywhere. Composed by
+    // core (`pairingView`) so the two hosts report the same thing.
+    const pairing = engineering && config.projectManagement ? await backlogPairing(deps, config).catch(() => null) : null
     if (summary) {
       // One shared renderer (core's nextActions) instead of hand-picked hints:
       // this host used to name the verb for exactly two of the summary's seven
@@ -4516,6 +4544,7 @@ export const handleCommand = async (
       }
     }
     const backlogLine = summary ? ` · ${formatBacklog(summary)}` : ""
+    const pairingSuffix = pairing ? ` · ${pairingLine(pairing)}` : ""
     const enabled = enabledWorkflowKinds(config)
     const kindsLine = engineering && enabled.length > 1 ? ` · kinds: ${enabled.join(", ")}` : ""
     const cadence = watchTimers.get(sessionID)?.describe
@@ -4539,11 +4568,11 @@ export const handleCommand = async (
       const why = lastSkipReason.get(sessionID)
       const idle = engineering ? "no claimable task right now." : `no claimable ${kind} item right now.`
       const head = isWatching ? `${watchLabel} — ${why ?? idle}` : "No active loop."
-      return report(client, `${head}${backlogLine}${elsewhereLine}${kindsLine}`, "info")
+      return report(client, `${head}${backlogLine}${pairingSuffix}${elsewhereLine}${kindsLine}`, "info")
     }
     const what = state.task ? `task ${state.task.id}` : state.goal
     const prefix = isWatching ? `${watchLabel}. ` : ""
-    return report(client, `${prefix}Loop: ${state.stage} · iteration ${state.iteration + 1} · ${what}${backlogLine}${elsewhereLine}${kindsLine}`, "info")
+    return report(client, `${prefix}Loop: ${state.stage} · iteration ${state.iteration + 1} · ${what}${backlogLine}${pairingSuffix}${elsewhereLine}${kindsLine}`, "info")
   }
 
   // The loop is a pure executor — there is no free-text mode. Anything

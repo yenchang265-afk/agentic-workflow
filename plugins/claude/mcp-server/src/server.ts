@@ -36,6 +36,7 @@ import {
   enabledWorkflowKinds,
   enforcesAxisCoverage,
   modelFor,
+  pairingView,
   passAxes,
   platformFor,
   spawnAlias,
@@ -2507,7 +2508,11 @@ server.registerTool(
       backlog: summary,
       kinds: kindsReport(),
       ...(hints.length ? { nextActions: hints } : {}),
-      ...(pm ? { pairing: { system: pm.system, ...pairingCoverage(byStatus) } } : {}),
+      // `pairingView`, not a hand-built object: it is what threads
+      // `projectManagement.baseUrl` through `trackerUrl` into a deep link per
+      // paired task — the knob parsed and validated for a while without any
+      // caller ever building the link it documents.
+      ...(pm ? { pairing: pairingView(pm, pairingCoverage(byStatus)) } : {}),
       ...(hasAnomalies(anomalies) ? { anomalies: formatAnomalies(anomalies, config.tasksDir).map((l) => `${l} (workflow_doctor repairs)`) } : {}),
     })
   },

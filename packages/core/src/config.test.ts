@@ -50,6 +50,8 @@ import {
   shipBaseFor,
   shipPublishFor,
   resolveUserConfigPath,
+  pairingLine,
+  pairingView,
   trackerUrl,
   triggerFor,
 } from "./config.js"
@@ -1590,4 +1592,53 @@ test("resolveUserConfigPath: $AGENTIC_WORKFLOW_USER_CONFIG wins, and \"\" disabl
   withUserConfigEnv(home, { AGENTIC_WORKFLOW_USER_CONFIG: "" }, () => {
     assert.equal(resolveUserConfigPath(), null)
   })
+})
+
+test("pairingView is what finally consumes projectManagement.baseUrl", () => {
+  // The knob parsed and validated for a while with no caller: `trackerUrl` was
+  // exported, tested, and referenced by nothing, so no deep link was ever
+  // built on any host. The status pairing view is where the docs put it.
+  const pm = parseConfig({ projectManagement: { system: "jira", baseUrl: "https://acme.atlassian.net/browse/" } })
+    .projectManagement!
+  const view = pairingView(pm, {
+    paired: 2,
+    unpaired: ["c"],
+    pairs: [
+      { id: "a", system: "jira", key: "PROJ-1" },
+      { id: "b", system: "jira", key: "PROJ-2" },
+    ],
+  })
+  assert.equal(view.system, "jira")
+  assert.equal(view.paired, 2)
+  assert.deepEqual(view.unpaired, ["c"])
+  assert.deepEqual(view.items, [
+    { id: "a", system: "jira", key: "PROJ-1", url: "https://acme.atlassian.net/browse/PROJ-1" },
+    { id: "b", system: "jira", key: "PROJ-2", url: "https://acme.atlassian.net/browse/PROJ-2" },
+  ])
+})
+
+test("pairingView omits the url when no baseUrl is configured — linking stays opt-in", () => {
+  const pm = parseConfig({ projectManagement: { system: "azure-devops" } }).projectManagement!
+  const view = pairingView(pm, { paired: 1, unpaired: [], pairs: [{ id: "a", system: "azure-devops", key: "1234" }] })
+  assert.deepEqual(view.items, [{ id: "a", system: "azure-devops", key: "1234" }])
+  assert.equal("url" in view.items[0]!, false)
+})
+
+test("pairingLine names the paired tasks with their links, and caps both id lists", () => {
+  const pm = parseConfig({ projectManagement: { system: "jira", baseUrl: "https://j/" } }).projectManagement!
+  const pairs = Array.from({ length: 7 }, (_, i) => ({ id: `p${i}`, system: "jira", key: `K-${i}` }))
+  const line = pairingLine(pairingView(pm, { paired: 7, unpaired: ["u0", "u1", "u2", "u3", "u4", "u5"], pairs }))
+  assert.match(line, /^pairing \(jira\): 7\/13 paired/)
+  assert.match(line, /p0→https:\/\/j\/K-0/, "the deep link, not just the key")
+  assert.match(line, /\+2 more/, "paired ids elide past the cap")
+  assert.match(line, /unpaired: u0, u1, u2, u3, u4 \+1 more/)
+})
+
+test("pairingLine falls back to the bare key when no baseUrl is set, and stays sane with nothing paired", () => {
+  const pm = parseConfig({ projectManagement: { system: "jira" } }).projectManagement!
+  assert.match(
+    pairingLine(pairingView(pm, { paired: 1, unpaired: [], pairs: [{ id: "a", system: "jira", key: "K-1" }] })),
+    /^pairing \(jira\): 1\/1 paired \(a→K-1\)$/,
+  )
+  assert.equal(pairingLine(pairingView(pm, { paired: 0, unpaired: ["a"], pairs: [] })), "pairing (jira): 0/1 paired; unpaired: a")
 })

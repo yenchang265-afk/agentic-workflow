@@ -66,8 +66,9 @@ interface BacklogDeps {
 /**
  * Compute why a poll claimed nothing, from what the claim walk saw across the
  * pools. Held markers win (they block otherwise-ready work); then empty
- * backlog; then started-but-unclaimed (recover); then the no-plan fallback.
- * Pure. The strings are engineering-flavored (this is the engineering
+ * backlog; then started-but-unclaimed (recover); then the two transient
+ * listing-lag arms (one per pool, neither actionable); then the no-plan
+ * fallback. Pure. The strings are engineering-flavored (this is the engineering
  * backlog's skip reporter); a future backlog-backed kind with different
  * folders should supply its own.
  */
@@ -114,6 +115,23 @@ export const claimSkipReason = (
   if (inProgressCount === 0) {
     return {
       message: "watch: 0 claimable — the queued task(s) listed for this tick were taken or moved before the claim landed; the next tick re-lists",
+      actionable: false,
+    }
+  }
+  // The same transient race one pool over, and the fallback below is just as
+  // wrong about it: `claimableCount` counts the in-progress bodies that PASSED
+  // the claim predicate, so a positive count is proof those tasks DO carry a
+  // persisted plan. Reaching here with one means `claimFirst` won a marker and
+  // then dropped it — `reverify` found the file gone or no longer claimable on
+  // the real FS (a finished run's `mv` the client index had not caught up to),
+  // which leaves no held marker and nothing claimed. Falling through told the
+  // human "in-progress task(s) have no persisted plan" about tasks that have
+  // one, and — `actionable: true` — toasted `replan <id>` at them, which would
+  // throw away a plan they had already approved. Report, never instruct: the
+  // next tick re-lists.
+  if (claimableCount > 0) {
+    return {
+      message: "watch: 0 claimed — the build-ready task(s) listed for this tick were taken or moved before the claim landed; the next tick re-lists",
       actionable: false,
     }
   }

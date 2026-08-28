@@ -1303,6 +1303,75 @@ export const trackerUrl = (pm: ProjectManagement | undefined, key: string): stri
 /** The default `tracker.system` for newly authored tasks, from the PM config. Pure. */
 export const defaultTrackerSystem = (config: Config): TrackerSystem | undefined => config.projectManagement?.system
 
+/** One paired task as a status view renders it: its tracker key, plus the deep
+ *  link when `projectManagement.baseUrl` is configured. */
+export interface PairedItem {
+  readonly id: string
+  readonly system: string
+  readonly key: string
+  readonly url?: string
+}
+
+/** The `pairing` roll-up `status` reports when `projectManagement` is set. */
+export interface PairingView {
+  readonly system: TrackerSystem
+  readonly paired: number
+  readonly unpaired: readonly string[]
+  /** The paired tasks, id-ordered, each with its deep link when one can be built. */
+  readonly items: readonly PairedItem[]
+}
+
+/** How many paired items a one-line pairing summary names before it elides. */
+const PAIRING_ITEMS_MAX = 5
+
+/**
+ * The pairing roll-up, composed once for every host — the tracker system, the
+ * paired/unpaired split, and the deep link per paired task.
+ *
+ * Composed in core rather than per host for the reason `nextActions` is: the
+ * two hosts rendered the SAME documented view differently, and one of them not
+ * at all. `docs/configuration.md` promises `/agentic-workflow:engineering
+ * status` "adds a `pairing` roll-up", and only the Claude host's
+ * `workflow_status` had one — the OpenCode driver's status line reported
+ * counts, kinds and drives-elsewhere and never mentioned pairing, so the
+ * documented view was missing on the host whose command the doc names.
+ *
+ * `items` is what finally consumes `trackerUrl`, i.e. `baseUrl`. Pure —
+ * `coverage` is `pairingCoverage`'s output, taken structurally so this stays
+ * out of `task/store.ts`'s import graph.
+ */
+export const pairingView = (
+  pm: ProjectManagement,
+  coverage: {
+    readonly paired: number
+    readonly unpaired: readonly string[]
+    readonly pairs: readonly { readonly id: string; readonly system: string; readonly key: string }[]
+  },
+): PairingView => ({
+  system: pm.system,
+  paired: coverage.paired,
+  unpaired: coverage.unpaired,
+  items: coverage.pairs.map((p) => {
+    const url = trackerUrl(pm, p.key)
+    return { id: p.id, system: p.system, key: p.key, ...(url ? { url } : {}) }
+  }),
+})
+
+/**
+ * The pairing roll-up as one line, for the hosts that report status as text.
+ * Names the paired tasks with their keys (and links, when configured) because
+ * "3 paired" is the one thing a human cannot act on; capped like every other
+ * id list in this repo. Pure.
+ */
+export const pairingLine = (view: PairingView): string => {
+  const total = view.paired + view.unpaired.length
+  const shown = view.items.slice(0, PAIRING_ITEMS_MAX).map((i) => `${i.id}→${i.url ?? i.key}`)
+  const elided = view.items.length - shown.length
+  const paired = shown.length ? ` (${shown.join(", ")}${elided > 0 ? ` +${elided} more` : ""})` : ""
+  const unpaired = view.unpaired.length ? `; unpaired: ${view.unpaired.slice(0, PAIRING_ITEMS_MAX).join(", ")}${view.unpaired.length > PAIRING_ITEMS_MAX ? ` +${view.unpaired.length - PAIRING_ITEMS_MAX} more` : ""}` : ""
+  return `pairing (${view.system}): ${view.paired}/${total} paired${paired}${unpaired}`
+}
+
 // `applyAdoPatEnv` used to live here: it exported `ado.pat` into
 // `process.env.AZURE_DEVOPS_EXT_PAT` so child `curl` processes could
 // authenticate. Nothing shells out to Azure DevOps any more — the PAT is handed
