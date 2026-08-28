@@ -63,7 +63,21 @@ import type { Shell } from "../host.js"
  * composes byte-identically to none. Pure.
  */
 export const discoveringStage = (manifest: WorkflowManifest, config?: Config): string | undefined =>
-  manifest.stages.find((s) => s.kind === "check" && (config ? discoverChecksFor(config, manifest.kind, s) : s.discoverChecks))?.name
+  manifest.stages.find(
+    (s) =>
+      s.kind === "check" &&
+      (config ? discoverChecksFor(config, manifest.kind, s) : s.discoverChecks) &&
+      // Preemption belongs here, not only in the callers: `resolveStageChecks`
+      // runs config → manifest → discovered, so a stage whose config `stageChecks`
+      // or manifest `checks` supply commands NEVER reads a fence. Without this
+      // guard `discoveringStage` reported the stage as "discovering" while
+      // `discoveryAllowlist`/`previewDiscoveredChecks` (which DO test preemption)
+      // reported none — so the PLAN prompt's CHECK DISCOVERY block was appended,
+      // telling the author to write an `agentic-checks` fence that the run would
+      // silently ignore, contradicting the very park-time preview built to agree.
+      !(config && configuredChecks(config, manifest.kind, s)) &&
+      s.checks.length === 0,
+  )?.name
 
 /** The fenced-block info string PLAN writes its discovered commands under. */
 export const CHECKS_FENCE = "agentic-checks"
