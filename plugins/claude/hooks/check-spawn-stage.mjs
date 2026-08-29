@@ -156,6 +156,27 @@ var decideSpawnGuard = (marker, agent, now = Date.now()) => {
 };
 var spawnDriftMessage = (marker, agent) => `agentic-workflow: refusing to spawn "${agent}" \u2014 the loop is at "${String(marker?.stage ?? "?")}" and has armed "${String(marker?.agent ?? "?")}", so this stage was never started. Nothing has gone wrong with the work: a step of the orchestration protocol was skipped, and running "${agent}" now would do a whole stage's work that the loop then throws away \u2014 its workflow_verdict is rejected as stage drift because the state machine is still at "${String(marker?.stage ?? "?")}". Call workflow_advance with the finished "${String(marker?.stage ?? "?")}" stage's output first, then workflow_stage for the stage the returned action names (once per entry in its \`passes\` array, if it has one), and spawn the agent THAT response names. If "${agent}" really is the next stage, both calls will succeed and this spawn will be allowed.`;
 
+// plugins/claude/hooks/src/crash.mjs
+var crashLine = (hook, err) => {
+  const detail = err instanceof Error ? `${err.message} @ ${(err.stack ?? "").split("\n")[1]?.trim() ?? "?"}` : String(err);
+  return `agentic-workflow: the ${hook} hook crashed and failed open \u2014 ${detail.replace(/\s+/g, " ").slice(0, 500)}`;
+};
+var failOpen = (hook) => (err) => {
+  let done = false;
+  const exit = () => {
+    if (done) return;
+    done = true;
+    process.exit(0);
+  };
+  const timer = setTimeout(exit, 250);
+  if (typeof timer.unref === "function") timer.unref();
+  try {
+    process.stderr.write(crashLine(hook, err) + "\n", exit);
+  } catch {
+    exit();
+  }
+};
+
 // plugins/claude/hooks/src/check-spawn-stage.entry.mjs
 var main = async () => {
   let input;
@@ -174,4 +195,4 @@ var main = async () => {
   if (decideSpawnGuard(marker, agent) !== "block") return allow();
   return block(spawnDriftMessage(marker, agent));
 };
-main().catch(() => allow());
+main().catch(failOpen("check-spawn-stage"));

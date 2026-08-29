@@ -54,6 +54,7 @@ import {
   type TaskStatus,
   wasInterrupted,
 } from "./store.js"
+import { AUDIT_NOTE_LINE_RE } from "./plan-section.js"
 
 /**
  * store.ts shells out via Bun's `$` for moveTask (mkdir/mv), which the
@@ -1281,6 +1282,44 @@ test("appendNote still appends when the task file is there", async () => {
   })
   await appendNote(present, task("a", 0), "CLAIMED — loop starting")
   assert.ok(cmds.some((c) => c.includes(">>")), `the append still runs: ${cmds.join(" | ")}`)
+})
+
+test("appendNote flattens a multi-line note so the audit line keeps its shape", async () => {
+  // The class `oneLineReason` only half-closed. Everything that is NOT a gate
+  // reason reached this function raw: `err.message` from a failed `mv` on the
+  // two move-correction arms, a publish failure's reason, and the hosts'
+  // model-authored verdict/blocked text (the tool schema caps its LENGTH and
+  // permits newlines; "one line" is contract prose). A newline here puts line 2
+  // in the file with no `> ` prefix and the stamp detached, so
+  // AUDIT_NOTE_LINE_RE stops matching the note, `auditTailIndex` loses the
+  // boundary, and the orphaned lines ride into every later `{{goal}}`.
+  //
+  // Its own shell fake, deliberately: the shared `makeShell` collapses
+  // whitespace in the command it records, which is exactly the evidence here.
+  const payloads: string[] = []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const capturing = ((strings: TemplateStringsArray, ...exprs: unknown[]) => {
+    if (strings[0]?.startsWith("printf")) payloads.push(String(exprs[0]))
+    const chain = {
+      quiet: () => chain,
+      nothrow: () => chain,
+      cwd: () => chain,
+      then: (resolve: (v: unknown) => unknown) =>
+        Promise.resolve({ exitCode: 0, stdout: { toString: () => "" }, stderr: { toString: () => "" } }).then(resolve),
+    }
+    return chain
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }) as any
+
+  const stderr = "mv: cannot move 'x'\n  target is a directory\n"
+  await appendNote(capturing, task("a", 0), auditNote(`Move to completed/ failed — ${stderr}; the task did not move`, new Date(0)))
+
+  const written = payloads.join("")
+  assert.ok(written.includes("Move to completed/ failed"), `the append still runs: ${JSON.stringify(payloads)}`)
+  // One leading and one trailing newline from appendNote's own framing; none inside.
+  assert.equal(written.slice(1, -1).includes("\n"), false, `no newline may reach the note body: ${JSON.stringify(written)}`)
+  const line = written.trim()
+  assert.match(line, AUDIT_NOTE_LINE_RE, "the flattened note is still a well-formed audit line")
 })
 
 test("a marker quoted mid-line in the body is not lifecycle state", () => {

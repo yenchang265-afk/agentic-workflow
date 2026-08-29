@@ -44,6 +44,7 @@ import { allow, readStdin, rewriteInput } from "./pretooluse.mjs"
 // namespaces plugin agents cannot leave the two hooks disagreeing about who is
 // being spawned. Re-exported because this module's tests address it here.
 import { agentNameOf } from "./spawn-guard.mjs"
+import { failOpen } from "./crash.mjs"
 
 export { agentNameOf }
 
@@ -112,4 +113,4 @@ const main = async () => {
   return rewriteInput({ ...ti, model })
 }
 
-main().catch(() => allow())
+main().catch(failOpen("stamp-spawn-model"))

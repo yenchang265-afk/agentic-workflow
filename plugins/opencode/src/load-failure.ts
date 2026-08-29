@@ -33,12 +33,21 @@ export const loadFailureHooks = (err: unknown, client: PluginInput["client"]): H
   return {
     "command.execute.before": async (input, output) => {
       if (!/^agentic-workflow:/.test(input.command)) return
-      await client.app.log({ body: { service: "agentic-workflow", level: "error", message } }).catch(() => {})
-      await client.tui.showToast({ body: { message, variant: "error" } }).catch(() => {})
+      // Override FIRST, then report. The reporting calls are client fetches and
+      // the SDK sets `req.timeout = false`; their `.catch()` guards a rejection,
+      // not a hang. Awaited ahead of the override they could park this hook
+      // forever, and opencode awaits `command.execute.before` with no timeout of
+      // its own — the command would die before `Session.prompt` with zero output,
+      // the "first invocation swallowed, retry works" symptom this module exists
+      // to make impossible. A stale core dist plus a stalled server is not a
+      // hypothetical pairing: it is this module's own reason to exist.
+      //
       // The toast is for the human; the model never sees it and would other-
       // wise run the still-rendered template as a plain prompt — exactly the
       // "reports a task move that never happened" failure index.ts warns about.
       overrideCommandPrompt(output, refusalPrompt("it failed to load.", message))
+      void client.app.log({ body: { service: "agentic-workflow", level: "error", message } }).catch(() => {})
+      void client.tui.showToast({ body: { message, variant: "error" } }).catch(() => {})
     },
   }
 }

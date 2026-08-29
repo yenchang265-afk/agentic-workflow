@@ -775,6 +775,27 @@ var noteDeny = (runsDirPath, host, marker, command) => {
   }
 };
 
+// plugins/claude/hooks/src/crash.mjs
+var crashLine = (hook, err) => {
+  const detail = err instanceof Error ? `${err.message} @ ${(err.stack ?? "").split("\n")[1]?.trim() ?? "?"}` : String(err);
+  return `agentic-workflow: the ${hook} hook crashed and failed open \u2014 ${detail.replace(/\s+/g, " ").slice(0, 500)}`;
+};
+var failOpen = (hook) => (err) => {
+  let done = false;
+  const exit = () => {
+    if (done) return;
+    done = true;
+    process.exit(0);
+  };
+  const timer = setTimeout(exit, 250);
+  if (typeof timer.unref === "function") timer.unref();
+  try {
+    process.stderr.write(crashLine(hook, err) + "\n", exit);
+  } catch {
+    exit();
+  }
+};
+
 // plugins/claude/hooks/src/check-stage-guard.entry.mjs
 var main = async () => {
   let input;
@@ -892,4 +913,4 @@ var main = async () => {
   }
   return allow();
 };
-main();
+main().catch(failOpen("check-stage-guard"));

@@ -1347,7 +1347,9 @@ test("shipTask's already-completed retry reports a still-failing PR rather than 
 })
 
 test("shipTask retry does nothing when the completed task already recorded a PR", async () => {
-  const withPr = `${task("Do it")}\n\n> PR opened — https://example.com/pr/1 _(2026-01-01)_`
+  // A real `recordPublish` note: `> … [<ISO> by <actor>]`. The stamp is what
+  // makes it lifecycle state rather than prose — see the quoting test below.
+  const withPr = `${task("Do it")}\n\n> PR opened — https://example.com/pr/1 [2026-01-01T00:00:00.000Z by tester]`
   const { ctx, log } = makeCtx(
     { "completed/t.md": withPr },
     {
@@ -1409,6 +1411,31 @@ test("the configured shipPublish decides when the gate is given no override", as
   assert.ok(r.ok)
   assert.equal(r.data.publish, "local")
   assert.ok(!log.some((c) => c.includes("push -u origin")))
+})
+
+/**
+ * Lifecycle state comes from STAMPED audit lines, never from body prose.
+ *
+ * `prAlreadyRecorded` used to regex the whole task body, and this backlog is
+ * made of tasks about the loop — a task whose goal, plan or replan reason
+ * quotes "PR opened — https://…" read as a task with a PR on record, forever.
+ * The retry arm is the only path that can publish a `local`/`push` ship
+ * afterwards, so that quotation made the task unpublishable, an explicit
+ * `--pr` included, behind "already completed. Nothing to do."
+ */
+test("a body that merely quotes a publish note is not a publish record", async () => {
+  const quoting = `${task("Fix the ship gate so it stops claiming 'PR opened — https://example.com/pr/9' when nothing opened")}
+
+## Implementation Plan
+
+> PR opened — https://example.com/pr/9 is the note we must stop mis-reading
+`
+  const { ctx, log } = shippable({ "completed/t.md": quoting })
+  const r = await shipTask(ctx, "t", "engineering", "pr")
+  assert.ok(r.ok)
+  assert.equal(r.data.alreadyDone, true)
+  assert.ok(log.some((c) => c.includes("push -u origin")), "an explicit --pr on a quoted note must still publish")
+  assert.doesNotMatch(r.message, /Nothing to do/)
 })
 
 /**

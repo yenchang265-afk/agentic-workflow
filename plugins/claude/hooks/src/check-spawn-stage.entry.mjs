@@ -26,6 +26,7 @@ import { dialectFor, hostFor } from "./dialect.mjs"
 import { readMarker } from "./marker.mjs"
 import { allow, block, readStdin } from "./pretooluse.mjs"
 import { agentNameOf, decideSpawnGuard, spawnDriftMessage } from "./spawn-guard.mjs"
+import { failOpen } from "./crash.mjs"
 
 const main = async () => {
   let input
@@ -53,4 +54,4 @@ const main = async () => {
   return block(spawnDriftMessage(marker, agent))
 }
 
-main().catch(() => allow())
+main().catch(failOpen("check-spawn-stage"))

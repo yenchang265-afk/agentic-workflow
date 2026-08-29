@@ -25,6 +25,7 @@ import { dialectFor, hostFor } from "./dialect.mjs"
 import { exitAfterWrite } from "./emit.mjs"
 import { idList, MAX_LISTED } from "./idlist.mjs"
 import { backlogRoot, readTasksDir } from "./marker.mjs"
+import { failOpen } from "./crash.mjs"
 
 /**
  * Mirror of core `wasInterrupted` (store.ts): a BUILD started with no later
@@ -117,7 +118,18 @@ const main = async () => {
     /* none */
   }
 
-  const anomalies = await auditBacklog(fsClient, root, tasksDir)
+  // Guarded, and it is the one await in this hook that reads the whole backlog:
+  // an unreadable file or a permission error here used to reject out of `main`,
+  // and with no terminator on it the ENTIRE session-start report — the crashed-run
+  // recoveries, the stale claim markers, the "MCP server not built" banner — was
+  // dropped silently. The audit is one section of that report, so a failure costs
+  // that section and nothing else.
+  let anomalies = []
+  try {
+    anomalies = await auditBacklog(fsClient, root, tasksDir)
+  } catch {
+    /* the rest of the report is still worth emitting */
+  }
 
   // The MCP server (and the deterministic gate CLI) live in mcp-server/dist —
   // never built means every gate verb and loop tool is dead. Surface it at
@@ -169,4 +181,4 @@ const main = async () => {
   exitAfterWrite(process.stdout, JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join("\n") } }), 0)
 }
 
-main()
+main().catch(failOpen("reconcile"))

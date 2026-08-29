@@ -201,6 +201,27 @@ var readTasksDir = (root) => {
   return "docs/tasks";
 };
 
+// plugins/claude/hooks/src/crash.mjs
+var crashLine = (hook, err) => {
+  const detail = err instanceof Error ? `${err.message} @ ${(err.stack ?? "").split("\n")[1]?.trim() ?? "?"}` : String(err);
+  return `agentic-workflow: the ${hook} hook crashed and failed open \u2014 ${detail.replace(/\s+/g, " ").slice(0, 500)}`;
+};
+var failOpen = (hook) => (err) => {
+  let done = false;
+  const exit = () => {
+    if (done) return;
+    done = true;
+    process.exit(0);
+  };
+  const timer = setTimeout(exit, 250);
+  if (typeof timer.unref === "function") timer.unref();
+  try {
+    process.stderr.write(crashLine(hook, err) + "\n", exit);
+  } catch {
+    exit();
+  }
+};
+
 // plugins/claude/hooks/src/reconcile.entry.mjs
 var lastMarkerIndex = (body, marker) => {
   for (let idx = body.lastIndexOf(marker); idx !== -1; idx = body.lastIndexOf(marker, idx - 1)) {
@@ -262,7 +283,11 @@ var main = async () => {
     planClaims = fs2.readdirSync(path2.join(root, tasksDir, "queued", ".claims")).filter((n) => !n.startsWith("."));
   } catch {
   }
-  const anomalies = await auditBacklog(fsClient, root, tasksDir);
+  let anomalies = [];
+  try {
+    anomalies = await auditBacklog(fsClient, root, tasksDir);
+  } catch {
+  }
   const pluginRoot = process.env.AGENTIC_WORKFLOW_PLUGIN_ROOT || process.env.CLAUDE_PLUGIN_ROOT || path2.resolve(path2.dirname(fileURLToPath(import.meta.url)), "..");
   const serverBuilt = fs2.existsSync(process.env.AGENTIC_WORKFLOW_SERVER_JS || path2.join(pluginRoot, "mcp-server", "dist", "server.js"));
   const lines = [];
@@ -285,4 +310,4 @@ var main = async () => {
   if (!lines.length) return process.exit(0);
   exitAfterWrite(process.stdout, JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join("\n") } }), 0);
 };
-main();
+main().catch(failOpen("reconcile"));

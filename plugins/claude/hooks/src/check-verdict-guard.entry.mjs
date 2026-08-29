@@ -20,6 +20,7 @@ import { dialectFor, hostFor } from "./dialect.mjs"
 import { exitAfterWrite } from "./emit.mjs"
 import { runsDir } from "./marker.mjs"
 import { decideVerdictGuard, nagMessage } from "./verdict-guard.mjs"
+import { failOpen } from "./crash.mjs"
 
 const read = () =>
   new Promise((resolve) => {
@@ -65,4 +66,4 @@ const main = async () => {
   return block(nagMessage(marker.stage, d.verdictAliases))
 }
 
-main()
+main().catch(failOpen("check-verdict-guard"))

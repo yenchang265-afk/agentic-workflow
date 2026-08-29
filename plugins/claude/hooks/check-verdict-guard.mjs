@@ -128,6 +128,27 @@ var decideVerdictGuard = (marker, nagAlreadyFired, now = Date.now()) => {
 };
 var nagMessage = (stage, aliases = "mcp__agentic-workflow__workflow_verdict or, plugin-bundled, mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict") => `agentic-workflow: this ${String(stage ?? "check").toUpperCase()} stage recorded no verdict \u2014 call the workflow_verdict MCP tool now (${aliases}) with stage: "${String(stage ?? "check")}" and verdict PASS/FAIL/ERROR. A verdict in prose is ignored. If the tool is not in your tool list, state that explicitly in your final message and finish. If "${String(stage ?? "check")}" is NOT the stage you were asked to run, record no verdict at all \u2014 say which stage you ran in your final message instead. Recording under another stage's name would file your findings as that stage's verdict.`;
 
+// plugins/claude/hooks/src/crash.mjs
+var crashLine = (hook, err) => {
+  const detail = err instanceof Error ? `${err.message} @ ${(err.stack ?? "").split("\n")[1]?.trim() ?? "?"}` : String(err);
+  return `agentic-workflow: the ${hook} hook crashed and failed open \u2014 ${detail.replace(/\s+/g, " ").slice(0, 500)}`;
+};
+var failOpen = (hook) => (err) => {
+  let done = false;
+  const exit = () => {
+    if (done) return;
+    done = true;
+    process.exit(0);
+  };
+  const timer = setTimeout(exit, 250);
+  if (typeof timer.unref === "function") timer.unref();
+  try {
+    process.stderr.write(crashLine(hook, err) + "\n", exit);
+  } catch {
+    exit();
+  }
+};
+
 // plugins/claude/hooks/src/check-verdict-guard.entry.mjs
 var read = () => new Promise((resolve) => {
   let s = "";
@@ -164,4 +185,4 @@ var main = async () => {
   }
   return block(nagMessage(marker.stage, d.verdictAliases));
 };
-main();
+main().catch(failOpen("check-verdict-guard"));
