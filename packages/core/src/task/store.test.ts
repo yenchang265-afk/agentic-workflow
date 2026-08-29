@@ -848,6 +848,24 @@ test("pairingCoverage ignores completed and abandoned tasks", () => {
   assert.deepEqual(cov.unpaired, [])
 })
 
+test("pairingCoverage names the paired tasks, not just a count — a count builds no deep link", () => {
+  // `projectManagement.baseUrl` is documented as the prefix a task's
+  // `tracker.key` is appended to, and `trackerUrl` implemented exactly that —
+  // but nothing ever called it, because the only consumer of this function got
+  // a NUMBER for the paired half. `pairs` is what a host builds the link from.
+  const byStatus = empty()
+  byStatus["draft"] = [paired("zed"), task("solo", 0)]
+  byStatus["in-review"] = [paired("alpha")]
+  byStatus["completed"] = [paired("shipped")] // inactive — out of the view entirely
+  const cov = pairingCoverage(byStatus)
+  assert.equal(cov.paired, 2)
+  assert.deepEqual(cov.unpaired, ["solo"])
+  assert.deepEqual(cov.pairs, [
+    { id: "alpha", system: "jira", key: "PROJ-alpha" },
+    { id: "zed", system: "jira", key: "PROJ-zed" },
+  ])
+})
+
 // --- canTransition / statusOf / moveTask (stage-order enforcement) ---
 
 test("canTransition allows each adjacent forward hop", () => {
@@ -1084,6 +1102,33 @@ test("resolveTaskIdIn never treats a legacy slug as a hash prefix", async () => 
   assert.equal(await resolveTaskIdIn($, "/r", "docs/tasks", "queued", "add"), null)
 })
 
+test("resolveTaskIdIn accepts a quoted id — a typed-command artifact, never part of the id", async () => {
+  // The two hosts disagreed about this and both failed silently. The Claude/Qwen
+  // hook unquotes every id it forwards (gate-parse.mjs) because a quoted one
+  // fails `isSafeTaskId` and the gate reports "no task found" for a file that
+  // is right there; the OpenCode driver takes its ids off the raw argument
+  // string and never did, so `approve "f7k3-add-foo"` dead-ended there. Fixed
+  // at the resolver, which every id-taking verb on every host goes through.
+  const $ = idResolverShell(QDIR, ["f7k3-add-foo"])
+  for (const q of ['"f7k3-add-foo"', "'f7k3-add-foo'", "`f7k3-add-foo`", '  "f7k3-add-foo" ']) {
+    assert.deepEqual(await resolveTaskIdIn($, "/r", "docs/tasks", "queued", q), { id: "f7k3-add-foo" }, q)
+  }
+  // The short-hash handle quotes the same way.
+  assert.deepEqual(await resolveTaskIdIn($, "/r", "docs/tasks", "queued", '"f7k3"'), { id: "f7k3-add-foo" })
+})
+
+test("resolveTaskIdIn strips only a MATCHED quote pair — half a quote is prose, not an id", async () => {
+  // `replan "wrong approach"` splits into `"wrong` + `approach"`, and the
+  // leading token has to keep reading as a reason word: `rejectAny` treats any
+  // token that resolves as an id, so stripping half a quote would turn a
+  // rejection reason into a wrong-target id.
+  const $ = idResolverShell(QDIR, ['"f7k3-add-foo', "f7k3-add-foo"])
+  assert.equal(await resolveTaskIdIn($, "/r", "docs/tasks", "queued", '"wrong'), null)
+  assert.equal(await resolveTaskIdIn($, "/r", "docs/tasks", "queued", "approach\""), null)
+  // An empty quoted string is not an id either.
+  assert.equal(await resolveTaskIdIn($, "/r", "docs/tasks", "queued", '""'), null)
+})
+
 test("resolveTaskIdIn returns null when nothing matches", async () => {
   const $ = idResolverShell(QDIR, ["f7k3-add-foo"])
   assert.equal(await resolveTaskIdIn($, "/r", "docs/tasks", "queued", "zzzz"), null)
@@ -1122,6 +1167,19 @@ test("resolveTaskIdAnywhere: an exact full id wins immediately", async () => {
 test("resolveTaskIdAnywhere merges prefix hits across folders into an ambiguity", async () => {
   const $ = multiDirShell({ "/r/docs/tasks/queued": ["f7k3-add-foo"], "/r/docs/tasks/draft": ["fa2b-do-bar"] })
   assert.deepEqual(await resolveTaskIdAnywhere($, "/r", "docs/tasks", "f"), { ambiguous: ["f7k3-add-foo", "fa2b-do-bar"] })
+})
+
+test("resolveTaskIdAnywhere unquotes too, so the exact-id shortcut still fires", async () => {
+  // The cross-folder resolver compares the per-folder hit against `query`, so a
+  // quoted query would never match its own exact hit and every full id would
+  // degrade to the prefix merge (and to an ambiguity wherever two ids share a
+  // hash). Unquoted here as well as inside the per-folder call.
+  const $ = multiDirShell({ "/r/docs/tasks/queued": ["f7k3-add-foo"], "/r/docs/tasks/draft": ["f7k3-add-bar"] })
+  assert.deepEqual(await resolveTaskIdAnywhere($, "/r", "docs/tasks", '"f7k3-add-foo"'), { id: "f7k3-add-foo" })
+  // …and a quoted ambiguous handle still reports the ambiguity rather than guessing.
+  assert.deepEqual(await resolveTaskIdAnywhere($, "/r", "docs/tasks", "'f7k3'"), {
+    ambiguous: ["f7k3-add-bar", "f7k3-add-foo"],
+  })
 })
 
 test("resolveTaskIdAnywhere returns null for an unknown id and an empty query", async () => {

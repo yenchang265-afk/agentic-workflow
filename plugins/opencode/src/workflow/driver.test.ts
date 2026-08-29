@@ -4728,3 +4728,48 @@ test("approve refuses a malformed --base= before anything moves", async () => {
   assert.equal(toasts[0]?.variant, "error")
   assert.ok(!log.some((cmd) => cmd.includes("mv") && cmd.includes("completed")), "the task must still be in in-review/")
 })
+
+/**
+ * `status`'s pairing roll-up. `docs/configuration.md` promises
+ * `/agentic-workflow:engineering status` "adds a `pairing` roll-up: the tracker
+ * system, how many active tasks are paired, and the ids of those still
+ * unpaired" — and only the Claude host's `workflow_status` had one, so on the
+ * host the doc names it was missing outright. `projectManagement.baseUrl` was
+ * worse off: `trackerUrl` implemented the documented deep link and no host, and
+ * not the hub, ever called it, so the knob parsed, validated, and did nothing.
+ */
+
+const pairedTask = (title: string, key: string) =>
+  serializeTask({ title, body: "ctx", tracker: { system: "jira", key } })
+
+test("status reports the pairing roll-up with each paired task's deep link", async () => {
+  const files = {
+    "docs/tasks/queued/f7k3-paired.md": pairedTask("Paired", "PROJ-1"),
+    "docs/tasks/draft/a1b2-loose.md": serializeTask({ title: "Loose", body: "ctx" }),
+  }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+  const config: Config = {
+    ...testConfig,
+    projectManagement: { system: "jira", baseUrl: "https://acme.atlassian.net/browse/" },
+  }
+
+  await handleCommand(deps, "sess-pairing", "status", config)
+
+  const line = toasts[0]?.message ?? ""
+  assert.match(line, /pairing \(jira\): 1\/2 paired/)
+  assert.match(line, /f7k3-paired→https:\/\/acme\.atlassian\.net\/browse\/PROJ-1/, "the baseUrl deep link, built at last")
+  assert.match(line, /unpaired: a1b2-loose/)
+})
+
+test("status says nothing about pairing when no tracker is configured", async () => {
+  const files = { "docs/tasks/draft/a1b2-loose.md": serializeTask({ title: "Loose", body: "ctx" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-nopairing", "status", testConfig)
+
+  assert.doesNotMatch(toasts[0]?.message ?? "", /pairing/, "an unconfigured knob adds no noise")
+})

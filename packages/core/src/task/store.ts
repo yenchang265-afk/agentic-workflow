@@ -17,7 +17,20 @@ import type { Client, Log, Shell } from "../host.js"
 import { AUDIT_NOTE_LINE_RE, auditTailIndex, lastMarkerIndex, PLAN_HEADING } from "./plan-section.js"
 import { revokePlanRequestAt, strayPlanRequestIds } from "./plan-request.js"
 import { redact } from "./redact.js"
-import { buildTaskFile, isEpicType, isPaired, isSafeTaskId, parseTask, serializeTask, SHORT_ID_RE, shortIdOf, type Task, type TaskInput } from "./schema.js"
+import {
+  buildTaskFile,
+  isEpicType,
+  isPaired,
+  isSafeTaskId,
+  parseTask,
+  serializeTask,
+  SHORT_ID_RE,
+  shortIdOf,
+  type Task,
+  type TaskInput,
+  type TaskTracker,
+  type TrackerSystem,
+} from "./schema.js"
 
 export { PLAN_HEADING } from "./plan-section.js"
 
@@ -765,17 +778,44 @@ export const nextActions = (s: BacklogSummary, cmd: string): readonly string[] =
 export const ACTIVE_STATUSES: readonly TaskStatus[] = ["draft", "queued", "plan-review", "in-progress", "in-review"]
 
 /**
+ * One active task that IS paired: which tracker item it names.
+ *
+ * The `key` is what `config.ts`'s `trackerUrl` appends to
+ * `projectManagement.baseUrl` to build the deep link. It is returned rather
+ * than the link itself so this stays a pure function of the backlog — the
+ * base URL is config, and core's task store does not read config.
+ */
+export interface TrackerPair {
+  readonly id: string
+  readonly system: TrackerSystem
+  readonly key: string
+}
+
+/**
  * Pairing coverage across the active backlog (everything but completed/abandoned):
- * how many active tasks carry a `tracker` block vs the ids of those that don't.
- * Feeds the `workflow_status` pairing view when project management is configured. Pure.
+ * how many active tasks carry a `tracker` block, which ones do (and to what),
+ * and the ids of those that don't. Feeds the `status` pairing view on every
+ * host when project management is configured. Pure.
+ *
+ * `pairs` exists because `paired` is a COUNT, and a count is the one thing a
+ * deep link cannot be built from. `projectManagement.baseUrl` is documented as
+ * "a URL prefix a task's `tracker.key` is appended to, to build a deep link",
+ * and `trackerUrl` has always implemented exactly that — but nothing called it,
+ * so the knob parsed, validated, and did nothing (the `prBase` failure one
+ * config section over). Naming the paired tasks here is what gives the hosts
+ * something to build the link from.
  */
 export const pairingCoverage = (
   byStatus: Readonly<Record<TaskStatus, readonly Task[]>>,
-): { readonly paired: number; readonly unpaired: readonly string[] } => {
+): { readonly paired: number; readonly unpaired: readonly string[]; readonly pairs: readonly TrackerPair[] } => {
   const active = ACTIVE_STATUSES.flatMap((s) => byStatus[s] ?? [])
-  const paired = active.filter(isPaired).length
+  const byId = (a: { readonly id: string }, b: { readonly id: string }): number => a.id.localeCompare(b.id)
+  const pairs = active
+    .filter((t): t is Task & { tracker: TaskTracker } => isPaired(t))
+    .map((t) => ({ id: t.id, system: t.tracker.system, key: t.tracker.key }))
+    .sort(byId)
   const unpaired = active.filter((t) => !isPaired(t)).map((t) => t.id).sort((a, b) => a.localeCompare(b))
-  return { paired, unpaired }
+  return { paired: pairs.length, unpaired, pairs }
 }
 
 /**
@@ -880,6 +920,35 @@ export const findByIdIn = async (
 export type ResolvedId = { readonly id: string } | { readonly ambiguous: readonly string[] } | null
 
 /**
+ * A typed id query with one layer of MATCHING surrounding quotes stripped, so
+ * `approve "f7k3-add-thing"` names the task it plainly names. Pure.
+ *
+ * It belongs at the RESOLVER rather than in each host's verb parsing, because
+ * the hosts disagreed about it and the failure was silent both ways. The
+ * Claude/Qwen hook unquotes every id it forwards (`gate-parse.mjs`) precisely
+ * because a quoted one fails `isSafeTaskId` and the gate then reports "no task
+ * found" for a file that is right there. The OpenCode driver takes its ids off
+ * the raw argument string — `$1` is quote-stripped by opencode, so what the
+ * rendered command shows and what the plugin dispatches on drifted apart, the
+ * same trap `verb.ts` already documents one token over. Worse on `replan`,
+ * where an unrecognized leading token is not an error: it falls through to the
+ * id-less pick and rejects an UNRELATED parked plan with the human's id folded
+ * into the reason — the exact silent wrong-target `REJECT_ID_FOLDERS` exists to
+ * stop.
+ *
+ * Sound because a real id can never carry a quote (`SAFE_TASK_ID_RE`), so this
+ * can only ever turn an unusable query into a usable one. Only a matched PAIR
+ * is stripped: an unbalanced quote is ordinary prose (`replan "wrong approach"`
+ * splits into `"wrong` + `approach"`), and stripping half of one would turn a
+ * reason word into an id query.
+ */
+const unquoteIdQuery = (query: string): string => {
+  const trimmed = query.trim()
+  const m = /^(["'`])(.*)\1$/s.exec(trimmed)
+  return m?.[2] ?? trimmed
+}
+
+/**
  * Resolve a user-supplied `query` to a concrete task id in `status`, so a human can
  * target a task by its short-hash handle (`f7k3`) instead of the full
  * `f7k3-add-rate-limit` filename. Real-FS `ls`/`cat` through the shell for the same
@@ -898,6 +967,12 @@ export const resolveTaskIdIn = async (
   query: string,
   log?: Log,
 ): Promise<ResolvedId> => {
+  // Unquoted before the safety screen, never after: a quoted id is a
+  // typed-command artifact, and left in place it fails `isSafeTaskId` and reads
+  // as "no task found" for a file that is right there. See `unquoteIdQuery`.
+  // The empty check follows the strip so `""` reports nothing rather than
+  // logging an "unsafe id query" warning about a query that names nothing.
+  query = unquoteIdQuery(query)
   if (!query) return null
   // The exact-match branch below would bless a `../…` query as a valid id and
   // feed it to every downstream path builder — reject unsafe queries outright.
@@ -945,6 +1020,11 @@ export const resolveTaskIdAnywhere = async (
   query: string,
   log?: Log,
 ): Promise<ResolvedId> => {
+  // Unquoted HERE too, not only inside the per-folder call below: the
+  // exact-filename shortcut compares the resolved id against `query`, so a
+  // quoted one would never match its own hit and every exact id would degrade
+  // to the prefix merge.
+  query = unquoteIdQuery(query)
   if (!query) return null
   const prefix = new Set<string>()
   for (const s of STATUSES) {

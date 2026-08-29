@@ -1059,8 +1059,9 @@ API; a human copies the issue key/id into the task.
 - **`system`** (required) — `"jira"` or `"azure-devops"`. Becomes the default
   `tracker.system` stamped on tasks authored via `/agentic-workflow:engineering new`.
 - **`baseUrl`** — optional URL prefix a task's `tracker.key` is appended to,
-  to build a deep link (Jira: `…/browse/`; ADO: `…/_workitems/edit/`). Unset →
-  no link is built.
+  to build a deep link (Jira: `…/browse/`; ADO: `…/_workitems/edit/`). The
+  links appear in the `pairing` roll-up below, one per paired task. Unset →
+  no link is built and the roll-up names the bare tracker key instead.
 - **`defaultType`** — optional issue/work-item type stamped on new drafts
   (e.g. `story`, `task`, `bug`).
 
@@ -1073,7 +1074,10 @@ Impact on the commands:
   `defaultType`) so the drafted task is ready to pair — you fill in the
   `tracker.key`.
 - **`/agentic-workflow:engineering status`** adds a `pairing` roll-up: the tracker system, how
-  many active tasks are paired, and the ids of those still unpaired.
+  many active tasks are paired, each paired task's tracker key (as a `baseUrl`
+  deep link where one is configured), and the ids of those still unpaired. Both
+  hosts report it — the OpenCode status line as one `pairing (…)` segment, the
+  Claude `workflow_status` tool as a `pairing` object.
 
 ## Optional hardening
 

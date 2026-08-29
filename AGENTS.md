@@ -735,6 +735,32 @@ human did not ask about, and on OpenCode an immediate re-plan of it.
   `workflow_replan` too — so a folder unreachable here is unreachable from the
   verb entirely, however well core implements it.
 
+### An id's quoting is stripped at the RESOLVER, not per host
+
+`approve "f7k3-add-thing"` is a thing humans type, and a quote is not part of
+any id — `SAFE_TASK_ID_RE` forbids one. The two hosts disagreed about who strips
+it and both failed silently: the Claude/Qwen hook unquotes every id it forwards
+(`gate-parse.mjs`), while the OpenCode driver takes ids straight off the raw
+argument string. On OpenCode a quoted id therefore failed `isSafeTaskId`,
+resolved to nothing, and every gate reported "no task found" for a file plainly
+on disk — the same drift `verb.ts` documents one token over, where opencode
+quote-strips `$1` and the plugin has to agree with it.
+
+So `resolveTaskIdIn`/`resolveTaskIdAnywhere` strip it (`unquoteIdQuery`), which
+is the one seam every id-taking verb on every host — and the hub — already goes
+through. Two properties keep it sound, and a "simplification" of either
+reopens the bug:
+
+- **Only a MATCHED pair.** `replan "wrong approach"` splits into `"wrong` +
+  `approach"`, and `rejectAny` claims any leading token that RESOLVES as an id;
+  stripping half a quote would turn a reason word into a wrong-target id.
+- **Before the safety screen, never after.** The screen is what stops a `../…`
+  query reaching a path builder, so it has to judge the string that will
+  actually be used.
+
+The hosts' own unquoting stays as-is — it is also what feeds `remove`'s
+`--force` detection — and is now a no-op for ids.
+
 ### Every gate reason goes through `oneLineReason`
 
 An audit note is ONE `> …` line closed by a bracketed stamp. A reason with a

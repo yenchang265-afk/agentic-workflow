@@ -976,7 +976,9 @@ issue 的 key/id 複製進任務裡。
   `tracker.system`。
 - **`baseUrl`**——選填的 URL 前綴，會被附加到任務的 `tracker.key`
   上，以建構一個深層連結（Jira：`…/browse/`；ADO：
-  `…/_workitems/edit/`）。未設定 → 不建構連結。
+  `…/_workitems/edit/`）。這些連結會出現在下方的 `pairing` 彙總裡，
+  每個已配對的任務一條。未設定 → 不建構連結，彙總改為列出裸的
+  tracker key。
 - **`defaultType`**——選填的 issue/work-item 類型，蓋在新草稿上
   （例如 `story`、`task`、`bug`）。
 
@@ -989,8 +991,11 @@ issue 的 key/id 複製進任務裡。
   （以及來自 `defaultType` 的 `type`），讓草擬出來的任務已經準備好
   可以配對——你只需要填入 `tracker.key`。
 - **`/agentic-workflow:engineering status`** 會加上一個 `pairing`
-  彙總：tracker 系統、有多少個活躍任務已配對，以及還未配對的任務
-  id。
+  彙總：tracker 系統、有多少個活躍任務已配對、每個已配對任務的
+  tracker key（設定了 `baseUrl` 時則是深層連結），以及還未配對的
+  任務 id。兩個 host 都會回報——OpenCode 的狀態行是一段
+  `pairing (…)`，Claude 的 `workflow_status` 工具則是一個 `pairing`
+  物件。
 
 ## 可選的強化項
 

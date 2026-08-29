@@ -1616,3 +1616,47 @@ test("an explicit --base outranks the recorded run base", async () => {
   assert.ok(log.some((c) => c.includes("ls-remote --heads origin release/3.0")), "retargeting is exactly what the flag is for")
   assert.ok(!log.some((c) => c.includes("ls-remote --heads origin release/2.4")))
 })
+
+// --- quoted ids: what a typed gate verb hands the resolver ---
+
+test("a quoted id names its task at every gate, instead of dead-ending as 'no task found'", async () => {
+  // The two hosts disagreed and both failed silently: the Claude/Qwen hook
+  // unquotes each id it forwards, the OpenCode driver reads ids off the raw
+  // argument string and did not — so `approve "f7k3-t"` there resolved to
+  // nothing and the gate reported a task that is plainly on disk as missing.
+  // Now fixed once, at the resolver every id-taking verb shares.
+  const { ctx, fs } = makeCtx({ "draft/f7k3-t.md": task("Do it") })
+  const r = await approveAny(ctx, '"f7k3-t"')
+  assert.equal(r.ok, true, r.message)
+  assert.equal(r.ok && r.data.id, "f7k3-t", "the canonical id, not the quoted query")
+  assert.ok("/repo/docs/tasks/queued/f7k3-t.md" in fs)
+})
+
+test("replan with a quoted id rejects THAT plan, not whichever one happened to be parked", async () => {
+  // The sharpest half: `rejectAny` treats a leading token that resolves as an
+  // id and everything after it as the reason. A quoted id resolved NOWHERE, so
+  // it fell through to the id-less pick — rejecting an unrelated parked plan
+  // with the human's own id folded into its reason, silently, and on OpenCode
+  // re-planning it immediately. That is the exact wrong-target failure
+  // REJECT_ID_FOLDERS exists to stop.
+  const { ctx, fs } = makeCtx({
+    "plan-review/f7k3-mine.md": task("Mine", `${PLAN_HEADING}\n\n1. Step.`),
+    "in-progress/a1b2-other.md": task("Other", `${PLAN_HEADING}\n\n1. Step.`),
+  })
+  const r = await rejectAny(ctx, "'a1b2-other' the approach is wrong")
+  assert.equal(r.ok, true, r.message)
+  assert.equal(r.ok && r.data.id, "a1b2-other", "the token named a real task — it is an id, never a reason word")
+  assert.ok("/repo/docs/tasks/queued/a1b2-other.md" in fs, "the named task was re-queued")
+  assert.ok("/repo/docs/tasks/plan-review/f7k3-mine.md" in fs, "and the bystander stayed put")
+  const requeued = fs["/repo/docs/tasks/queued/a1b2-other.md"]!
+  assert.match(requeued, /the approach is wrong/, "the rest of the argument is the reason")
+  assert.doesNotMatch(requeued, /a1b2-other' the approach/, "and the id is not folded into it")
+})
+
+test("an unbalanced quote stays a reason word — half a quote is not an id", async () => {
+  const { ctx, fs } = makeCtx({ "plan-review/f7k3-mine.md": task("Mine", `${PLAN_HEADING}\n\n1. Step.`) })
+  const r = await rejectAny(ctx, '"wrong approach" — redo it')
+  assert.equal(r.ok, true, r.message)
+  assert.equal(r.ok && r.data.id, "f7k3-mine", "no token named a task, so the id-less pick still runs")
+  assert.match(fs["/repo/docs/tasks/queued/f7k3-mine.md"]!, /"wrong approach" — redo it/)
+})
