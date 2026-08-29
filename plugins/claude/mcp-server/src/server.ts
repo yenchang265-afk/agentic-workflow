@@ -8,6 +8,7 @@ import { fsClient, sh } from "./shim.js"
 import { stageOrderError } from "./stage-guard.js"
 import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
 import { STALE_CLAIM_MINUTES, staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
+import { machineIdSync } from "@agentic-workflow/core/liveness"
 import { DEFAULT_CONFIG, bashAllowlistPrefixes, parseGateOptions, stageBashGlobs, loadConfig } from "@agentic-workflow/core/config"
 import { SHIP_PUBLISH_MODES, type Action, type Config, type ShipPublish, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
 import { advance, composePrompt, composePromptWithStats, firstStep, withCheckResults } from "@agentic-workflow/core/workflow/engine"
@@ -105,6 +106,8 @@ import {
   appendNote,
   appendRunLog,
   auditNote,
+  buildFinishedNote,
+  buildStartedNote,
   claimTask,
   claimTaskSweepingDeadWriter,
   claimTaskSweepingStale,
@@ -279,6 +282,33 @@ let lastFirePromptChars: number | undefined
 let lastFirePromptElided: number | undefined
 let stageDeadline: number | null = null // wall-clock cap for the stage in flight
 let config: Config = DEFAULT_CONFIG
+
+/**
+ * Refuse a gate MOVE while a stage of this loop is armed — the twin of
+ * OpenCode's `refuseIfDriven`, and the caller-identity check the approve/ship
+ * tools had none of.
+ *
+ * `stageDeadline` is the identity: it is process-local, set by
+ * `writeStageMarker` and cleared by `writeStageMarker(null)` at every park,
+ * done, stop and error. A stage subagent runs inside the session that owns THIS
+ * server, so its calls see it set; a human's separate session has its own server
+ * process and sees null, so nothing legitimate is refused. The orchestrator
+ * itself is blocked on the spawn while a stage runs, which is why "a stage is
+ * armed" and "the caller is inside a stage" are the same fact here.
+ *
+ * The rejection-family tools already had half of this (they take
+ * `active?.task?.id` and refuse the driven task); this covers the other half,
+ * which is a stage agent crossing a gate for a DIFFERENT task — the folder
+ * checks refuse its own.
+ *
+ * Fails CLOSED, like its OpenCode twin: a false refusal costs the human one
+ * retry after the stage ends, a false allow ships unreviewed work.
+ */
+const refuseDuringStage = (): string | null =>
+  stageDeadline === null
+    ? null
+    : "A loop stage is running in this session — a stage agent may not move the human's gates. Report your stage's outcome instead " +
+      "(workflow_verdict for a check stage, workflow_blocked for a work stage); the human crosses the gate when the run reaches it."
 
 /**
  * Structured twin of the run-log summary — `runs/<id>.metrics.json`. The
@@ -896,6 +926,15 @@ const writeStageMarker = (stage: string | null, deadline?: number): string | nul
           // Lets `taskDrivenByStageMarker` treat a SIGKILLed server's leftover
           // marker as dead instead of blocking recover for the stage window.
           pid: process.pid,
+          // The pid's NAMESPACE. A pid means nothing without it: a bind-mounted
+          // repo or two containers from one image share this directory while
+          // having separate pid namespaces, so a crashed writer's pid can exist
+          // in the next session's namespace and read LIVE. That direction is the
+          // dangerous one for the guard — it keeps enforcing a dead stage's
+          // deadline starve repo-wide, addressed to nobody — so the hook proves
+          // the writer is ours before believing the probe, and an absent stamp
+          // (an older server) reads as "not proven", i.e. dead.
+          machine: machineIdSync(),
           // 1-indexed to match the "BUILD started (iteration N)" audit notes.
           iteration: active ? active.iteration + 1 : null,
           ...(allowlist.length ? { bashAllowlist: allowlist } : {}),
@@ -1778,7 +1817,7 @@ server.registerTool(
       // audited note must land once per build iteration, not once per call.
       buildNoteFor = `${active.task.id}:${active.iteration}`
       const actor = await gitActor(sh, directory)
-      await appendNote(sh, active.task, auditNote(`BUILD started (iteration ${active.iteration + 1})`, new Date(), actor), log)
+      await appendNote(sh, active.task, auditNote(buildStartedNote(active.iteration + 1), new Date(), actor), log)
       // A degraded isolation (detached HEAD, checkout failure) must be visible
       // in the task's audit trail, not just a console warn — the run otherwise
       // looks identical to an isolated one while writing into the main tree.
@@ -2095,7 +2134,7 @@ server.registerTool(
     // fused artifact is byte-identical to what this site used to build by hand.
     const actor = await gitActor(sh, directory)
     if (stage === "build" && active.task) {
-      await appendNote(sh, active.task, auditNote(`BUILD finished (iteration ${active.iteration + 1})`, new Date(), actor), log)
+      await appendNote(sh, active.task, auditNote(buildFinishedNote(active.iteration + 1), new Date(), actor), log)
       // Lockfiles excluded (CHECKPOINT_LOCKFILE_EXCLUDES): VERIFY's npm install
       // churn must not ride the checkpoint into REVIEW's diff boundary.
       // In current-branch mode the tree is shared: after this run's lock went
@@ -2816,6 +2855,8 @@ server.registerTool(
     inputSchema: { id: z.string().min(1) },
   },
   async ({ id }) => {
+    const driven = refuseDuringStage()
+    if (driven) return fail(driven)
     await loadCfg()
     const r = await approveTask(id)
     return okGate(r)
@@ -2830,6 +2871,8 @@ server.registerTool(
     inputSchema: { id: z.string().min(1) },
   },
   async ({ id }) => {
+    const driven = refuseDuringStage()
+    if (driven) return fail(driven)
     await loadCfg()
     const r = await approvePlan(id)
     return okGate(r)
@@ -2941,6 +2984,8 @@ server.registerTool(
     },
   },
   async ({ id, publish, base, autoPlan, all }) => {
+    const driven = refuseDuringStage()
+    if (driven) return fail(driven)
     await loadCfg()
     const r = await approveAny((id ?? "").trim(), publish, base, autoPlan, all)
     return okGate(r)
@@ -3017,6 +3062,8 @@ server.registerTool(
     inputSchema: { id: z.string().optional(), publish: publishArg, base: baseArg },
   },
   async ({ id, publish, base }) => {
+    const driven = refuseDuringStage()
+    if (driven) return fail(driven)
     await loadCfg()
     const r = await shipAny((id ?? "").trim(), publish, base)
     return r.ok ? ok({ ...r.data, message: r.message }) : fail(r.message)

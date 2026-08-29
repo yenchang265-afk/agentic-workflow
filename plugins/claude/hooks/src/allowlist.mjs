@@ -275,7 +275,6 @@ export const isGithubPrMutation = (cmd) => {
   return false
 }
 
-// A Bash command that calls the Azure DevOps REST API (curl against an ADO host).
 /**
  * The Azure DevOps MCP server name the loop requires. Mirrors
  * `ADO_MCP_SERVER_NAME` in packages/core/src/source/ado-tools.ts.

@@ -267,6 +267,13 @@ export const applyBashAllowlistConfig = (
 const CONFIG_READ_TIMEOUT_MS = 10_000
 const LOG_TIMEOUT_MS = 5_000
 const RECONCILE_TIMEOUT_MS = 30_000
+// The parent-chain walk is one `client.session.get` per hop (five hops), each a
+// fetch back into the server with no timeout of its own. The hook paths below
+// await it on every tool call and every denied permission of every unattributed
+// session while any loop is live, so it needs the same box as the config read —
+// a stalled fetch there wedges a human's tool call in a session the loop does
+// not even own.
+const SESSION_WALK_TIMEOUT_MS = 10_000
 
 /**
  * Whether this verb's task-file move runs BEFORE the startup reconcile rather
@@ -279,6 +286,27 @@ const RECONCILE_TIMEOUT_MS = 30_000
  * command of a session the model reads pre-move state and a retry "fixes" it.
  */
 export const gateMovesFirst = (kind: string, verb: string): boolean => kind === "engineering" && ["approve", "replan", "retask"].includes(verb)
+
+/**
+ * What an UNISOLATED stage is told when its command or write would have been
+ * corrected into the loop's worktree.
+ *
+ * A correction is only ever right for a stage that has a worktree of its own. A
+ * stage running `isolation: "none"` after the loop isolated (PLAN re-entered on
+ * a replanned task, an unisolated sitter stage) has none, so rewriting its path
+ * moves a write it was never allowed to make onto the build branch — where it
+ * lands in REVIEW's `base...branch` diff and in the PR as a change nobody wrote.
+ *
+ * Wording mirrors the Claude guard's twin (`check-stage-guard.entry.mjs`)
+ * deliberately: an operator who has seen one refusal should recognise the other.
+ */
+export const unisolatedBashRefusal = (stage: string, command: string, worktree: string): string =>
+  `agentic-workflow: the ${stage.toUpperCase()} stage does not build — "${command}" would mutate the main tree. ` +
+  `Only read-only commands are available here; code changes belong to the BUILD stage, inside ${worktree}.`
+
+export const unisolatedWriteRefusal = (stage: string, filePath: string, worktree: string): string =>
+  `agentic-workflow: the ${stage.toUpperCase()} stage does not build — it must not write ${filePath}. ` +
+  `Code changes belong to the BUILD stage, inside the loop's worktree ${worktree}.`
 
 /**
  * Reject with a timeout error when `promise` takes longer than `ms`; settle
@@ -635,6 +663,25 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
     }
   }
 
+  /**
+   * Whether the loop's CURRENT stage runs inside the worktree, or in the main
+   * tree (`isolation: "none"` — engineering PLAN). The equivalent of the Claude
+   * marker's `worktree` / `workflowWorktree` split, which OpenCode's state has no
+   * field for; derived from the manifest per call rather than stored, because it
+   * is a property of the stage and never of the run.
+   *
+   * Fails toward ISOLATED — an unreadable manifest or an unknown stage keeps the
+   * old correcting behaviour rather than starting to refuse writes.
+   */
+  const stageRunsIsolated = (state: { kind?: string; stage: string }): boolean => {
+    try {
+      const loaded = driver.manifestFor(state.kind ?? "engineering")
+      return stageDef(loaded.manifest, state.stage).isolation !== "none"
+    } catch {
+      return true
+    }
+  }
+
   /** Whether the loop's current stage is a check stage (VERIFY/REVIEW-shaped, read-only). */
   const stageIsCheck = (state: { kind?: string; stage: string }): boolean => {
     try {
@@ -896,7 +943,11 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
           isAdoMcpTool(input.tool))
       ) {
         try {
-          const found = await driver.findDrivingWorkflow(client, input.sessionID)
+          // Time-boxed: a walk that never settles would park this hook, and a
+          // parked hook kills the turn with no output at all. The deadline
+          // rejects into the arm below, so a stall is treated exactly like a
+          // session-API failure — fail CLOSED for edits, open for the ask deny.
+          const found = await withTimeout(driver.findDrivingWorkflow(client, input.sessionID), SESSION_WALK_TIMEOUT_MS, "driving-session walk")
           loop = found?.state
           drivingID = found?.sessionID ?? null
         } catch (err) {
@@ -1014,7 +1065,15 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
           if (bashWt) {
             const pinVerdict = pinBash(cmd, bashWt)
             if (pinVerdict.action === "block") throw new Error(pinVerdict.reason)
-            if (pinVerdict.action === "rewrite") output.args.command = pinVerdict.value
+            if (pinVerdict.action === "rewrite") {
+              // An UNISOLATED stage has no worktree to correct into: it only
+              // needed the pin to prove the command was harmless, so a rewrite
+              // here means "this would have mutated the main tree". Refuse it,
+              // matching the Claude guard rather than relocating a PLAN-stage
+              // mutation onto the loop's build branch.
+              if (loop && !stageRunsIsolated(loop)) throw new Error(unisolatedBashRefusal(loop.stage, cmd, bashWt))
+              output.args.command = pinVerdict.value
+            }
           }
         }
       } else if (EDIT_TOOLS.has(input.tool)) {
@@ -1051,13 +1110,13 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
             "(session lookup failed) — refusing the edit rather than risking a write outside the worktree.",
         )
       }
-      // NOTE: unlike the Claude host this reads only the loop's worktree, with no
-      // per-stage isolation flag — OpenCode's state carries no equivalent of the
-      // marker's `workflowWorktree`/`worktree` split. In practice the driver sets
-      // `git.worktree` only once it has isolated, so an unisolated stage sees no
-      // worktree and no pin; the asymmetry is that a stage which runs unisolated
-      // AFTER a worktree exists (a replan bounce back to PLAN) would have its
-      // write relocated here rather than refused.
+      // The loop's worktree, whether or not THIS stage is isolated — the Claude
+      // marker's `workflowWorktree`. A stage that runs unisolated after the
+      // worktree exists (PLAN re-entered on a replanned task, an unisolated
+      // sitter stage) is still guarded: its stray code write is REFUSED below
+      // rather than silently rewritten onto the loop's build branch, where it
+      // would contaminate REVIEW's `base...branch` diff and the PR with a write
+      // that stage was never allowed to make.
       const wt = loop?.git?.worktree
       if (!wt || !EDIT_TOOLS.has(input.tool)) return
       const filePath: unknown = output.args?.filePath ?? output.args?.path
@@ -1076,6 +1135,11 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       const pinned = pinEditPath(filePath, wt, directory, config.tasksDir)
       if (pinned.action === "block") throw new Error(pinned.reason)
       if (pinned.action === "rewrite") {
+        // The same rule as the bash arm: PLAN does not build, so a code write
+        // from an unisolated stage is a mistake to refuse, not a path to
+        // relocate. Its legitimate backlog write never reaches here —
+        // `pinEditPath` returns allow for the task file.
+        if (loop && !stageRunsIsolated(loop)) throw new Error(unisolatedWriteRefusal(loop.stage, filePath, wt))
         if (output.args.filePath !== undefined) output.args.filePath = pinned.value
         else output.args.path = pinned.value
       }
@@ -1111,7 +1175,9 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
         if (output.status !== "deny" || String(input.type) !== "bash") return
         let loop = getWorkflow(input.sessionID)
         if (!loop && anyWorkflowActive()) {
-          const found = await driver.findDrivingWorkflow(client, input.sessionID).catch(() => undefined)
+          // Time-boxed like the tool hook's walk: a permission decision must not
+          // wait on best-effort telemetry, and this hook is awaited by the host.
+          const found = await withTimeout(driver.findDrivingWorkflow(client, input.sessionID), SESSION_WALK_TIMEOUT_MS, "driving-session walk").catch(() => undefined)
           loop = found?.state
         }
         if (!loop) return

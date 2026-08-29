@@ -68,6 +68,18 @@
         ]
       },
       {
+        "_comment": "The stage-ask deny — the Qwen mirror of the Claude plugin's. No stage may ask the human: a drive is unattended between the plan gate and the ship gate, so a question dialog opened mid-VERIFY stalls the run on someone who may not be at the terminal. Marker-gated, so an ordinary session asks freely, and fails open on every uncertainty.",
+        "matcher": "^(ask_user_question)$",
+        "hooks": [
+          {
+            "type": "command",
+            "name": "agentic-workflow-stage-ask",
+            "command": "node \"${AGENTIC_WORKFLOW_PLUGIN_ROOT}/hooks/check-stage-ask.mjs\"",
+            "env": { "AGENTIC_WORKFLOW_HOST": "qwen" }
+          }
+        ]
+      },
+      {
         "_comment": "The spawn-stage guard — the Qwen mirror of the Claude plugin's. Qwen's subagent spawner is the `agent` tool; the guard blocks spawning a stage agent the live stage marker has not armed, which is how a skipped workflow_advance surfaces before a stage runs instead of as a rejected verdict after it.",
         "matcher": "^(agent)$",
         "hooks": [

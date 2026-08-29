@@ -6,7 +6,8 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { test } from "node:test"
 import { dialectFor } from "./src/dialect.mjs"
-import { EVIDENCE_MAX, evidenceEntry, foldLedger, noteEvidence, parseLedger, withEntry } from "./src/evidence.mjs"
+import { machineIdSync } from "./src/marker.mjs"
+import { EVIDENCE_MAX, EVIDENCE_MAX_BYTES, evidenceEntry, foldLedger, noteEvidence, parseLedger, withEntry } from "./src/evidence.mjs"
 
 /**
  * The check-stage proof-of-work ledger: the account of a stage's tool calls that
@@ -118,6 +119,21 @@ test("noteEvidence appends within one stage and never throws on an unwritable di
   assert.doesNotThrow(() => noteEvidence(dir, claude.evidenceFile, "verify", null))
 })
 
+test("the ledger stops growing at its byte cap, keeping what it already recorded", () => {
+  // EVIDENCE_MAX caps the FOLD; the file is append-only NDJSON with no
+  // read-modify-write, so nothing capped its bytes. A long stage — or a stale
+  // marker collecting every later session's reads — grew it without bound.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aw-evidence-"))
+  const file = path.join(dir, claude.evidenceFile)
+  fs.writeFileSync(file, JSON.stringify({ stage: "verify", commands: ["npm test"], reads: [] }) + "\n" + "x".repeat(EVIDENCE_MAX_BYTES) + "\n")
+  const before = fs.statSync(file).size
+  noteEvidence(dir, claude.evidenceFile, "verify", { commands: ["one too many"], reads: [] })
+  assert.equal(fs.statSync(file).size, before, "an over-cap ledger stops growing")
+  // Dropping the overflow rather than rotating keeps the earlier record: a stage
+  // must not be able to flush an inconvenient command out by running more.
+  assert.deepEqual(foldLedger(fs.readFileSync(file, "utf8"), "verify"), { stage: "verify", commands: ["npm test"], reads: [] })
+})
+
 test("a torn line costs one entry, never the ledger", () => {
   const raw = ['{"stage":"verify","commands":["a"],"reads":[]}', '{"stage":"verify","commands":["b"', '{"stage":"verify","commands":["c"],"reads":[]}'].join("\n")
   assert.deepEqual(foldLedger(raw, "verify"), { stage: "verify", commands: ["a", "c"], reads: [] })
@@ -166,6 +182,42 @@ test("the recorder is routed to each host's read tools — its whole reason for 
 
   const qwenRe = matcherFor(hooksJson(path.join(HERE, "..", "..", "qwen", "hooks", "hooks.json")), "check-evidence.mjs")
   for (const tool of qwen.read) assert.ok(qwenRe.test(tool), `${tool} is not routed to check-evidence on qwen`)
+})
+
+test("the recorder ignores a CRASHED stage's marker, over the built hook", async () => {
+  // `check: true` was the only gate, so a SIGKILLed check stage's leftover
+  // marker made every later session's Read/Grep/Glob append to the dead
+  // stage's ledger — under its stage name, unboundedly, until the next
+  // writeStageMarker cleared it. Same dead-marker rule the guard applies.
+  const { spawnSync } = await import("node:child_process")
+  const hook = path.join(HERE, "check-evidence.mjs")
+  const repo = (marker) => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "aw-evidence-hook-"))
+    fs.mkdirSync(path.join(cwd, "docs", "tasks", "runs"), { recursive: true })
+    fs.writeFileSync(path.join(cwd, "docs", "tasks", "runs", ".stage.json"), JSON.stringify(marker))
+    return cwd
+  }
+  const read = (cwd) =>
+    spawnSync(process.execPath, [hook], {
+      input: JSON.stringify({ cwd, tool_name: "Read", tool_input: { file_path: "/repo/src/a.ts" } }),
+      encoding: "utf8",
+    })
+  const ledgerOf = (cwd) => {
+    try {
+      return fs.readFileSync(path.join(cwd, "docs", "tasks", "runs", claude.evidenceFile), "utf8")
+    } catch {
+      return ""
+    }
+  }
+
+  const base = { kind: "engineering", stage: "verify", check: true, taskId: "t" }
+  const dead = repo({ ...base, deadline: Date.now() - 60_000, pid: 999_999_999, machine: machineIdSync() })
+  assert.equal(read(dead).status, 0, "the recorder always allows")
+  assert.equal(foldLedger(ledgerOf(dead), "verify"), null, "a crashed stage's ledger must not collect later sessions' reads")
+
+  const live = repo({ ...base, deadline: Date.now() + 3_600_000 })
+  assert.equal(read(live).status, 0)
+  assert.deepEqual(foldLedger(ledgerOf(live), "verify"), { stage: "verify", commands: [], reads: ["/repo/src/a.ts"] })
 })
 
 test("the recorder's matcher is disjoint from the guard's — no call is seen by two PreToolUse hooks", () => {

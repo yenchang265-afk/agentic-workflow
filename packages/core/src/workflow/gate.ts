@@ -921,7 +921,17 @@ const replanQueued = async (ctx: GateCtx, task: Task, reason?: string): Promise<
     }
   }
   const actor = await gitActor($, directory)
-  const flat = oneLineReason(reason)
+  // Fused exactly as `replanTask` fuses it. This arm is the RETRY path — a
+  // second `replan <id>` on a task already back in `queued/` — and
+  // `extractReplanReason` reads the LAST rejection note, so a reason-only note
+  // written here SUPERSEDES the fused one the first replan wrote and the
+  // stopped run's digest silently stops reaching the planner. It cannot
+  // resurrect an old one: `extractStopContext` is already retired by any newer
+  // plan heading, park note, or reshape.
+  const stopContext = extractStopContext(task)
+  // Re-flattened for the same reason `replanTask` re-flattens its fusion: the
+  // budget is on the WHOLE note, not on either half.
+  const flat = oneLineReason([oneLineReason(reason), stopContext ? `prior run: ${stopContext}` : undefined].filter(Boolean).join(" — "))
   if (flat) {
     await appendNote($, task, auditNote(planRejectedNote(flat), new Date(), actor), log)
     await commitBacklog($, directory, config, `loop(${id}): rejection reason recorded — marked plan-next`)

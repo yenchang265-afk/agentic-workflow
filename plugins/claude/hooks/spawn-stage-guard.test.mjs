@@ -74,6 +74,22 @@ test("a live deadline still guards; a deadline-less marker stays trusted", () =>
   assert.equal(decideSpawnGuard(ARMED, "workflow-review"), "block")
 })
 
+test("an expired marker whose writer still runs is a LATE loop, and still guards", () => {
+  // The module's docstring claimed "the same liveness rule as check-stage-guard"
+  // while implementing a weaker one — expiry alone allowed. A loop past its
+  // deadline with a running writer is genuinely live, so a sibling spawn against
+  // it is the same protocol drift; the probe is injected because this module
+  // stays import-free.
+  const expired = { ...ARMED, deadline: Date.now() - 60_000 }
+  const alive = () => true
+  const dead = () => false
+  assert.equal(decideSpawnGuard(expired, "workflow-review", Date.now(), alive), "block")
+  assert.equal(decideSpawnGuard(expired, "workflow-review", Date.now(), dead), "allow", "a crashed run's leftover never refuses a spawn")
+  // No probe at all keeps the previous, weaker reading — a caller that cannot
+  // judge liveness loses nothing.
+  assert.equal(decideSpawnGuard(expired, "workflow-review"), "allow")
+})
+
 test("the refusal names both stages and both calls, so the next attempt succeeds", () => {
   const message = spawnDriftMessage(ARMED, "workflow-review")
   assert.match(message, /workflow-review/)

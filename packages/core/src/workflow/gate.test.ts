@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { DEFAULT_CONFIG } from "../config.js"
-import { PLAN_HEADING, TASK_APPROVED_MARKER } from "../task/store.js"
+import { PLAN_APPROVED_MARKER, PLAN_HEADING, TASK_APPROVED_MARKER } from "../task/store.js"
 import { parseTask, serializeTask } from "../task/schema.js"
 import { abandonTask, approveAllTasks, approveAny, approvePlan, approveTask, oneLineReason, planCaveats, rejectAny, removeTask, replanTask, REPLAN_REASON_MAX, retaskTask, shipAny, shipTask, type GateCtx, type GateResult } from "./gate.js"
 
@@ -746,6 +746,23 @@ test("approvePlan advances a planned plan-review task to in-progress", async () 
   assert.ok(log.some((c) => c.startsWith("mv ") && c.includes("in-progress")))
 })
 
+test("approvePlan's note opens with PLAN_APPROVED_MARKER — every claimability predicate anchors on it", async () => {
+  // `lifecycleWindow` slices the body at the LAST such note, and isClaimable /
+  // isReleasableClaim / isRecoverable / wasInterrupted all read only that
+  // window. A reword here does not error: it silently makes the window the whole
+  // body again, so a task that built once and was replanned reads "already
+  // started" forever and no watcher will ever claim its approved plan. Every
+  // store-side use of the marker is a hand-built fixture, so this is the only
+  // place the WRITER is pinned.
+  const { ctx, raw } = makeCtx({ "plan-review/t.md": task("Do it", `${PLAN_HEADING}\n\n1. step`) })
+  const r = await approvePlan(ctx, "t")
+  assert.ok(r.ok)
+  const lines = notePayload(raw, "Plan approved")
+  assert.equal(lines.length, 1, "exactly one line lands in the file")
+  assert.ok(lines[0]!.startsWith(PLAN_APPROVED_MARKER), `the marker opens it: ${lines[0]}`)
+  assert.match(lines[0]!, /\[[^\]\n]+\]$/, "and the closing stamp is still on it")
+})
+
 test("approvePlan refuses a planless plan-review task with a warning, no move", async () => {
   const { ctx, log } = makeCtx({ "plan-review/t.md": task("Do it", "no plan here") })
   const r = await approvePlan(ctx, "t")
@@ -935,6 +952,31 @@ test("replanTask on a cap-stopped in-progress task fuses the stop digest into th
   const r3 = await replanTask(ctx3, "t", "wrong layer")
   assert.equal(r3.ok, true)
   assert.ok(log3.some((c) => c.includes("re-planning — wrong layer") && !c.includes("prior run:")))
+})
+
+test("the replan RETRY arm fuses the stop digest too — a second replan must not supersede it", async () => {
+  // `extractReplanReason` reads the LAST rejection note, and the retry path (a
+  // task already back in `queued/`) wrote a reason-only one — so a human who
+  // replanned twice silently dropped the stopped run's digest from the next
+  // PLAN pass. It cannot resurrect an old digest: `extractStopContext` is
+  // retired by any newer plan heading, park note, or reshape.
+  const stopped =
+    task("Do it", `${PLAN_HEADING}\n\n1. step`).replace(/\n$/, "") +
+    `\n\n> Run stopped — attempts: iteration 3 VERIFY FAIL: flaky auth test [2026-01-02T00:00:00.000Z by dev]\n` +
+    `> Plan rejected — re-planning — prior run: iteration 3 VERIFY FAIL: flaky auth test [2026-01-02T00:01:00.000Z by dev]\n`
+  const { ctx, log } = makeCtx({ "queued/t.md": stopped })
+  const r = await replanTask(ctx, "t", "second thoughts on the cache key")
+  assert.equal(r.ok, true)
+  assert.ok(
+    log.some((c) => c.includes("re-planning — second thoughts on the cache key — prior run: iteration 3 VERIFY FAIL: flaky auth test")),
+    `the retry's note must carry the digest too: ${log.filter((c) => c.includes("Plan rejected")).join(" | ")}`,
+  )
+
+  // A queued task that never ran has nothing to fuse — the note stays the reason.
+  const { ctx: ctx2, log: log2 } = makeCtx({ "queued/t.md": task("Do it", "no plan yet") })
+  const r2 = await replanTask(ctx2, "t", "wrong layer")
+  assert.equal(r2.ok, true)
+  assert.ok(log2.some((c) => c.includes("re-planning — wrong layer") && !c.includes("prior run:")))
 })
 
 test("approveTask refuses a draft that scans as carrying a secret", async () => {

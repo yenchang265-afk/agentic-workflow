@@ -33,6 +33,17 @@ import { isBashTool, isReadTool } from "./dialect.mjs"
  */
 export const EVIDENCE_MAX = 200
 
+/**
+ * Byte cap past which appends stop, mirroring the deny log's
+ * `DENY_LOG_MAX_BYTES`. `EVIDENCE_MAX` caps only the FOLD — the file itself is
+ * append-only NDJSON with no read-modify-write, so without this a long stage
+ * (or a stale marker collecting every later session's reads) grows it without
+ * bound. Stopping rather than rotating keeps the "cannot flush an early command
+ * out of the record" property: entries past the cap are dropped, never the ones
+ * already written.
+ */
+export const EVIDENCE_MAX_BYTES = 1024 * 1024
+
 /** The read tools' path argument, in probe order — union of both hosts' spellings. */
 const READ_PATH_KEYS = ["file_path", "absolute_path", "path", "notebook_path", "paths"]
 
@@ -134,6 +145,11 @@ export const noteEvidence = (runsDirPath, evidenceFile, stage, entry) => {
   if (!entry) return
   const file = path.join(runsDirPath, evidenceFile)
   try {
+    try {
+      if (fs.statSync(file).size > EVIDENCE_MAX_BYTES) return
+    } catch {
+      /* no file yet — the first append creates it */
+    }
     // LEADING newline, not trailing: a legacy single-blob file has no trailing
     // newline, and appending bare JSON right after it would merge both into one
     // unparseable line. A leading separator keeps every record on its own line

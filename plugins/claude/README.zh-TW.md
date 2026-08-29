@@ -196,7 +196,9 @@ sitter 在 `/agentic-workflow:pr-sitter` 上。
   付出 context 代價的辦法。
 - `hooks/` —— 一個 PreToolUse 守衛，在 VERIFY/REVIEW 期間強制執行
   唯讀 bash 白名單、worktree 固定、階段期限，以及 Azure DevOps 寫入
-  攔截；UserPromptSubmit hooks（`gate-command`/`gate-parse`）在 agent
+  攔截；一個 PreToolUse 拒絕器（`check-stage-ask`），在迴圈階段執行中
+  拒絕提問工具——計畫關卡與出貨關卡之間的驅動是無人看管的；
+  UserPromptSubmit hooks（`gate-command`/`gate-parse`）在 agent
   的回合開始前處理確定性的 `approve` 把關，並注入所呼叫動詞的指示
   （`verb-slice`）；以及一個 SessionStart hook（`reconcile`），負責調和被
   中斷的迴圈。Azure DevOps 只透過 Azure DevOps MCP 伺服器存取——PAT 會

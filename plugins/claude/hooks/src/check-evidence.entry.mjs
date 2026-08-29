@@ -27,7 +27,7 @@
  */
 import { dialectFor, hostFor } from "./dialect.mjs"
 import { evidenceEntry, noteEvidence } from "./evidence.mjs"
-import { readMarker, runsDir } from "./marker.mjs"
+import { liveMarker, readMarker, runsDir } from "./marker.mjs"
 import { allow, readStdin as read } from "./pretooluse.mjs"
 import { failOpen } from "./crash.mjs"
 
@@ -41,7 +41,12 @@ const main = async () => {
   const d = dialectFor(hostFor())
   if (!d) return allow()
   const cwd = input.cwd || process.cwd()
-  const marker = readMarker(cwd, d.stageMarkerFile)
+  // `liveMarker`, not the raw read: a SIGKILLed check stage leaves a marker
+  // with `check: true` behind, and gating on that field alone made every later
+  // session's Read/Grep/Glob append to the dead stage's ledger — under its
+  // stage name, for as long as the file survives. Same rule as the guard's, and
+  // the reason it is a shared helper rather than a sentence in one of them.
+  const marker = liveMarker(readMarker(cwd, d.stageMarkerFile))
   // No marker means no loop stage; a work stage records no verdict, so it has
   // nothing to corroborate and its reads are not the loop's business.
   if (!marker || marker.check !== true) return allow()

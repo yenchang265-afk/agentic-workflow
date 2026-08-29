@@ -78,6 +78,25 @@ test("parseConfig rejects an empty worktreesDir", () => {
   assert.throws(() => parseConfig({ worktreesDir: "" }), /Invalid .*worktreesDir/)
 })
 
+test("the two write-destination keys are railed against climbing out of the repo", () => {
+  // `.agentic-workflow.json` ships with any cloned repo, and these two decide
+  // where the status folders, task files, run state, deny log and per-task
+  // worktrees LAND — the authority half of the repo-layer rule, which the drop
+  // list cannot express (a repo choosing its own backlog location is
+  // legitimate). So the rail is on the value: `safeCwd`, one layer up.
+  for (const bad of ["../../elsewhere", "docs/../../tasks", "..", "docs\\..\\..\\tasks"]) {
+    assert.throws(() => parseConfig({ tasksDir: bad }), /Invalid .*tasksDir/, `expected ${JSON.stringify(bad)} to be rejected`)
+    assert.throws(() => parseConfig({ worktreesDir: bad }), /Invalid .*worktreesDir/, `expected ${JSON.stringify(bad)} to be rejected`)
+  }
+  // The backlog is repo-relative by definition — every read and write joins it
+  // onto the repo directory.
+  assert.throws(() => parseConfig({ tasksDir: "/etc/tasks" }), /Invalid .*tasksDir/)
+  // A worktree tree legitimately lives on another disk (the docstring says so),
+  // and a directory merely NAMED `..foo` is not a climb.
+  assert.equal(parseConfig({ worktreesDir: "/fast-disk/worktrees" }).worktreesDir, "/fast-disk/worktrees")
+  assert.equal(parseConfig({ tasksDir: "..hidden/tasks" }).tasksDir, "..hidden/tasks")
+})
+
 test("parseConfig rejects an empty worktreeSetup", () => {
   assert.throws(() => parseConfig({ worktreeSetup: "" }), /Invalid .*worktreeSetup/)
 })

@@ -101,6 +101,35 @@ export const GitRefNameSchema = z
   })
 
 /**
+ * Whether a path climbs out of the tree it is joined onto. Segment-wise on BOTH
+ * separators rather than `includes("..")`: a directory may legitimately be named
+ * `..foo`, and a Windows-shaped value reaches here with backslashes. Pure.
+ */
+const climbsOut = (p: string): boolean => p.split(/[/\\]/).some((seg) => seg === "..")
+
+/** Posix root, UNC/backslash root, or a drive letter — the three absolute shapes. */
+const isAbsolutePath = (p: string): boolean => /^([A-Za-z]:)?[/\\]/.test(p)
+
+/**
+ * A directory the loop CREATES and WRITES INTO — railed the way `safeCwd` rails
+ * a plan's check `cwd`, and for the same reason one layer up.
+ *
+ * `.agentic-workflow.json` ships with any cloned repo, and these keys pick where
+ * the status folders, task files, run state, deny log and per-task worktrees
+ * land. That is the "a key that picks the directory a write lands in is
+ * authority" half of the repo-layer rule — the half `droppedRepoKeys` cannot
+ * express, because a repo choosing its OWN backlog location is entirely
+ * legitimate. So the rail is on the VALUE, not a drop of the key: the value is
+ * joined raw at every write site (`store.ts`, `persist.ts`, the deny log,
+ * `initRepo`'s mkdirs), so a `../../` in it plants the whole backlog outside the
+ * repo on the first init, gate verb or watch tick.
+ */
+const WriteDirSchema = z
+  .string()
+  .min(1)
+  .refine((p) => !climbsOut(p), { message: "must not contain a '..' segment — it names a directory the loop creates and writes into" })
+
+/**
  * A ref a pull request TARGETS. Accepts the `refs/heads/`-qualified form a human
  * may copy out of a git or ADO UI and normalizes it away, so config values,
  * `--base=` and the recorded run base all reach `shipPr` bare and no platform arm
@@ -146,8 +175,14 @@ export const WorkflowTriggerSchema = z.discriminatedUnion("type", [
 const BaseConfigSchema = z.object({
   /** Max loop iterations before stopping on repeated verify/review failures. */
   maxIterations: z.number().int().positive().default(3),
-  /** Repo-relative root of the task backlog; its subfolders are task statuses. */
-  tasksDir: z.string().min(1).default("docs/tasks"),
+  /**
+   * Repo-relative root of the task backlog; its subfolders are task statuses.
+   * Relative is not a convention here but a rail (`WriteDirSchema`, plus the
+   * absolute refusal): everything under it is joined onto the repo directory.
+   */
+  tasksDir: WriteDirSchema.refine((p) => !isAbsolutePath(p), {
+    message: "must be repo-relative — the backlog lives inside the repository it belongs to",
+  }).default("docs/tasks"),
   /**
    * On by default: keep `tasksDir` out of git the same way `worktreesDir`
    * does — an idempotent append to `<git-common-dir>/info/exclude` (a
@@ -178,7 +213,7 @@ const BaseConfigSchema = z.object({
    * `.workflow-worktrees`; set explicitly to `false` to opt back into shared-tree
    * branch switching. See docs/design/improvements/01.
    */
-  worktreesDir: z.union([z.string().min(1), z.literal(false)]).default(".workflow-worktrees"),
+  worktreesDir: z.union([WriteDirSchema, z.literal(false)]).default(".workflow-worktrees"),
   /** Optional shell command run inside a freshly created worktree (e.g. "npm ci"). */
   worktreeSetup: z.string().min(1).optional(),
   /**

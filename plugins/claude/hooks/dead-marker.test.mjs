@@ -5,6 +5,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { machineIdSync } from "./src/marker.mjs"
 
 /**
  * A CRASHED run's leftover stage marker must stop enforcing, end-to-end over
@@ -43,6 +44,13 @@ const reapedPid = () => {
   return Number.isInteger(pid) && pid > 0 ? pid : 999_999
 }
 
+/**
+ * A writer stamp the hook can PROVE is a live process here: a pid is only
+ * meaningful beside the machine identity that produced it, so the pid alone no
+ * longer reads alive.
+ */
+const ours = () => ({ pid: process.pid, machine: machineIdSync() })
+
 const READS = ["git status*", "git diff*", "ls*", "cat *", "npm test*"]
 const EXPIRED = Date.now() - 60_000
 const LIVE = Date.now() + 3_600_000
@@ -58,10 +66,33 @@ test("a dead VERIFY marker no longer starves bash behind the check-stage allowli
 })
 
 test("an expired marker whose writer is STILL ALIVE keeps the deadline starve", () => {
-  const overdue = { stage: "verify", check: true, taskId: "t", worktree: null, bashAllowlist: READS, deadline: EXPIRED, pid: process.pid }
+  const overdue = { stage: "verify", check: true, taskId: "t", worktree: null, bashAllowlist: READS, deadline: EXPIRED, ...ours() }
   const starved = run(makeRepo(overdue), "Bash", { command: "git status" })
   assert.equal(starved.status, 2)
   assert.match(starved.stderr, /exceeded its stageTimeoutMinutes deadline/)
+})
+
+test("a live pid from ANOTHER pid namespace does not keep the starve alive", () => {
+  // The wedge this file shipped to end, reopened one environment over: sibling
+  // containers from one image share a hostname and this bind-mounted directory
+  // while having separate pid namespaces, so a crashed writer's pid exists in
+  // the next session's namespace and reads live. "Alive" is the reading that
+  // ENFORCES, so it needs the pid's namespace, not just the pid.
+  const foreign = {
+    stage: "verify",
+    check: true,
+    taskId: "t",
+    worktree: null,
+    bashAllowlist: READS,
+    deadline: EXPIRED,
+    pid: process.pid,
+    machine: { host: "some-other-box", boot: "00000000-0000-0000-0000-000000000000" },
+  }
+  assert.equal(run(makeRepo(foreign), "Bash", { command: "make deploy" }).status, 0, "an unprovable writer must not rule the repo")
+
+  // An older server stamped no machine at all — same reading, same direction.
+  const unstamped = { ...foreign, machine: undefined, pid: process.pid }
+  assert.equal(run(makeRepo(unstamped), "Bash", { command: "make deploy" }).status, 0)
 })
 
 test("a dead BUILD marker no longer rewrites main-tree edits into its dead worktree", () => {

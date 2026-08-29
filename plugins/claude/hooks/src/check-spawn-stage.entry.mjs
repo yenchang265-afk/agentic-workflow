@@ -23,7 +23,7 @@
  * Contract: exit 0 allows; exit 2 blocks and feeds stderr back to the model.
  */
 import { dialectFor, hostFor } from "./dialect.mjs"
-import { readMarker } from "./marker.mjs"
+import { markerWriterAlive, readMarker } from "./marker.mjs"
 import { allow, block, readStdin } from "./pretooluse.mjs"
 import { agentNameOf, decideSpawnGuard, spawnDriftMessage } from "./spawn-guard.mjs"
 import { failOpen } from "./crash.mjs"
@@ -50,7 +50,10 @@ const main = async () => {
   if (!agent) return allow()
 
   const marker = readMarker(input.cwd || process.cwd(), d.stageMarkerFile)
-  if (decideSpawnGuard(marker, agent) !== "block") return allow()
+  // The probe is injected so `spawn-guard.mjs` can stay import-free for its
+  // bare-`node --test` unit tests; passing it is what makes the module's "same
+  // liveness rule as check-stage-guard" true rather than aspirational.
+  if (decideSpawnGuard(marker, agent, Date.now(), markerWriterAlive) !== "block") return allow()
   return block(spawnDriftMessage(marker, agent))
 }
 

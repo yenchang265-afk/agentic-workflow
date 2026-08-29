@@ -143,7 +143,7 @@ hand-edited afterward.
 | Field | Default | What it does |
 |-------|---------|--------------|
 | `maxIterations` | `3` | Max loop iterations before stopping on repeated check-stage failures (engineering: VERIFY/REVIEW; a manifest may override per kind). When the engineering cap trips, the plan is suspect — send it back with `/agentic-workflow:engineering replan <id>`. |
-| `tasksDir` | `"docs/tasks"` | Repo-relative root of the task backlog; its subfolders are task statuses. Also hosts the ephemeral `runs/` machine state (snapshots, stage marker, PR-sitter ledgers). |
+| `tasksDir` | `"docs/tasks"` | Repo-relative root of the task backlog; its subfolders are task statuses. Also hosts the ephemeral `runs/` machine state (snapshots, stage marker, PR-sitter ledgers). Must be relative and free of `..` segments — it names a directory the loop creates and writes into, and it is honoured from the repo layer. |
 | `ignoreBacklog` | `true` | See hardening below. Set to `false` to commit every task move as an audit trail (the old behavior). |
 | `stageTimeoutMinutes` | `60` | Wall-clock cap on a single stage; a stage exceeding it fails the loop instead of hanging it. |
 | `checkTimeoutMinutes` | `10` | Wall-clock cap on ONE driver-run check command (`stageChecks` / the plan's discovered checks). Separate from `stageTimeoutMinutes`, which does not cover them: checks run outside the stage cap on both hosts. A check that exceeds it is killed and reported as exit `124` ⇒ stage ERROR. |
@@ -154,7 +154,7 @@ hand-edited afterward.
 | `protectedBranches` | `[]` | Extra branches no loop stage may `git push`, **added** to the permanent `main`/`master`/`HEAD` floor. Additive only — the floor cannot be configured away. |
 | `ado` | unset | Azure DevOps coordinates (`organization`, `project`, optional `repository`, `selfLogin`, `mcp`); **required** when any effective platform is `"ado"` — the config fails fast without it. `selfLogin` is **required** for `"ado"` (a PAT can't resolve the sitter's identity). |
 | `projectManagement` | unset | The team's task tracker (Jira / Azure DevOps) and how local tasks pair to it. Drives task-authoring defaults and the pairing view in `/agentic-workflow:engineering status`. See below. |
-| `worktreesDir` | `".workflow-worktrees"` | See hardening below. Set to `false` to opt out. |
+| `worktreesDir` | `".workflow-worktrees"` | See hardening below. Set to `false` to opt out. May be absolute, but never contains a `..` segment — same rail as `tasksDir`. |
 | `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). **Shell-bearing — user scope only**, see below. |
 | `notifyCommand` | unset | Shell command fired after a terminal loop event — a plan parking for the plan gate, a run reaching the ship gate, a stop, an error — so gates don't go stale in scrollback nobody is watching. Runs as `sh -c <command>` with `AW_EVENT` (`park`\|`done`\|`stop`\|`error`), `AW_KIND`, `AW_TASK`, `AW_MESSAGE` in the environment; bounded (10s) and best-effort — a slow or failing notifier warns and never changes the outcome. E.g. `"notify-send \"agentic-workflow\" \"$AW_EVENT $AW_TASK: $AW_MESSAGE\""` or a `curl` to a chat webhook. **Shell-bearing — user scope only**, see below. |
 | `notifyEvents` | unset (= all) | Which terminal events fire `notifyCommand` (subset of `["park","done","stop","error"]`). Not shell-bearing, so a repo may narrow — never widen — what its contributors get pinged about. |
