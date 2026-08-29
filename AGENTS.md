@@ -712,6 +712,24 @@ STRUCTURED link, so each child carries `epic: <epic-id>`.
 successor) and is best-effort: the approval is already committed, so a failed
 listing costs the walk's next line and never the move.
 
+### Every zod-mediated store strips what it does not declare — and a read-modify-write one rewrites history
+
+Three stores now, which is why it is a rule rather than three docstrings:
+`GitRefSchema.onCurrentBranch` (`persist.ts`), `epic`/`autoPlan`
+(`TaskFrontmatterSchema`), and the metrics sidecar. Adding a field to a type a
+zod store round-trips means adding it to the SCHEMA in the same change, pinned
+by a round-trip test — TypeScript will not tell you, because structural typing
+lets the extra key through `JSON.stringify` on the way OUT and only the read
+side strips it.
+
+The sidecar is the worst variant and the shape to watch for: `appendRunMetrics`
+/`upsertRunMetrics` are read-modify-write, so an undeclared field is not merely
+invisible to readers — the NEXT run's first flush re-parses every prior entry
+and writes them back without it. `evidence` was declared on `StageSample` and
+written by both hosts for exactly one run at a time. `metrics-file.test.ts` now
+parses `StageSample`'s own source and fails on any field the schema is missing,
+because a fixture-only test cannot fail for a field nobody thought to add to it.
+
 ### A leading token that names a real task is an ID, never a reason word
 
 `rejectAny` takes `<id?> <reason…>` as one string, so the id is recovered by
@@ -761,7 +779,7 @@ reopens the bug:
 The hosts' own unquoting stays as-is — it is also what feeds `remove`'s
 `--force` detection — and is now a no-op for ids.
 
-### Every gate reason goes through `oneLineReason`
+### An audit note is one line, and `appendNote` is what makes it one
 
 An audit note is ONE `> …` line closed by a bracketed stamp. A reason with a
 newline in it puts line 2 in the file with no `> ` prefix and the stamp detached,
@@ -772,7 +790,36 @@ and the last-note parsers — `extractReplanReason`, `extractRunBranch`,
 interpolated raw, and the hub's `<textarea>` reaches them directly
 (`z.string().trim()` does not touch interior newlines). The hazard is the SHAPE
 OF THE NOTE, not the identity of the verb, so a new reason-writing verb belongs
-in that choke point too.
+in `oneLineReason` too.
+
+Scoping the choke point to GATE REASONS is what kept the class alive: three
+copies of the same raw `err.message` interpolation were written after that
+section existed, each author reading "gate reasons" as not covering error
+text. So the flatten now also happens in **`appendNote`**, at the write —
+covering the move-failure correction arms (the notes that RETRACT a move the
+trail already asserts, so the illegible one is the one that matters), a publish
+failure's reason, and the hosts' model-authored `workflow_verdict` /
+`workflow_blocked` text, whose "one-line reason" is contract prose a model is
+free to ignore. `oneLineReason` stays: it also CLAMPS, and a gate reason has a
+budget an audit note in general does not.
+
+### Lifecycle state is parsed only from stamped audit lines
+
+The same shape, read rather than written. A task body is a document a human and
+a model both write in — and this backlog is made of tasks ABOUT the loop, whose
+goals and plans quote the loop's own notes verbatim — so a bare
+`re.test(task.body)` reads a QUOTATION as a fact about the run. `store.ts`
+states this per-parser five times (`runDoneField`, `extractRunDiffstat`,
+`pendingPlanRejection`, `extractStopContext`, `unaddressedRejectionCount`), and
+it was never a rule, so the ship gate's publish-record parsers were written
+without it: a completed task quoting "PR opened — https://…" anywhere pinned
+`prAlreadyRecorded` true forever, killing the only path that can publish a
+`local`/`push` ship afterwards — an explicit `approve <id> --pr` included —
+behind "already completed. Nothing to do."
+
+`auditNoteRecorded(body, pattern)` (`task/plan-section.ts`) is the choke point
+for the "was this ever recorded" question; a parser that needs the LAST such
+line still writes its own scan, anchored the same way.
 
 ### `queued/` is not the planless folder
 
@@ -992,10 +1039,46 @@ unguarded ~60-line prologue before the dispatch try (plan 20). The closures in
 - `log` is total (never rejects, time-boxed) — it is also `deps.log`, so the
   driver inherits the guarantee. Toasts are fire-and-forget everywhere:
   `.catch()` guards a rejection, not a hang.
+- **Every awaited `client.*` call on a hook, event or DRIVE path is either
+  time-boxed or `void`ed with a `.catch` sink.** Scoping this to "hook paths"
+  is what let seven `await toast(…)` sites be written into `driveChain`/
+  `tryClaim` — inside `onIdle`'s try, ahead of the `finally` that releases
+  `driving`/`executingDirs` — after plan 20, in the file that documents the
+  rule; and it is why `load-failure.ts` awaited two reports ahead of the
+  prompt override, reproducing plan 20's bug on the fail-LOUD path. The drive
+  path is worse than the hook path, not better: a hook at least dies with the
+  turn, while a hung toast at the end of a SUCCESSFUL run strands the session,
+  the shared tree and the stage marker for the life of the process. Pinned by
+  a source lint (`driver.test.ts`), because the prose form was violated seven
+  times in one file.
 - Client calls on a hook path are `withTimeout`-boxed (config read,
   reconcile). NOT `handleCommand` — interrupting a real gate move is worse
   than waiting.
 - A one-shot guard sets its flag FIRST and owns no unguarded await after it.
+
+### A hook's last line is where its fail direction is CHOSEN
+
+The Claude/Qwen twin of the rule above, and the same failure wearing the other
+host's clothes. An un-caught throw exits 1, which Claude Code treats as a
+non-blocking error: the turn PROCEEDS. So a bare `main()` is not "no direction"
+— it is fail-OPEN, silently, including in `gate-command.mjs`, whose entire
+reason to exist is refusing the double-move (design 42's ETIMEDOUT arm BLOCKS
+precisely because "the move may or may not have landed"). Two of eight entry
+points ended `main().catch(() => allow())`; six ended bare, and nothing failed.
+
+- Every entry ends `main().catch(<direction>)`, pinned by
+  `hook-fail-direction.test.mjs` — which also fails on a `hooks.json` command
+  it does not list, so a new hook cannot be added past the rule.
+- The enforcement hooks fail OPEN (`failOpen`, `hooks/src/crash.mjs`): a false
+  deny stalls a run with no way out, a false allow only restores the behaviour
+  that predates the control. `gate-command` is the one non-flat choice — its
+  matcher is `""`, so it sees every prompt in the session: a crash BEFORE the
+  dispatch passes through (nothing moved), a crash after it blocks.
+- A silent fail-open is half a rule. There was no crash channel at all — the
+  deny log records allowlist refusals only — so a hook throwing on every call
+  looked exactly like a hook with nothing to say. `failOpen` writes one line
+  first, and its exit is BOUNDED: `exitAfterWrite`'s wait-for-the-flush rule
+  would re-enter the very hang it guards if stderr never drains.
 
 ### A plugin TOOL that hangs is the same failure with no way out
 
@@ -1017,7 +1100,11 @@ spinner over work that was DONE. Hence three standing rules.
   ordinary failed command, so the move still reports and only its best-effort
   bookkeeping is skipped — a timeout that THREW would turn a skipped `git add`
   into a failed approval. Not `deps.$`: checkpoint commits, worktree setup and
-  `runChecks` legitimately run long and carry their own regime.
+  `runChecks` legitimately run long and carry their own regime. **A new surface
+  that makes gate moves gets this bound before it ships** — OpenCode, then the
+  model hosts, then the hub is the same lesson three times, and the hub was the
+  worst of them: the moves run inside an HTTP request, so the hang was a
+  spinner over work that was done, with a mouse instead of a model.
 - **A `$` template may never contain a literal `*`.** Interpolations are escaped
   by both hosts (Bun's `$` by construction, the Claude shim via `esc()`), so a
   `*` in the template's own text is the ONLY way a real glob — the only

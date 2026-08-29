@@ -45,6 +45,7 @@ import { gateArgsFor, verbFor } from "./gate-parse.mjs"
 import { decideGateOutcome } from "./gate-result.mjs"
 import { dialectFor, hostFor } from "./src/dialect.mjs"
 import { exitAfterWrite } from "./src/emit.mjs"
+import { crashLine } from "./src/crash.mjs"
 import { verbContext } from "./verb-slice.mjs"
 
 const read = () =>
@@ -81,6 +82,14 @@ const block = (message) => {
     0,
   )
 }
+
+/**
+ * The gate label once this hook has dispatched to the CLI — null until then.
+ *
+ * The crash terminator's direction depends on it: see the `.catch` at the foot
+ * of this file.
+ */
+let dispatched = null
 
 const main = async () => {
   let input = {}
@@ -135,6 +144,10 @@ const main = async () => {
   // ran the verb again via MCP. Killing the CLI ourselves 10s earlier keeps
   // the envelope ours: decideGateOutcome turns ETIMEDOUT into a fail-CLOSED
   // block naming what to check before retrying.
+  // Armed before the spawn and never disarmed: from here on a crash cannot
+  // prove the task did NOT move, so the terminator below must block. See its
+  // comment for why the direction is scoped rather than blanket.
+  dispatched = label
   const res = distExists
     ? spawnSync("node", [serverJs, ...args], {
         cwd,
@@ -211,4 +224,27 @@ const main = async () => {
   return block(message)
 }
 
-main()
+/**
+ * The fail direction, CHOSEN — and it is the only hook whose choice is not a
+ * flat one, because this file's matcher is `""`: it sees every prompt in the
+ * session, and only some of them are gate verbs.
+ *
+ * Before the dispatch, nothing has moved, so a crash blocking the turn would
+ * refuse an ordinary prompt that has nothing to do with the loop. Pass it
+ * through, exactly as the parse-failure arm already does.
+ *
+ * From the dispatch on, a crash proves nothing about the task: the CLI may have
+ * moved it and the block that stops the model re-running the verb via MCP is
+ * the payload we just lost. That is the same uncertainty `decideGateOutcome`
+ * resolves by BLOCKING on ETIMEDOUT, and it resolves the same way here — a
+ * false block costs one typed command, a false pass re-opens the double-move.
+ * (An un-caught throw exits 1, which Claude Code treats as a non-blocking
+ * error: the turn proceeds. So this is not a new direction so much as the first
+ * time the direction is the one we picked.)
+ */
+main().catch((err) => {
+  const detail = crashLine("gate-command", err)
+  return dispatched
+    ? block(`Gate ${dispatched} could not be confirmed — the harness hook crashed after dispatching it. Check the task's folder and audit trail before re-running the verb; the move may or may not have landed. (${detail})`)
+    : passThrough()
+})

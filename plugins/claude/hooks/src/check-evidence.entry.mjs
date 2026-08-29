@@ -29,6 +29,7 @@ import { dialectFor, hostFor } from "./dialect.mjs"
 import { evidenceEntry, noteEvidence } from "./evidence.mjs"
 import { readMarker, runsDir } from "./marker.mjs"
 import { allow, readStdin as read } from "./pretooluse.mjs"
+import { failOpen } from "./crash.mjs"
 
 const main = async () => {
   let input
@@ -48,4 +49,4 @@ const main = async () => {
   return allow()
 }
 
-main()
+main().catch(failOpen("check-evidence"))

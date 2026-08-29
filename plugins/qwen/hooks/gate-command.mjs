@@ -240,6 +240,12 @@ var exitAfterWrite = (stream, payload, code) => {
   stream.write(payload, () => process.exit(code));
 };
 
+// plugins/claude/hooks/src/crash.mjs
+var crashLine = (hook, err) => {
+  const detail = err instanceof Error ? `${err.message} @ ${(err.stack ?? "").split("\n")[1]?.trim() ?? "?"}` : String(err);
+  return `agentic-workflow: the ${hook} hook crashed and failed open \u2014 ${detail.replace(/\s+/g, " ").slice(0, 500)}`;
+};
+
 // plugins/claude/hooks/verb-slice.mjs
 import fs from "node:fs";
 import path from "node:path";
@@ -324,6 +330,7 @@ var block = (message) => {
     0
   );
 };
+var dispatched = null;
 var main = async () => {
   let input = {};
   try {
@@ -346,6 +353,7 @@ var main = async () => {
   const label = args.slice(1).join(" ");
   const serverJs = process.env.AGENTIC_WORKFLOW_SERVER_JS || path2.join(pluginRoot, "mcp-server", "dist", "server.js");
   const distExists = fs2.existsSync(serverJs);
+  dispatched = label;
   const res = distExists ? spawnSync("node", [serverJs, ...args], {
     cwd,
     encoding: "utf8",
@@ -387,4 +395,7 @@ ${context}` : message);
   }
   return block(message);
 };
-main();
+main().catch((err) => {
+  const detail = crashLine("gate-command", err);
+  return dispatched ? block(`Gate ${dispatched} could not be confirmed \u2014 the harness hook crashed after dispatching it. Check the task's folder and audit trail before re-running the verb; the move may or may not have landed. (${detail})`) : passThrough();
+});

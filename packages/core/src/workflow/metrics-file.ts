@@ -52,6 +52,23 @@ const SampleFindingSchema = z.object({
   location: z.string().optional(),
 })
 
+/**
+ * One proof-of-work citation backing a PASS, mirrored from the stage's
+ * VerdictRecord (`ref`/`result` already redacted at the writer).
+ *
+ * Declared here and not only on `StageSample`: zod strips what it does not
+ * declare, and this sidecar is read-modify-write (`parseRunMetrics` →
+ * `appendRunEntry`), so an undeclared field is not merely invisible to readers
+ * — the next run's first flush REWRITES every prior entry without it. The
+ * citations outliving the run is the whole point of the declared-evidence rule
+ * (`metrics.ts`), so this is the field that pays for it.
+ */
+const SampleEvidenceSchema = z.object({
+  kind: z.string(),
+  ref: z.string(),
+  result: z.string().optional(),
+})
+
 /** One review axis's verdict + findings, mirrored from the stage's VerdictRecord. */
 const SampleAxisSchema = z.object({
   axis: z.string(),
@@ -86,6 +103,8 @@ const MetricsSampleSchema = z.object({
   // what a check-discovery success-rate roll-up joins on.
   checksSource: z.string().optional(),
   checksRefused: z.number().int().min(0).optional(),
+  // Proof-of-work citations backing a PASS, redacted at the writer.
+  evidence: z.array(SampleEvidenceSchema).readonly().optional(),
 })
 
 const RunEntrySchema = z.object({

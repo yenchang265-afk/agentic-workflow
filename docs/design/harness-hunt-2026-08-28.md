@@ -16,9 +16,12 @@ Method: four parallel source audits (OpenCode driver/impl, Claude/Qwen hooks,
 core gate/store/terminal, cross-host parity), every finding verified against
 source with file:line references, and each finding citing both the seam where
 the class already lives and the seam where it is absent. Confidence labels:
-CONFIRMED = traced end to end; PLAUSIBLE = one link unverified. Findings are
-proposals for the backlog, not shipped fixes — each wants its own task through
-the ordinary gates.
+CONFIRMED = traced end to end; PLAUSIBLE = one link unverified.
+
+**Status.** Findings 1, 2, 3, 4, 6, 7 and 11 are FIXED (see the per-finding
+markers below), each with a regression test that fails without the fix, and
+their five rule candidates are now in AGENTS.md. The rest remain proposals for
+the backlog — each wants its own task through the ordinary gates.
 
 ## The classes that shipped repeatedly
 
@@ -41,6 +44,8 @@ lives; "seam" cites where it is missing.
 
 ### 1. The metrics sidecar is the zod-strip class's third victim: `evidence` is deleted on every read-modify-write — CONFIRMED
 
+> **FIXED.** `MetricsSampleSchema` declares `SampleEvidenceSchema`; `metrics-file.test.ts` pins the round-trip AND parses `StageSample`'s source, so a future undeclared field fails the suite.
+
 - **Class:** a field written at runtime that a schema round-trip strips is
   destructive, not ignored (`persist.ts:27-40` `onCurrentBranch`, and three more
   deliberate declarations there; `task/schema.ts:115-132`).
@@ -62,6 +67,8 @@ lives; "seam" cites where it is missing.
 
 ### 2. Seven `await toast(…)` sites sit on the drive path, ahead of the `finally` that releases the session — CONFIRMED
 
+> **FIXED.** All seven are `void toast(...)`; the rule moved onto the `toast` helper's own docstring and is pinned by a source lint in `driver.test.ts`.
+
 - **Class:** toasts are fire-and-forget everywhere; `.catch()` guards a
   rejection, not a hang (plans 20/21; stated at `driver.ts:1060-1063`, and at
   `driver.ts:2879-2882`, which names this exact stake: a TUI call that never
@@ -79,6 +86,8 @@ lives; "seam" cites where it is missing.
   the stale sweep.
 
 ### 3. Six of eight Claude/Qwen hook entry points have no top-level catch — and the gate hook, the one fail-CLOSED hook, fails OPEN on a crash — CONFIRMED (structure), PLAUSIBLE (trigger)
+
+> **FIXED.** Every entry ends `main().catch(<direction>)` — `failOpen` (`hooks/src/crash.mjs`, which also adds the missing crash channel) for the enforcement hooks, a dispatch-scoped block for `gate-command`. `reconcile`'s `auditBacklog` await is guarded. `hook-fail-direction.test.mjs` pins each terminator and fails on a `hooks.json` command it does not list.
 
 - **Class:** a hook's failure must resolve to its class's chosen direction, and
   the choice is deliberate (plan 20's total hooks; design 42's ETIMEDOUT arm
@@ -104,6 +113,8 @@ lives; "seam" cites where it is missing.
   rejection silently drops every session-start recovery warning.
 
 ### 4. The bounded gate shell (21/42) never reached the hub — the third surface making the same gate moves — CONFIRMED
+
+> **FIXED.** The hub's `ShellPromise` gained `.timeout` (SIGTERM then SIGKILL, exit 124, matching the Claude shim) and `gateCtx` wires `boundedGateSh`. Tested in `fsclient.test.ts` and `gatectx.test.ts`.
 
 - **Class:** a gate move cannot hang forever (design 21 on OpenCode:
   `boundedShell` in `gateCtx`, `driver.ts:3101-3118`; design 42 on the model
@@ -140,6 +151,8 @@ lives; "seam" cites where it is missing.
 
 ### 6. The ship gate's publish-record parsers read unstamped body prose — CONFIRMED
 
+> **FIXED.** Both parsers go through `auditNoteRecorded` (`task/plan-section.ts`), the new choke point for "was this ever recorded". `gate.test.ts` pins that a body quoting a publish note still publishes under `--pr`.
+
 - **Class:** only a `> …` line closed by the bracketed stamp is lifecycle
   state; a body merely quoting the words must not count (enforced five times in
   `store.ts`: `runDoneField` :296 — "so a plan or a comment merely quoting the
@@ -157,6 +170,8 @@ lives; "seam" cites where it is missing.
   to do."
 
 ### 7. Failure-correction notes and model-authored verdict reasons reach `appendNote` unflattened — CONFIRMED
+
+> **FIXED.** The flatten moved into `appendNote` itself, which ends the class for every seam at once — `oneLineReason` stays for its clamp. Pinned in `store.test.ts`.
 
 - **Class:** every free text landing on a one-line `> …` note flattens at a
   choke point (`oneLineReason` `gate.ts:857-883`; `flattenEvidence`
@@ -240,6 +255,8 @@ lives; "seam" cites where it is missing.
   make. Claude refuses the same write with a message naming the rule.
 
 ### 11. The load-failure fallback hook is the plan-20 bug, verbatim, on the fail-loud path — CONFIRMED
+
+> **FIXED.** `overrideCommandPrompt` runs first; both reports are fired, not awaited. `index.test.ts` races the hook against a client that never answers.
 
 - **Class:** override the prompt FIRST, then report; never await a TUI call on
   the way out (`impl.ts:851-860`).

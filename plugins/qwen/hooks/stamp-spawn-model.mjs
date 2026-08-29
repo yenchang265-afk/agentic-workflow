@@ -287,6 +287,27 @@ var agentNameOf = (subagentType, prefixes = []) => {
   return OURS.test(name) ? name : null;
 };
 
+// plugins/claude/hooks/src/crash.mjs
+var crashLine = (hook, err) => {
+  const detail = err instanceof Error ? `${err.message} @ ${(err.stack ?? "").split("\n")[1]?.trim() ?? "?"}` : String(err);
+  return `agentic-workflow: the ${hook} hook crashed and failed open \u2014 ${detail.replace(/\s+/g, " ").slice(0, 500)}`;
+};
+var failOpen = (hook) => (err) => {
+  let done = false;
+  const exit = () => {
+    if (done) return;
+    done = true;
+    process.exit(0);
+  };
+  const timer = setTimeout(exit, 250);
+  if (typeof timer.unref === "function") timer.unref();
+  try {
+    process.stderr.write(crashLine(hook, err) + "\n", exit);
+  } catch {
+    exit();
+  }
+};
+
 // plugins/claude/hooks/src/stamp-spawn-model.entry.mjs
 var modelFor = (marker, rawConfig, agent, now = Date.now()) => {
   const live = marker && typeof marker === "object" && (typeof marker.deadline !== "number" || now <= marker.deadline);
@@ -316,7 +337,7 @@ var main = async () => {
   if (ti.model === model) return allow();
   return rewriteInput({ ...ti, model });
 };
-main().catch(() => allow());
+main().catch(failOpen("stamp-spawn-model"));
 export {
   agentNameOf,
   modelFor

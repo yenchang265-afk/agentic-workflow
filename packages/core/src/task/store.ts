@@ -1582,9 +1582,24 @@ const warnRedaction = (hits: readonly { pattern: string; count: number }[], wher
  * Appending is never worth creating a file for: a note is a record OF a task
  * file, so no file means nothing to record. Warn instead — a lost note is lost
  * claim evidence (see `warnLostAppend`), and silence here reads as "noted".
+ *
+ * The text is FLATTENED here, at the write, and that is what ends the class
+ * `oneLineReason` only ever half-closed. A note is one `> …` line closed by a
+ * bracketed stamp: an embedded newline puts line 2 in the file with no `> `
+ * prefix and the stamp detached, so `AUDIT_NOTE_LINE_RE` stops matching — the
+ * orphaned lines then read as PROSE (`auditTailIndex` loses the boundary and
+ * they ride into every later `{{goal}}`) and every last-note parser goes blind.
+ * `oneLineReason` covers the GATE reasons; what kept reaching this function
+ * unflattened is everything else — `err.message` from a failed `mv` on the two
+ * correction arms (the notes that RETRACT a move the trail already asserts, so
+ * the illegible one is the one that matters), a publish failure's `reason`, and
+ * the hosts' model-authored `workflow_verdict`/`workflow_blocked` text, whose
+ * "one-line reason" is contract prose the model is free to ignore. The hazard
+ * is the shape of the note, so the flatten belongs where the shape is made.
  */
 export const appendNote = async ($: Shell, task: FileRef, note: string, log?: Log): Promise<void> => {
-  const { text, hits } = redact(note)
+  const { text: redacted, hits } = redact(note)
+  const text = redacted.replace(/\s+/g, " ").trim()
   warnRedaction(hits, `note on ${task.id}`, log)
   const exists = await $`test -f ${task.path}`.quiet().nothrow()
   if (exists.exitCode !== 0) {

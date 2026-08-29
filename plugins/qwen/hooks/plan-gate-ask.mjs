@@ -108,6 +108,27 @@ var exitAfterWrite = (stream, payload, code) => {
   stream.write(payload, () => process.exit(code));
 };
 
+// plugins/claude/hooks/src/crash.mjs
+var crashLine = (hook, err) => {
+  const detail = err instanceof Error ? `${err.message} @ ${(err.stack ?? "").split("\n")[1]?.trim() ?? "?"}` : String(err);
+  return `agentic-workflow: the ${hook} hook crashed and failed open \u2014 ${detail.replace(/\s+/g, " ").slice(0, 500)}`;
+};
+var failOpen = (hook) => (err) => {
+  let done = false;
+  const exit = () => {
+    if (done) return;
+    done = true;
+    process.exit(0);
+  };
+  const timer = setTimeout(exit, 250);
+  if (typeof timer.unref === "function") timer.unref();
+  try {
+    process.stderr.write(crashLine(hook, err) + "\n", exit);
+  } catch {
+    exit();
+  }
+};
+
 // plugins/claude/hooks/plan-gate-ask.mjs
 var read = () => new Promise((resolve) => {
   let s = "";
@@ -157,7 +178,7 @@ var main = async () => {
   if (!ask) return passThrough();
   exitAfterWrite(process.stdout, JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: ask } }), 0);
 };
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(failOpen("plan-gate-ask"));
 export {
   planGateOf
 };

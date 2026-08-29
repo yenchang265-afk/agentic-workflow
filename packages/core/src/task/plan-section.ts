@@ -36,6 +36,21 @@ export const lastMarkerIndex = (body: string, marker: string): number => {
  */
 export const AUDIT_NOTE_LINE_RE = /^> .*\[[^\]\n]+\]\s*$/
 
+/**
+ * True when some STAMPED audit-note line of `body` matches `pattern`. Pure.
+ *
+ * The choke point for "lifecycle state is parsed only from stamped audit lines,
+ * never from body prose". A task body is a document a human and a model both
+ * write in — this backlog is full of tasks ABOUT the loop, whose bodies quote
+ * the loop's own notes verbatim — so a bare `pattern.test(body)` reads a
+ * quotation as a fact about the run. `store.ts`'s field parsers each re-derive
+ * this rule against the LAST marker line; callers that only need "was this ever
+ * recorded" get it here rather than writing a sixth copy (or, as the ship
+ * gate's publish-record parsers did, no copy at all).
+ */
+export const auditNoteRecorded = (body: string, pattern: RegExp): boolean =>
+  body.split("\n").some((line) => AUDIT_NOTE_LINE_RE.test(line) && pattern.test(line))
+
 /** Offset of the first audit-note line at or after `from`, else `body.length`. Pure. */
 export const auditTailIndex = (body: string, from: number): number => {
   for (let idx = from; idx < body.length; ) {

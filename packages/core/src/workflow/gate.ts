@@ -3,7 +3,7 @@ import type { Client, Log, Shell } from "../host.js"
 import type { Config, ShipPublish } from "./state.js"
 import { isEpicType, isSafeTaskId, parseTask, taskToInput, unknownFrontmatterKeys, type Task } from "../task/schema.js"
 import { ACTIVE_STATUSES, appendNote, auditNote, epicSiblings, extractPlan, extractRunBase, extractRunBranch, extractStopContext, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, planHeadingCount, planRejectedNote, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, rewriteTask, selectOrder, STATUSES } from "../task/store.js"
-import { withoutPlanSections } from "../task/plan-section.js"
+import { auditNoteRecorded, withoutPlanSections } from "../task/plan-section.js"
 import { redact } from "../task/redact.js"
 import { hasVerificationSection } from "./verdict.js"
 import { unverifiedDepsCaveat } from "./declared-deps.js"
@@ -1097,6 +1097,9 @@ const publishNote = (pr: ShipPrResult): string | null => {
  */
 const PUBLISH_RECORDED_RE = /\b(PR (opened|already open)|Not published|Branch (pushed|not pushed)|PR not opened) — /
 
+/** `publishNote`'s two PR wordings — the ones that mean a PR really exists. */
+const PR_RECORDED_RE = /\bPR (opened|already open) — /
+
 /** The `loop(<id>): …` backlog commit subject paired with `publishNote`. */
 const publishCommitSubject = (pr: ShipPrResult): string =>
   pr.url ? `PR ${pr.created ? "opened" : "linked"}` : pr.mode === "local" ? "kept local" : pr.mode === "push" ? (pr.pushed ? "branch pushed" : "branch not pushed") : "PR not opened"
@@ -1180,8 +1183,15 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering", p
       // decided on the return. A retry that STILL can't publish what was asked
       // for warns for the same reason the main path does.
       let missedPublish = false
-      const prAlreadyRecorded = /\bPR (opened|already open) — /.test(done.body)
-      const publishAlreadyRecorded = PUBLISH_RECORDED_RE.test(done.body)
+      // Read from STAMPED audit lines only, never the raw body: `recordPublish`
+      // is the sole writer of these words, and a task whose body merely QUOTES
+      // "PR opened — https://…" (this backlog is full of tasks about the loop)
+      // would otherwise pin `prAlreadyRecorded` true forever — killing the
+      // publish-later retry arm, an explicit `approve <id> --pr` included, so a
+      // `local`/`push` ship could never be published and the gate answered
+      // "already completed. Nothing to do."
+      const prAlreadyRecorded = auditNoteRecorded(done.body, PR_RECORDED_RE)
+      const publishAlreadyRecorded = auditNoteRecorded(done.body, PUBLISH_RECORDED_RE)
       if (!prAlreadyRecorded && (!publishAlreadyRecorded || publish)) {
         const pr = await shipPr($, log, directory, config, kind, id, done.title, ctx.adoGateway, {
           branch: extractRunBranch(done),

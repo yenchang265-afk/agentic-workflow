@@ -4688,6 +4688,32 @@ test("onIdle hands the working tree on after releasing it, from the finally", as
   assert.doesNotMatch(block, /await drainDeferredIdle/, "the drain must not be awaited inside a finally on the hook's path")
 })
 
+// The hang class, as a source lint because it is defined by the ABSENCE of a
+// keyword and no behavioural test can observe a fetch that never settles.
+//
+// `toast`'s `.catch()` guards a rejection, not a hang: the SDK sets
+// `req.timeout = false`, so a `tui.showToast` that never returns never returns.
+// Every toast in this file is on the drive path — inside `onIdle`'s try, ahead
+// of the `finally` that releases `driving`/`executingDirs` — so one awaited
+// toast at the end of a SUCCESSFUL run strands the session, the shared tree and
+// the stage marker for the life of the process. Seven of them were written that
+// way in the file that documents the rule, which is why the rule is now pinned
+// rather than stated.
+test("no toast on the drive path is awaited", async () => {
+  const fs = await import("node:fs")
+  const path = await import("node:path")
+  const src = fs.readFileSync(path.join(import.meta.dirname, "driver.ts"), "utf8")
+  const awaited = src
+    .split("\n")
+    .map((line, i) => [line, i + 1] as const)
+    .filter(([line]) => /await\s+(toast\(|[\w.]*client\.tui\.)/.test(line))
+  assert.deepEqual(
+    awaited.map(([line, n]) => `${n}: ${line.trim()}`),
+    [],
+    "fire toasts with `void toast(…)` — an awaited one that never settles strands the session",
+  )
+})
+
 test("approve <id> --base= targets that branch, and the id keeps the flag out", async () => {
   const files = { "docs/tasks/in-review/my-task.md": serializeTask({ title: "Do the thing", body: "x" }) }
   const { client, toasts } = makeClientFS(files)

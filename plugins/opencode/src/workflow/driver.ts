@@ -1041,6 +1041,20 @@ export const findDrivingWorkflow = async (
   return null
 }
 
+/**
+ * A toast is fired, never awaited — `void toast(…)`, and `driver.test.ts` pins
+ * that at the source.
+ *
+ * The `.catch()` here guards a REJECTION, not a hang: opencode's SDK sets
+ * `req.timeout = false`, so a `tui.showToast` fetch that never settles never
+ * settles. Every call site in this file sits on the drive path, inside
+ * `onIdle`'s try and ahead of the `finally` that releases `driving`,
+ * `executingDirs` and the deferred-idle queue — so one awaited toast at the end
+ * of a *successful* run strands the session, the shared tree and the stage
+ * marker for the life of the process, and (on the claim arm) leaves the task
+ * claim-held with every gate verb refusing it as "a loop is driving this NOW".
+ * Nothing reads a toast's result, so there is never a reason to wait for one.
+ */
 const toast = (client: Client, message: string, variant: "info" | "success" | "warning" | "error") =>
   client.tui.showToast({ body: { message, variant } }).catch(() => {})
 
@@ -2424,16 +2438,16 @@ const driveChain = async (
 
   switch (report.kind) {
     case "error":
-      await toast(client, report.message, "error")
+      void toast(client, report.message, "error")
       return { kind: "error", message: report.message }
     case "park-free":
       return { kind: "park", message: report.message }
     case "park":
-      await toast(client, `${report.message} Review it, then /agentic-workflow:engineering approve (or replan <why>).`, "success")
+      void toast(client, `${report.message} Review it, then /agentic-workflow:engineering approve (or replan <why>).`, "success")
       return { kind: "park", message: report.message }
     case "done": {
       if (report.taskId && !report.moved) {
-        await toast(
+        void toast(
           client,
           `Loop finished "${report.taskId}" but couldn't park it in in-review/ — it's still in in-progress/. Check the audit note.`,
           "warning",
@@ -2455,13 +2469,13 @@ const driveChain = async (
           : where
             ? ` Review the diff${where}${stat}${cmd}.${sugg}`
             : ""
-        await toast(client, `${report.message}${next}`, "success")
+        void toast(client, `${report.message}${next}`, "success")
       }
       return { kind: "done", message: report.message }
     }
     case "stop": {
       const where = report.branch ? ` Partial work is preserved on branch ${report.branch}.` : ""
-      await toast(client, `${report.message}${where}`, "warning")
+      void toast(client, `${report.message}${where}`, "warning")
       return { kind: "stop", message: report.message, ...(report.retryable ? { retryable: true } : {}) }
     }
   }
@@ -2510,7 +2524,7 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config, only?: st
     await deps.log(reason.actionable ? "warn" : "info", reason.message)
     if (reason.actionable && lastSkipReason.get(sessionID) !== reason.message) {
       lastSkipReason.set(sessionID, reason.message)
-      await toast(deps.client, reason.message, "warning")
+      void toast(deps.client, reason.message, "warning")
     }
     return
   }
@@ -2518,7 +2532,7 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config, only?: st
   lastSkipEventKey.delete(sessionID)
   const { item } = claim
   await emitSchedEvent(deps, config, { type: "claim", kind: item.workflowKind, id: item.id })
-  await toast(deps.client, item.claimMessage, "info")
+  void toast(deps.client, item.claimMessage, "info")
   // Task-backed claims entering an isolated stage get the durable CLAIMED note
   // before drive() establishes isolation.
   if (item.state.task && stageDef(manifestFor(item.workflowKind).manifest, item.state.stage).isolation !== "none") {

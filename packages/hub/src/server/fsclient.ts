@@ -29,9 +29,13 @@ const render = (strings: TemplateStringsArray, exprs: unknown[]): string => {
   return cmd
 }
 
+/** SIGTERM → SIGKILL grace for a timed-out child, matching the Claude shim. */
+const KILL_GRACE_MS = 2_000
+
 class ShellPromise implements PromiseLike<ShellOutput> {
   #cmd: string
   #cwd: string | undefined
+  #timeoutMs: number | undefined
   #run: Promise<ShellOutput> | undefined
   constructor(cmd: string) {
     this.#cmd = cmd
@@ -46,6 +50,20 @@ class ShellPromise implements PromiseLike<ShellOutput> {
     this.#cwd = dir
     return this
   }
+  /**
+   * Kill the child after `ms` and resolve exit 124 — `timeout(1)`'s convention,
+   * which core's `classifyExit` reads as "the command could not run" and every
+   * gate path already handles as an ordinary failed command.
+   *
+   * The hub owns its `spawn`, so like the Claude shim (and unlike core's race
+   * fallback) this actually reaps the process. Ported here because the hub is
+   * the third surface making gate moves and it was the one still doing it on an
+   * unbounded shell — see `gatectx.ts`.
+   */
+  timeout(ms: number): this {
+    this.#timeoutMs = ms
+    return this
+  }
   #exec(): Promise<ShellOutput> {
     return (this.#run ??= new Promise<ShellOutput>((resolve) => {
       const child = spawn("bash", ["-c", this.#cmd], { cwd: this.#cwd })
@@ -53,8 +71,37 @@ class ShellPromise implements PromiseLike<ShellOutput> {
       let err = ""
       child.stdout.on("data", (d) => (out += d))
       child.stderr.on("data", (d) => (err += d))
-      child.on("error", () => resolve({ exitCode: 127, stdout: strOut(out), stderr: strOut(err || "spawn error") }))
-      child.on("close", (code) => resolve({ exitCode: code ?? 0, stdout: strOut(out), stderr: strOut(err) }))
+      let timedOut = false
+      let killTimer: ReturnType<typeof setTimeout> | undefined
+      // Not unref'd, for the reason the Claude shim spells out: an unref'd timer
+      // only fires if something else holds the loop open, and assuming the child
+      // does is how core's race fallback silently disabled itself. Both timers
+      // are cleared on every settle path, which is all unref would have bought.
+      const deadline =
+        this.#timeoutMs === undefined
+          ? undefined
+          : setTimeout(() => {
+              timedOut = true
+              child.kill("SIGTERM")
+              killTimer = setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS)
+            }, this.#timeoutMs)
+      const settle = (o: ShellOutput) => {
+        clearTimeout(deadline)
+        clearTimeout(killTimer)
+        resolve(o)
+      }
+      child.on("error", () => settle({ exitCode: 127, stdout: strOut(out), stderr: strOut(err || "spawn error") }))
+      child.on("close", (code) =>
+        // A kill lands as a SIGNAL exit, so `code` is null and a plain `?? 0`
+        // would report SUCCESS for a command we just killed.
+        timedOut
+          ? settle({
+              exitCode: 124,
+              stdout: strOut(out),
+              stderr: strOut(`${err}\ntimed out after ${Math.round((this.#timeoutMs ?? 0) / 1000)}s — killed`),
+            })
+          : settle({ exitCode: code ?? 0, stdout: strOut(out), stderr: strOut(err) }),
+      )
     }))
   }
   then<T1 = ShellOutput, T2 = never>(

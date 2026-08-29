@@ -32,6 +32,7 @@ import { fileURLToPath } from "node:url"
 import { planParkAsk } from "./gate-ask.mjs"
 import { dialectFor, hostFor } from "./src/dialect.mjs"
 import { exitAfterWrite } from "./src/emit.mjs"
+import { failOpen } from "./src/crash.mjs"
 
 const read = () =>
   new Promise((resolve) => {
@@ -112,4 +113,4 @@ const main = async () => {
 // Run only when the host EXECUTES this file. Unlike the other hooks, this one is
 // also imported — the parsing half is pure and worth pinning directly — and an
 // unguarded `main()` would sit reading a test runner's stdin forever.
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(failOpen("plan-gate-ask"))

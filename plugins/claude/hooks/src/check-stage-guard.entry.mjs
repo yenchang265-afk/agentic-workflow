@@ -60,6 +60,7 @@ import { allow, block, readStdin as read, rewriteInput } from "./pretooluse.mjs"
 import { backlogRoot, markerWriterAlive, readMarker, readTasksDir, runsDir } from "./marker.mjs"
 import { evidenceEntry, noteEvidence } from "./evidence.mjs"
 import { noteDeny } from "./deny.mjs"
+import { failOpen } from "./crash.mjs"
 
 // The PreToolUse envelope (allow / block / rewriteInput) lives in
 // ./pretooluse.mjs so this guard and the spawn-model stamp emit byte-identical
@@ -317,4 +318,4 @@ const main = async () => {
   return allow()
 }
 
-main()
+main().catch(failOpen("check-stage-guard"))

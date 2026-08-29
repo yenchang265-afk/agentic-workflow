@@ -1,5 +1,8 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+import path from "node:path"
 import { test } from "node:test"
+import { fileURLToPath } from "node:url"
 import { appendRunMetrics, parseRunMetrics, upsertRunMetrics, type RunEntry } from "./metrics-file.js"
 
 const entry: RunEntry = {
@@ -270,4 +273,75 @@ test("a new-format document parses under a strict copy of the original v1 schema
   }
   const doc: unknown = JSON.parse(appendRunMetrics(null, newFormat))
   assert.equal(originalV1.safeParse(doc).success, true)
+})
+
+test("declared evidence round-trips, and a re-flush does not strip a prior entry's citations", () => {
+  const withEvidence: RunEntry = {
+    ...entry,
+    samples: [
+      {
+        stage: "verify",
+        iteration: 0,
+        ms: 9_000,
+        verdict: "PASS",
+        evidence: [
+          { kind: "command", ref: "pnpm test", result: "142 passing" },
+          { kind: "file", ref: "src/gate.ts:1183" },
+        ],
+      },
+    ],
+  }
+  const first = appendRunMetrics(null, withEvidence)
+  assert.deepEqual(parseRunMetrics(first)?.runs[0], withEvidence)
+
+  // The destructive half: the sidecar is read-modify-write, so the NEXT run's
+  // flush re-parses every prior entry and writes them back. An undeclared field
+  // is not merely invisible to readers — it is deleted from history here.
+  const second = appendRunMetrics(first, entry)
+  assert.deepEqual(parseRunMetrics(second)?.runs[0], withEvidence)
+
+  // Same for the live per-stage flush, which replaces the trailing open entry.
+  const open = upsertRunMetrics(null, { ...withEvidence, open: true })
+  const finalized = upsertRunMetrics(open, withEvidence)
+  assert.deepEqual(parseRunMetrics(finalized)?.runs[0], withEvidence)
+})
+
+test("MetricsSampleSchema declares every field StageSample carries", () => {
+  // The zod-strip class, pinned at the source rather than by fixture: a field
+  // added to `StageSample` and written by a host but never declared here is
+  // stripped on the next read-modify-write, silently rewriting history. A
+  // fixture-only test cannot fail for a field nobody thought to add to it.
+  const here = path.dirname(fileURLToPath(import.meta.url))
+  const body = (src: string, re: RegExp): string => {
+    const start = src.search(re)
+    assert.ok(start >= 0, `could not locate ${re} in source`)
+    const open = src.indexOf("{", start)
+    let depth = 0
+    for (let i = open; i < src.length; i++) {
+      if (src[i] === "{") depth++
+      else if (src[i] === "}" && --depth === 0) return src.slice(open + 1, i)
+    }
+    assert.fail(`unbalanced braces after ${re}`)
+  }
+  const fields = (text: string): Set<string> =>
+    new Set(
+      text
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => !line.startsWith("//") && !line.startsWith("*") && !line.startsWith("/*"))
+        .flatMap((line) => {
+          const m = /^(?:readonly\s+)?([A-Za-z_$][\w$]*)\??\s*[:]/.exec(line)
+          return m?.[1] ? [m[1]] : []
+        }),
+    )
+
+  const sampleFields = fields(
+    body(readFileSync(path.join(here, "metrics.ts"), "utf8"), /export interface StageSample\b/),
+  )
+  const schemaFields = fields(
+    body(readFileSync(path.join(here, "metrics-file.ts"), "utf8"), /const MetricsSampleSchema = z\.object\(/),
+  )
+  assert.ok(sampleFields.size > 10, "failed to parse StageSample fields")
+  const missing = [...sampleFields].filter((f) => !schemaFields.has(f))
+  assert.deepEqual(missing, [], `MetricsSampleSchema is missing: ${missing.join(", ")} — zod strips what it does not declare`)
 })

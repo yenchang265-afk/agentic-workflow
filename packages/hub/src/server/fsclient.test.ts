@@ -70,3 +70,20 @@ test("file.list types entries and reads a missing directory as empty", async () 
   assert.deepEqual(await fsClient.file.list({ query: { path: "..", directory: dir } }), { data: [] })
   fs.rmSync(dir, { recursive: true, force: true })
 })
+
+test("sh.timeout kills a hung command and resolves 124", async () => {
+  // The hang class, on the hub's own shell. Without this, `gateCtx`'s bound has
+  // nothing to bind: `.timeout` is optional on the host interface, and a shell
+  // that omits it silently degrades every gate move back to unbounded.
+  const started = Date.now()
+  const out = await sh`sleep 30`.quiet().nothrow().timeout!(300)
+  assert.equal(out.exitCode, 124, "124 is timeout(1)'s convention, which core reads as a failed command")
+  assert.ok(Date.now() - started < 10_000, "the child must be reaped, not awaited")
+  assert.match(out.stderr.toString(), /timed out/)
+})
+
+test("sh without a timeout still runs to completion", async () => {
+  const out = await sh`printf ok`.quiet().nothrow()
+  assert.equal(out.exitCode, 0)
+  assert.equal(out.stdout.toString(), "ok")
+})

@@ -149,6 +149,31 @@ test("fallback hooks replace the rendered template so the model can't run it as 
   assert.match(parts[0]!.text, /Cannot find module x/, "the model must be able to relay the real cause")
 })
 
+test("fallback hooks refuse the command even when the client never answers", async () => {
+  // The plan-20 bug on the fail-LOUD path. `.catch()` guards a rejection, not a
+  // hang, and opencode awaits `command.execute.before` with no deadline — so a
+  // report awaited AHEAD of the override kills the command before
+  // `Session.prompt`, with zero output. A stale core dist plus a stalled server
+  // is this module's own reason to exist, so the pairing is the expected case.
+  const hung = {
+    tui: { showToast: () => new Promise(() => {}) },
+    app: { log: () => new Promise(() => {}) },
+  } as unknown as PluginInput["client"]
+  const hooks = loadFailureHooks(new Error("Cannot find module x"), hung)
+  const parts = [{ id: "p", sessionID: "s", messageID: "m", type: "text", text: "approve the task and move its file" }]
+
+  await Promise.race([
+    hooks["command.execute.before"]?.(
+      { command: "agentic-workflow:engineering", sessionID: "ses_x", arguments: "approve f7k3" } as never,
+      { parts } as never,
+    ),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("the hook parked on a client call")), 1_000).unref()),
+  ])
+
+  assert.ok(!parts[0]!.text.includes("move its file"), "the refusal must land even with the TUI unreachable")
+  assert.match(parts[0]!.text, /Cannot find module x/)
+})
+
 test("fallback hooks never throw when the client itself is broken", async () => {
   const broken = {
     tui: { showToast: () => Promise.reject(new Error("tui down")) },
