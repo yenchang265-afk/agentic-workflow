@@ -251,6 +251,13 @@ Deliberately **not** in this plan:
   instruction before the task is mentioned. Reducing it is a prompt-architecture
   change with its own blast radius across both hosts and the generated
   `plugins/*/agents/*.md`. Separate plan.
+
+  *That separate plan has since landed, in two parts.* PR #294 removed the
+  mandated skill loads from the personas — a stage now carries a distilled method
+  rather than pulling `workflow-orchestration` and `task-backlog-management`
+  whole — and a later writing-for-agents pass moved the AGENTS.md invariants
+  behind a path-keyed index (`docs/invariants/`), taking the always-loaded half
+  from ~14 KB to ~4 KB.
 - **Model-call summarization.** Compressing an artifact by asking a model to
   summarize it adds a failure mode, a latency cost, and a second weak-model
   dependency squarely on the path this plan exists to protect. Deterministic

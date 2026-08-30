@@ -19,6 +19,7 @@ should link.
 | [`../plugins/claude/README.md`](../plugins/claude/README.md) | Claude Code install, the MCP-server command surface, and known limitations |
 | [`../packages/core/workflows/README.md`](../packages/core/workflows/README.md) | Authoring a new workflow kind (manifest schema, prompt templates, hooks, work sources) |
 | [`../packages/hub/README.md`](../packages/hub/README.md) | The admin hub (beta): install, views, and its own config |
+| [invariants/](invariants/README.md) | The engineering invariants behind the one-line rules in `AGENTS.md` — claims and liveness, git isolation, verdicts, the bash allowlist, the host protocol, the task ledger, the driver and its hooks |
 | [design/threat-model.md](design/threat-model.md) | Security posture — threats and controls for every workflow kind |
 | [design/proposed-workflows.md](design/proposed-workflows.md) | Not-yet-built workflow kind proposals (three entries have since shipped — see `sitters.md` for their current behavior) |
 | [design/qwen-host-support.md](design/qwen-host-support.md) | Design record for the third host, Qwen Code — now shipped; see `qwen.md` for how it behaves today |
@@ -51,6 +52,8 @@ translated file `<name>.<BCP-47-lang-code>.md` next to the English original
 and put a one-line language switcher as the first line of both files, e.g.
 `English | [繁體中文](README.zh-TW.md)` in the English file and
 `[English](README.md) | 繁體中文` in the translated one. All user-facing
-docs (this index, everything under `docs/`, and the package/plugin
+docs (this index, the topic files under `docs/`, and the package/plugin
 READMEs) have a zh-TW translation today; add more languages the same way
-as the need comes up.
+as the need comes up. Contributor- and agent-facing engineering notes —
+[`invariants/`](invariants/README.md) and [`ideas/`](ideas/) — are English-only,
+because their readers are the people and agents editing this repo's source.

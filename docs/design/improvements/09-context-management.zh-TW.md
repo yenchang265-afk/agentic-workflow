@@ -230,6 +230,12 @@ context: z.record(z.string(), z.number().int().positive()).optional(),
   `task-backlog-management`（17,727 B）——大約 74 KB 的指令，此時任務都還沒被
   提到。要縮減它是一個提示詞架構的改動，波及範圍橫跨兩個 host 以及產生出來的
   `plugins/*/agents/*.md`。另立計畫。
+
+  *那個另立的計畫後來分兩部分落地了。* PR #294 把角色設定裡強制載入 skill 的
+  要求拿掉——各階段改為帶著蒸餾過的方法，不再整份拉進
+  `workflow-orchestration` 與 `task-backlog-management`——之後一次
+  writing-for-agents 的整理，再把 AGENTS.md 的不變量移到以路徑為索引的
+  `docs/invariants/` 之後，使每次都會載入的那一半從約 14 KB 降到約 4 KB。
 - **用模型呼叫做摘要。** 靠請模型摘要來壓縮產出物，會在本計畫存心要保護的那條
   路徑上，正正加上一個失敗模式、一份延遲成本，以及第二個對弱模型的相依。只做
   決定性裁切。
