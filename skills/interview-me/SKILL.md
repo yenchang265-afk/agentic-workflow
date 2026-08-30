@@ -5,25 +5,23 @@ description: Interviews the user one question at a time to a confirmed statement
 
 # Interview Me
 
-What people ask for and what they actually want are different things. They ask for "a dashboard" because that's what one asks for, not because a dashboard solves their problem. They say "make it faster" without a number to hit.
+What people ask for and what they actually want are different things. They ask
+for "a dashboard" because that is what one asks for, not because a dashboard
+solves their problem; they say "make it faster" with no number to hit. The
+cheapest moment to find that gap is before any plan, spec, or code exists — after
+that, switching costs are real and the misfit gets rationalised into a
+"good enough" thing.
 
-The cheapest moment to find that gap is before any plan, spec, or code exists. Once building starts, switching costs are real, the user rationalizes the wrong thing into a "good enough" thing, and the misfit gets locked in.
+Every other Define-phase skill assumes you roughly know what you want. This is
+the part before those: one question at a time, each with your best guess
+attached, until you can predict what the user will say before they say it.
 
-Every other Define-phase skill assumes you already roughly know what you want. This is the part before those: one question at a time, with your best guess attached, until you can predict what the user will say before they say it.
-
-## When to Use
-
-Apply this skill when:
-
-- The ask is missing at least one of: **who** the user is, **why** they want it, what **success** looks like, what the binding **constraint** is
-- The user explicitly invokes: "interview me", "grill me", "before we start, are we sure?", "stress-test my thinking"
-
-**When NOT to use:**
-
-- The ask is unambiguous and self-contained, or mechanical ("rename this variable", "fix this typo", format, file move)
-- Pure information requests ("how does X work?", "what does this code do?")
-- The user has explicitly asked for speed over verification
-- **Predict-three** (below) already passes on the ask as written
+Run it when the ask is missing **who** it is for, **why** now, what **success**
+looks like, or the binding **constraint** — or when the user asks for it by name
+("interview me", "grill me", "are we sure?"). Skip it when the ask is
+self-contained or mechanical, when it is a pure question about how something
+works, when the user has asked for speed over verification, or when
+**predict-three** already passes on the ask as written.
 
 ## Loading Constraints
 
@@ -184,27 +182,26 @@ Inside `new` and `retask`, that confirmed intent — the goal plus its 2–5 acc
 
 ## Example
 
-Without this skill, "build me a dashboard for our metrics" goes straight to chart libraries and layouts — silently assuming who it's for, which metrics, and what done looks like. Two guess-first questions instead:
+"Build me a dashboard for our metrics" goes straight to chart libraries unless
+the guesses are made out loud. Two questions, each updating the hypothesis:
 
 ```
-Agent:
 HYPOTHESIS: You want to answer "how are we doing?" in standup; "dashboard" was the convention that came to mind.
 CONFIDENCE: ~30% — missing: who it's for, what "metrics" are, what success looks like
 
 Q:     Who's asking that question — you alone, the team in standup, or up the chain?
 GUESS: the team in standup, because "we" usually scopes that way. For execs the metrics and framing change a lot.
-
 User:  It's for me. I keep losing track of which experiments are running.
 
-Agent: Updated read: a personal experiment tracker, not a team dashboard. Confidence ~60% — still missing what "done" looks like.
+→ Updated read: a personal experiment tracker, not a team dashboard. ~60%.
 
 Q:     Is the gap that you don't know which experiments exist, or that you can't see their results in one place?
 GUESS: the second — results scattered across five tools, and reconciling them by hand is what you're tired of.
-
 User:  First one. I don't have a list at all.
 ```
 
-The ask was never a dashboard. It was a list — different artifact, different scope, and two questions bought that.
+The ask was never a dashboard. It was a list — a different artifact at a
+different size, and two questions bought that.
 
 ## Interaction with Other Skills
 
@@ -228,8 +225,8 @@ still guess-first — the window only changes how it is delivered. Read as
 contradictory, one of these two rules gets reverted; they are one rule about
 where the guess sits.
 
-**Three rounds with the confidence number flat** means you are asking the wrong
-questions. Reframe rather than continue — the count is not the problem.
+**Three rounds with the confidence number flat** means the questions are wrong,
+not too few. Reframe.
 
 ## Verification
 

@@ -26,7 +26,7 @@ back to technology; "how it's usually done" is not a reason; focus comes from
 saying no to good ideas, not from having no bad ones.
 
 **Unsure of the rhythm — how hard to push back, how much a variation must
-carry?** A full session, vague concept to one-pager:
+carry?** A worked session, vague concept to one-pager:
 [`examples.md`](examples.md).
 
 ## Phase 1 — Understand and expand

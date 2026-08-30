@@ -56,25 +56,24 @@ Every axis gets a stated verdict, including the clean ones.
 
 ### 1. Correctness
 
-Does the code do what it claims to do?
+Does the code do what it claims to do — against the spec or task, on the error
+paths as well as the happy one, at the boundaries, and under concurrency?
 
-- Does it match the spec or task requirements?
-- Are edge cases handled (null, empty, boundary values)?
-- Are error paths handled, not just the happy path?
-- Do tests exist, test behavior rather than implementation details, cover the edge cases, and actually fail if the code regresses?
-- Are there off-by-one errors, race conditions, or state inconsistencies?
-- Is the verification story real — what was run, what passed, and for UI, what it looks like now?
+Two checks are easy to skip and worth naming. **The tests have to be able to
+fail**: a test asserting implementation detail, or one that passes with the
+change reverted, is coverage on paper only. And **the verification story has to
+be real** — what was actually run, what passed, and for UI what it now looks
+like. A claim with no run behind it is the finding.
 
 ### 2. Readability & Simplicity
 
-Can another engineer (or agent) understand this code without the author explaining it?
+Can the next engineer or agent follow this without the author explaining it?
+Names that carry their content, control flow that reads forward, related code
+grouped, and no cleverness a reader has to decode (`using-agent-skills` →
+Enforce Simplicity). Three signals are specific enough to name:
 
-- Are names descriptive and consistent with project conventions? (No `temp`, `data`, `result` without context)
-- Is the control flow straightforward (avoid nested ternaries, deep callbacks)?
-- Is the code organized logically (related code grouped, clear module boundaries)?
-- Are there any "clever" tricks that should be simplified? Run the simplicity checks from `using-agent-skills` → Enforce Simplicity.
-- Would comments help clarify non-obvious intent? (But don't comment obvious code.)
-- Are there dead code artifacts: no-op variables (`_unused`), backwards-compat shims, or `// removed` comments?
+- **Are dead-code artifacts left behind?** No-op variables (`_unused`),
+  backwards-compat shims nothing uses, `// removed` comments.
 - **Is a new conditional bolted onto an unrelated flow?** That's a design smell, not a nitpick — push the logic into its own helper, state, or policy instead of tangling an existing path.
 - **Do repeated conditionals on the same shape appear?** They signal a missing model or dispatcher. A "temporary" branch is usually permanent debt.
 
