@@ -57,8 +57,8 @@ before touching the code.
 ## Step 2: Find the signals
 
 Scan for concrete signals rather than vague smells: work
-`references/simplification-patterns.md` → Simplification Signals row by row —
-each row is one signal and the simplification it calls for.
+`references/simplification-patterns.md` entry by entry — each names one signal
+and the change it calls for.
 
 **Step 2 is done when** every signal you found is either queued for Step 3 or
 has a documented reason to stay — a *why* comment, a proven hot path, or
@@ -82,19 +82,14 @@ fixes — a PR that refactors *and* adds a feature is two PRs.
 automation — a codemod, a script, an AST transform. Manual edits at that scale
 are error-prone and exhausting to review.
 
-Per-language before/after forms for the common simplifications — TypeScript,
-Python, React — are in `references/simplification-patterns.md` → Language
-Patterns.
-
 **Step 3 is done when** every simplification queued in Step 2 has been through
 this cycle — applied and kept, or reverted.
 
 ## Step 4: Judge the result
 
-Prefer clarity over cleverness: the rule and its before/after pairs are
-`references/simplification-patterns.md` → Clarity Over Cleverness.
-
-Then check the opposite failure — over-simplification:
+Prefer clarity over cleverness — explicit code beats compact code wherever the
+compact form costs a pause to parse. Then check the opposite failure,
+over-simplification:
 
 - **Inlined too aggressively** — a helper that gave a concept a name makes the
   call site *harder* to read once removed

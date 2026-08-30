@@ -47,9 +47,9 @@ tell you **why**.
 ## 3. Structured logging
 
 Log events, not prose: every line is a JSON object with a stable event name and
-machine-readable fields, so it can be queried instead of grepped. String
-interpolation is the anti-pattern (`references/observability-checklist.md` →
-Structured Logging has the before/after).
+machine-readable fields, so it can be queried instead of grepped. An
+interpolated sentence — `Payment ${id} failed after ${n} retries` — is the
+anti-pattern: it carries the same facts in a form nothing can filter on.
 
 **Log levels — use them consistently:**
 

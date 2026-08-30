@@ -99,7 +99,7 @@ crosses and the check that guards it; a boundary crossed with no check is the
 finding. Invoke `security-and-hardening` — it owns the guarantee list every diff
 must meet, the hunting lenses, and the repro-and-blast-radius rating.
 
-- Does a new dependency earn its place, and is it free of known vulnerabilities? (`references/security-checklist.md` → Dependency Security)
+- Does a new dependency earn its place, and is it free of known vulnerabilities? (`references/security-checklist.md` → Dependencies)
 
 ### 5. Performance
 

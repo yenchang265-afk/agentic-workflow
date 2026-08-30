@@ -11,10 +11,8 @@ Two branches, and they run in opposite directions.
 reporting. Everything below is this branch.
 
 **Building the surface** — the controls to put in place while writing code:
-always-do rules, OWASP prevention patterns, input validation, rate limiting,
-secrets layout, dependency review, and the changes to raise with a human first.
-The checkboxes are `references/security-checklist.md`; the copy-ready code
-behind them is `references/security-implementation-patterns.md`.
+input validation, secrets layout, dependency review, and the changes to raise
+with a human first. Those are `references/security-checklist.md`.
 
 ## Trust boundaries
 
@@ -86,8 +84,7 @@ credible.
 
 ## What every diff must guarantee
 
-Each of these is checkable from the diff, and each names what belongs there
-instead:
+Each is checkable from the diff, and each names what belongs there instead:
 
 - **Secrets come from the environment.** A literal key, password, or token in
   the diff is `critical` — and once it reaches a remote it is compromised, so
@@ -96,18 +93,15 @@ instead:
   numbers are redacted at the log call, not filtered downstream.
 - **The server re-validates everything.** Client-side validation is a UX
   affordance; the boundary check lives server-side.
-- **User data reaches the DOM as text.** `textContent` and framework
-  auto-escaping, never `innerHTML` or `eval` with user-provided data.
-- **Session tokens live in httpOnly cookies**, not `localStorage` or anywhere
-  client script can read them.
-- **Errors returned to users are generic.** Stack traces and internal details
-  stay in the server log.
-- **Queries are parameterized** and **server-side fetches of user-influenced
-  URLs are allowlisted** — what counts as allowlisted, and the TOCTOU gap that
-  survives it, is in `references/security-implementation-patterns.md` →
-  Server-Side Request Forgery (SSRF).
 - **Every resource access checks authorization**, not merely authentication —
-  ownership or role, on every endpoint.
+  ownership or role, on every endpoint, which is what makes an IDOR visible.
+- **Server-side fetches of user-influenced URLs are allowlisted.** What counts
+  as allowlisted, and the TOCTOU gap that survives it, is
+  `references/security-checklist.md` → SSRF.
+
+The remaining always-do controls — parameterized queries, escaped output,
+httpOnly session cookies, generic error bodies — are the checklist's, and a
+deviation becomes a finding here only once it has a repro.
 
 ## LLM surfaces
 
@@ -125,9 +119,7 @@ A feature that calls an LLM inherits a new boundary; map it to the
   finding at this boundary.
 
 The controls that close them — including bounded consumption and RAG tenant
-partitioning — and a worked example are in `references/security-checklist.md` →
-AI / LLM Security; the copy-ready code for every other control is
-`references/security-implementation-patterns.md`.
+partitioning — are `references/security-checklist.md` → LLM features.
 
 ## Verification
 

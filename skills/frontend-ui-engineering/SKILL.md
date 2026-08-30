@@ -59,28 +59,27 @@ directory. Prefer composition (`<Card><CardHeader>…`) over configuration
 thing under ~200 lines, and separate data fetching from presentation.
 
 Place state at the lowest level that works: local, then lifted, then URL state
-for anything shareable, then a server-state cache for remote data, then a global
-store. Props passed through components that don't use them past three levels
-means the tree needs context or restructuring.
-
-Worked examples for all of the above: `references/frontend-patterns.md`.
+for anything shareable (filters, pagination), then a server-state cache for
+remote data, then a global store. Props passed through components that don't use
+them past three levels means the tree needs context or restructuring.
 
 ## Every state renders something
 
 Loading, empty, and error are not edge cases — they are three of the four states
 every data-driven view has (the fourth is the loaded state itself), and a blank
 screen is a bug. Use skeletons rather
-than spinners for content and mark them `aria-busy`, give every empty state the
-action that resolves it, and give every error state a retry. See
-`references/frontend-patterns.md` → States and Loading.
+than spinners for content and mark them `aria-busy`, give every empty state
+`role="status"` and the action that resolves it, and give every error state a
+retry. Where an interaction updates optimistically, its rollback path is part of
+the pattern, not a follow-up.
 
 ## Responsive
 
 Design mobile-first: the smallest layout is the base, breakpoints add to it.
 Verify at 320px, 768px, 1024px, and 1440px.
 
-Images, fonts, bundles, and the rendering rules that hold INP and CLS inside
-their targets are in `references/performance-checklist.md` → Frontend Checklist.
+Images, fonts, bundles, and the scheduling rules that hold INP and CLS inside
+their targets are in `references/performance-checklist.md`.
 
 ## Verification
 

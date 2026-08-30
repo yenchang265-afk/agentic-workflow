@@ -1,179 +1,32 @@
-# Simplification Patterns
+# Simplification Signals
 
-Before/after examples backing `code-simplification`. Each preserves behavior exactly — only the expression changes.
+The scan list for `code-simplification` → Step 2. Each entry is a concrete
+signal and the change it calls for — something you can find by looking, not a
+smell you have to feel.
 
-## Simplification Signals
+## Structure
 
-The scan list for `code-simplification` → Step 2. Each row is a concrete signal, not a vague smell.
+- **Nesting past three levels** — invert into guard clauses, or extract the inner block.
+- **A function past ~50 lines** — it has more than one responsibility; split it along them.
+- **A nested ternary** — an if/else chain, a switch, or a lookup object.
+- **Boolean parameters** — `doThing(true, false, true)` becomes an options object, or separate functions named for what they do.
+- **The same condition repeated** — extract it into a named predicate, so the concept has one home.
 
-**Structural complexity:**
+## Naming
 
-| Pattern | Signal | Simplification |
-|---------|--------|----------------|
-| Deep nesting (3+ levels) | Hard to follow control flow | Extract conditions into guard clauses or helper functions |
-| Long functions (50+ lines) | Multiple responsibilities | Split into focused functions with descriptive names |
-| Nested ternaries | Requires mental stack to parse | Replace with if/else chains, switch, or lookup objects |
-| Boolean parameter flags | `doThing(true, false, true)` | Replace with options objects or separate functions |
-| Repeated conditionals | Same `if` check in multiple places | Extract to a well-named predicate function |
+- **Generic names** — `data`, `result`, `temp`, `val`, `item` name nothing; say what they hold.
+- **Abbreviations** — `usr`, `cfg`, `evt`. Spell them out unless the short form is universal (`id`, `url`, `api`).
+- **A name that lies** — a `get*` that mutates. Rename to the behavior, then consider whether the behavior is right.
+- **A comment restating the code** — delete it. A comment carrying *why* — a flaky API, a platform quirk — stays, and is the one kind worth adding.
 
-**Naming and readability:**
+## Redundancy
 
-| Pattern | Signal | Simplification |
-|---------|--------|----------------|
-| Generic names | `data`, `result`, `temp`, `val`, `item` | Rename to describe the content: `userProfile`, `validationErrors` |
-| Abbreviated names | `usr`, `cfg`, `btn`, `evt` | Use full words unless the abbreviation is universal (`id`, `url`, `api`) |
-| Misleading names | Function named `get` that also mutates state | Rename to reflect actual behavior |
-| Comments explaining "what" | `// increment counter` above `count++` | Delete the comment — the code is clear enough |
-| Comments explaining "why" | `// Retry because the API is flaky under load` | Keep these — they carry intent the code can't express |
+- **Duplicated logic** — the same handful of lines in several places, once the third copy appears.
+- **Dead code** — unreachable branches, unused variables, commented-out blocks. Confirm it is dead, then remove it; the history keeps it.
+- **A wrapper that adds nothing** — inline it and call through.
+- **An abstraction with one implementation** — a factory for one product, a strategy with one strategy. Replace it with the direct call until a second case exists.
+- **Assertions the compiler did not need** — a cast to a type already inferred.
 
-**Redundancy:**
-
-| Pattern | Signal | Simplification |
-|---------|--------|----------------|
-| Duplicated logic | Same 5+ lines in multiple places | Extract to a shared function |
-| Dead code | Unreachable branches, unused variables, commented-out blocks | Remove (after confirming it's truly dead) |
-| Unnecessary abstractions | Wrapper that adds no value | Inline the wrapper, call the underlying function directly |
-| Over-engineered patterns | Factory-for-a-factory, strategy-with-one-strategy | Replace with the simple direct approach |
-| Redundant type assertions | Casting to a type that's already inferred | Remove the assertion |
-
-## Clarity Over Cleverness
-
-Explicit code beats compact code when the compact version costs a mental pause to parse.
-
-```typescript
-// UNCLEAR: Dense ternary chain
-const label = isNew ? 'New' : isUpdated ? 'Updated' : isArchived ? 'Archived' : 'Active';
-
-// CLEAR: Readable mapping
-function getStatusLabel(item: Item): string {
-  if (item.isNew) return 'New';
-  if (item.isUpdated) return 'Updated';
-  if (item.isArchived) return 'Archived';
-  return 'Active';
-}
-```
-
-```typescript
-// UNCLEAR: Chained reduces with inline logic
-const result = items.reduce((acc, item) => ({
-  ...acc,
-  [item.id]: { ...acc[item.id], count: (acc[item.id]?.count ?? 0) + 1 }
-}), {});
-
-// CLEAR: Named intermediate step
-const countById = new Map<string, number>();
-for (const item of items) {
-  countById.set(item.id, (countById.get(item.id) ?? 0) + 1);
-}
-```
-
-## Language Patterns
-
-### TypeScript / JavaScript
-
-```typescript
-// SIMPLIFY: Unnecessary async wrapper
-// Before
-async function getUser(id: string): Promise<User> {
-  return await userService.findById(id);
-}
-// After
-function getUser(id: string): Promise<User> {
-  return userService.findById(id);
-}
-
-// SIMPLIFY: Verbose conditional assignment
-// Before
-let displayName: string;
-if (user.nickname) {
-  displayName = user.nickname;
-} else {
-  displayName = user.fullName;
-}
-// After
-const displayName = user.nickname || user.fullName;
-
-// SIMPLIFY: Manual array building
-// Before
-const activeUsers: User[] = [];
-for (const user of users) {
-  if (user.isActive) {
-    activeUsers.push(user);
-  }
-}
-// After
-const activeUsers = users.filter((user) => user.isActive);
-
-// SIMPLIFY: Redundant boolean return
-// Before
-function isValid(input: string): boolean {
-  if (input.length > 0 && input.length < 100) {
-    return true;
-  }
-  return false;
-}
-// After
-function isValid(input: string): boolean {
-  return input.length > 0 && input.length < 100;
-}
-```
-
-### Python
-
-```python
-# SIMPLIFY: Verbose dictionary building
-# Before
-result = {}
-for item in items:
-    result[item.id] = item.name
-# After
-result = {item.id: item.name for item in items}
-
-# SIMPLIFY: Nested conditionals with early return
-# Before
-def process(data):
-    if data is not None:
-        if data.is_valid():
-            if data.has_permission():
-                return do_work(data)
-            else:
-                raise PermissionError("No permission")
-        else:
-            raise ValueError("Invalid data")
-    else:
-        raise TypeError("Data is None")
-# After
-def process(data):
-    if data is None:
-        raise TypeError("Data is None")
-    if not data.is_valid():
-        raise ValueError("Invalid data")
-    if not data.has_permission():
-        raise PermissionError("No permission")
-    return do_work(data)
-```
-
-### React / JSX
-
-```tsx
-// SIMPLIFY: Verbose conditional rendering
-// Before
-function UserBadge({ user }: Props) {
-  if (user.isAdmin) {
-    return <Badge variant="admin">Admin</Badge>;
-  } else {
-    return <Badge variant="default">User</Badge>;
-  }
-}
-// After
-function UserBadge({ user }: Props) {
-  const variant = user.isAdmin ? 'admin' : 'default';
-  const label = user.isAdmin ? 'Admin' : 'User';
-  return <Badge variant={variant}>{label}</Badge>;
-}
-
-// SIMPLIFY: Prop drilling through intermediate components
-// Before — consider whether context or composition solves this better.
-// This is a judgment call — flag it, don't auto-refactor.
-```
-
+Over-simplification is the mirror failure, and `code-simplification` → Step 4
+judges for it: an inlined helper that was naming a concept, two simple functions
+merged into one complex one, an abstraction that was earning its keep.

@@ -1,181 +1,49 @@
 # Accessibility Checklist
 
-Quick reference for WCAG 2.1 AA compliance. Use alongside the `frontend-ui-engineering` skill.
+The WCAG 2.1 AA bar a UI is audited against, backing `frontend-ui-engineering`.
+Semantic elements, `alt` text, and label association are assumed; what follows is
+what a review actually catches missing, so work each list to its end.
 
-## Table of Contents
+## Keyboard
 
-- [Essential Checks](#essential-checks)
-- [Common HTML Patterns](#common-html-patterns)
-- [Testing Tools](#testing-tools)
-- [Quick Reference: ARIA Live Regions](#quick-reference-aria-live-regions)
-- [Common Anti-Patterns](#common-anti-patterns)
-- [Focus Management (Dialogs)](#focus-management-dialogs)
+- [ ] Focus order matches the visual order, and the focus ring is visible everywhere (styled, never removed)
+- [ ] Custom widgets answer Enter and Escape; no component can trap focus
+- [ ] A skip-to-content link opens the page, visible at least on focus
+- [ ] A dialog moves focus in on open, traps it while open, and returns it to the trigger on close
+- [ ] No positive `tabindex` anywhere — `0` and `-1` only
 
-## Essential Checks
+## Screen reader
 
-### Keyboard Navigation
-- [ ] All interactive elements focusable via Tab key
-- [ ] Focus order follows visual/logical order
-- [ ] Focus is visible (outline/ring on focused elements)
-- [ ] Custom widgets have keyboard support (Enter to activate, Escape to close)
-- [ ] No keyboard traps (user can always Tab away from a component)
-- [ ] Skip-to-content link at top of page - visible (at least) on keyboard focus
-- [ ] Modals trap focus while open, return focus on close
+- [ ] Exactly one `<h1>`, and no skipped heading levels
+- [ ] Every control has an accessible name — icon-only buttons carry `aria-label`, and no link reads as "click here"
+- [ ] Tables use `<th>` with `scope`
+- [ ] Dynamic changes are announced: `aria-live="polite"` (equivalently `role="status"`) for confirmations, `assertive` (equivalently `role="alert"`) reserved for errors and time-critical messages
+- [ ] Decorative images are `alt=""` rather than described
 
-### Screen Readers
-- [ ] All images have `alt` text (or `alt=""` for decorative images)
-- [ ] All form inputs have associated labels (`<label>` or `aria-label`)
-- [ ] Buttons and links have descriptive text (not "Click here")
-- [ ] Icon-only buttons have `aria-label`
-- [ ] Page has one `<h1>` and headings don't skip levels
-- [ ] Dynamic content changes announced (`aria-live` regions)
-- [ ] Tables have `<th>` headers with scope
+## Visual
 
-### Visual
-- [ ] Text contrast ≥ 4.5:1 (normal text) or ≥ 3:1 (large text, 18px+)
-- [ ] UI components contrast ≥ 3:1 against background
-- [ ] Color is not the only way to convey information
-- [ ] Text resizable to 200% without breaking layout
-- [ ] No content that flashes more than 3 times per second
+- [ ] Text contrast ≥ 4.5:1, large text and UI components ≥ 3:1
+- [ ] Color never carries meaning alone
+- [ ] Layout survives 200% text zoom
+- [ ] Nothing flashes more than three times per second
+- [ ] Touch targets ≥ 44×44px
 
-### Forms
-- [ ] Every input has a visible label
-- [ ] Required fields indicated (not by color alone)
-- [ ] Error messages specific and associated with the field
-- [ ] Error state visible by more than color (icon, text, border)
-- [ ] Form submission errors summarized and focusable
-- [ ] Known fields use autocomplete (for example `type="email" autocomplete="email"`)
+## Forms
 
-### Content
-- [ ] Language declared (`<html lang="en">`)
-- [ ] Page has a descriptive `<title>`
-- [ ] Links distinguish from surrounding text (not by color alone)
-- [ ] Touch targets ≥ 44x44px on mobile
-- [ ] Meaningful empty states (not blank screens)
+- [ ] Every input has a *visible* label; required state shown by more than color
+- [ ] Each error message is specific and programmatically associated with its field
+- [ ] Error state is visible by icon or text as well as border color
+- [ ] A submission failure summarises the errors somewhere focusable
+- [ ] Known fields carry the right `type` and `autocomplete`
 
-## Common HTML Patterns
+## Page
 
-### Buttons vs. Links
+- [ ] `<html lang>` set and the `<title>` describes the page
+- [ ] Links distinguishable from body text without relying on color
+- [ ] Empty states render meaning, never a blank region
 
-```html
-<!-- Use <button> for actions -->
-<button onClick={handleDelete}>Delete Task</button>
+## Audit
 
-<!-- Use <a> for navigation -->
-<a href="/tasks/123">View Task</a>
-
-<!-- NEVER use div/span as buttons -->
-<div onClick={handleDelete}>Delete</div>  <!-- BAD -->
-```
-
-### Form Labels
-
-```html
-<!-- Explicit label association -->
-<label htmlFor="email">Email address</label>
-<input id="email" type="email" required />
-
-<!-- Implicit wrapping -->
-<label>
-  Email address
-  <input type="email" required />
-</label>
-
-<!-- Hidden label (visible label preferred) -->
-<input type="search" aria-label="Search tasks" />
-```
-
-### ARIA Roles
-
-```html
-<!-- Navigation -->
-<nav aria-label="Main navigation">...</nav>
-<nav aria-label="Footer links">...</nav>
-
-<!-- Status messages -->
-<div role="status" aria-live="polite">Task saved</div>
-
-<!-- Alert messages -->
-<div role="alert">Error: Title is required</div>
-
-<!-- Modal dialogs -->
-<dialog aria-modal="true" aria-labelledby="dialog-title">
-  <h2 id="dialog-title">Confirm Delete</h2>
-  ...
-</dialog>
-
-<!-- Loading states — a skeleton, not a spinner (frontend-patterns.md → States and Loading) -->
-<div aria-busy="true" aria-label="Loading tasks">
-  <!-- placeholder blocks holding the arriving layout -->
-</div>
-```
-
-### Accessible Lists
-
-```html
-<ul role="list" aria-label="Tasks">
-  <li>
-    <input type="checkbox" id="task-1" aria-label="Complete: Buy groceries" />
-    <label htmlFor="task-1">Buy groceries</label>
-  </li>
-</ul>
-```
-
-## Testing Tools
-
-```bash
-# Automated audit
-npx axe-core          # Programmatic accessibility testing
-npx pa11y             # CLI accessibility checker
-
-# In browser
-# Chrome DevTools → Lighthouse → Accessibility
-# Chrome DevTools → Elements → Accessibility tree
-
-# Screen reader testing
-# macOS: VoiceOver (Cmd + F5)
-# Windows: NVDA (free) or JAWS
-# Linux: Orca
-```
-
-## Quick Reference: ARIA Live Regions
-
-| Value | Behavior | Use For |
-|-------|----------|---------|
-| `aria-live="polite"` | Announced at next pause | Status updates, saved confirmations |
-| `aria-live="assertive"` | Announced immediately | Errors, time-sensitive alerts |
-| `role="status"` | Same as `polite` | Status messages |
-| `role="alert"` | Same as `assertive` | Error messages |
-
-## Common Anti-Patterns
-
-| Anti-Pattern | Problem | Fix |
-|---|---|---|
-| `div` as button | Not focusable, no keyboard support | Use `<button>` |
-| Missing `alt` text | Images invisible to screen readers | Add descriptive `alt` |
-| Color-only states | Invisible to color-blind users | Add icons, text, or patterns |
-| Autoplaying media | Disorienting, can't be stopped | Add controls, don't autoplay |
-| Custom dropdown with no ARIA | Unusable by keyboard/screen reader | Use native `<select>` or proper ARIA listbox |
-| Removing focus outlines | Users can't see where they are | Style outlines, don't remove them |
-| Empty links/buttons | "Link" announced with no description | Add text or `aria-label` |
-| `tabindex > 0` | Breaks natural tab order | Use `tabindex="0"` or `-1` only |
-
-## Focus Management (Dialogs)
-
-```tsx
-// Move focus when content changes; trap it inside an open dialog
-function Dialog({ isOpen, onClose }: DialogProps) {
-  const closeRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (isOpen) closeRef.current?.focus();
-  }, [isOpen]);
-
-  return (
-    <dialog open={isOpen}>
-      <button ref={closeRef} onClick={onClose}>Close</button>
-      {/* dialog content */}
-    </dialog>
-  );
-}
-```
+`axe-core` or `pa11y` in CI, the DevTools accessibility tree for names and
+roles, and one pass with a real screen reader (VoiceOver, NVDA, or Orca) —
+automation catches roughly a third of what the manual pass does.

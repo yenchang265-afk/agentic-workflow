@@ -2,21 +2,11 @@
 
 A standing, project-wide bar that every change must clear before it counts as done. Unlike acceptance criteria, which vary per task and answer "did we build the right thing?", the Definition of Done is the same every time and answers "is this finished to our standard?". Use it as the final gate in `planning-and-task-breakdown` and `incremental-implementation`.
 
-## Definition of Done vs. Acceptance Criteria
+A task is done only when **its** acceptance criteria are met **and** this
+standing bar is satisfied. Either one alone leaves work that looks finished and
+is not.
 
-| | Acceptance Criteria | Definition of Done |
-|---|---|---|
-| Scope | Specific to one task or spec | Applies to every increment |
-| Changes | Different for each item | Fixed and reused |
-| Answers | "Did we build *this thing*?" | "Is it *ready*?" |
-| Owner | Defined when planning the task | Defined once for the project |
-| Example | "User can reset password via email link" | "Tests pass, no regressions, docs updated" |
-
-The two are complementary. A task is done only when **its** acceptance criteria are met **and** the standing Definition of Done is satisfied. Skipping either leaves work that looks finished but is not.
-
-## The Standing Checklist
-
-Apply this to every change before declaring it done.
+## The standing checklist
 
 ### Correctness
 - [ ] All acceptance criteria for the task are met
@@ -50,22 +40,15 @@ The depth behind these items lives in `code-review-and-quality` (the five-axis r
 - [ ] Rollback path exists for anything risky
 - [ ] The human has reviewed and approved before merge or deploy
 
-## Verification Discipline
+## Verification discipline
 
 Run each test/build/lint command after a change that could affect its result. After a clean run, run it again only once the code has changed — a repeat on unchanged code adds no information. One clean run per code state is the standard.
 
-## How to Apply
+## How to apply
 
-- **Per task**: confirm the Correctness and Quality sections before checking the task off.
-- **Per feature**: confirm Integration and Documentation before considering the feature complete.
-- **Per release**: the full checklist is the floor; a release adds deploy-specific gates (staged rollout, monitoring, rollback) on top.
+Correctness and Quality gate a task; Integration and Documentation gate a
+feature; a release takes the whole list as its floor and adds its own deploy
+gates on top (staged rollout, monitoring, rollback).
 
-Tailor the list to the project once, then reuse it unchanged. A Definition of Done that is renegotiated every sprint is not a Definition of Done.
-
-## Red Flags
-
-- "It's done, I just haven't run it yet": unverified work is not done.
-- "Tests pass" used as a synonym for done while docs, regressions, or runtime verification are skipped.
-- A different bar applied depending on deadline pressure.
-- Acceptance criteria treated as the whole bar, with no standing quality floor.
-- "Done" declared before human review on changes that need it.
+Tailor the list to the project once, then reuse it unchanged — a bar
+renegotiated per sprint is not a bar.

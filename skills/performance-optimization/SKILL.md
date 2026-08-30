@@ -74,10 +74,9 @@ premature optimization buys complexity with no evidence it bought speed:
 ```
 
 Your machine is not the user's, so profile on representative hardware and
-networks. Core Web Vitals targets, the symptom-to-measurement tree, bottleneck
-tables, measurement commands, and budgets all live in
-`references/performance-checklist.md`; the worked before/after fixes are in
-`references/performance-implementation-examples.md`.
+networks. Core Web Vitals targets, the symptom-to-measurement table, the
+scheduling and bfcache levers, and the budget are
+`references/performance-checklist.md`.
 
 ## Verification
 

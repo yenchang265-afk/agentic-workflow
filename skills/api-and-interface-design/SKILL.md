@@ -9,12 +9,15 @@ Make the right thing easy and the wrong thing hard, across REST endpoints,
 GraphQL schemas, module boundaries, component props — anywhere one piece of
 code talks to another.
 
-Interface design is **decided before it is written**. This file holds the
-decisions a plan has to settle; the code that expresses them — resource URLs,
-pagination and filtering shapes, PATCH semantics, validated route handlers,
-discriminated unions, input/output type separation, branded IDs — is in
-`references/api-implementation-patterns.md`. Reach for that when writing the
-interface, not when deciding it.
+Interface design is **decided before it is written**, and this file holds the
+decisions a plan has to settle. Four of them are worth naming because a
+plausible-looking interface can miss each one: PATCH takes a partial object
+where PUT makes every added client field a race; a caller's input type and the
+system's output type are separate types, or server-generated fields end up
+optional on the way in and nullable on the way out; a variant is a discriminated
+union rather than a bag of optionals, so the consumer narrows instead of
+guessing; and ids that are all `string` are interchangeable to the compiler
+until they are branded.
 
 ## Hyrum's Law
 

@@ -1,74 +1,44 @@
 # Migration Rollout
 
-Executing a deprecation once it has been decided. Reached from `deprecation-and-migration`, which owns the decision — whether to deprecate, advisory or compulsory, and which migration pattern. This file is the process that follows, and it spans far more than one change: run it a phase at a time.
+Executing a deprecation once `deprecation-and-migration` has decided it —
+whether to deprecate at all, advisory or compulsory, and which pattern. This is
+the process that follows, and it spans far more than one change: run it a phase
+at a time.
 
-## Step 1: Build the Replacement
+## 1. Build the replacement first
 
-Do not deprecate without a working alternative. The replacement must:
+No deprecation without a working alternative: it covers the critical use cases,
+it has a migration guide, and it is proven in production rather than in
+principle. A deprecation announced ahead of its replacement converts every
+consumer's plan into waiting.
 
-- Cover all critical use cases of the old system
-- Have documentation and a migration guide
-- Be proven in production, not just theoretically better
+## 2. Announce it where the consumer already is
 
-## Step 2: Announce and Document
+The notice names the status and date, the replacement, the reason in terms of
+what the consumer gets, and the concrete first migration step. A **compulsory**
+deprecation adds a removal date *and* the tooling that makes that date
+achievable — a codemod, a script, a verification command. An advisory one leaves
+the date open and says so, rather than implying one.
 
-```markdown
-## Deprecation Notice: OldService
+## 3. Migrate consumers one at a time
 
-**Status:** Deprecated as of 2025-03-01
-**Replacement:** NewService (see migration guide below)
-**Removal date:** Advisory — no hard deadline yet
-**Reason:** OldService requires manual scaling and lacks observability.
-            NewService handles both automatically.
+Per consumer: find every touchpoint, move it, prove behaviour matches, drop the
+old references. Under the Churn Rule this is the deprecating team's work, not
+the consumers' — the team that benefits from the change pays for it.
 
-### Migration Guide
-1. Replace `import { client } from 'old-service'` with `import { client } from 'new-service'`
-2. Update configuration (see examples below)
-3. Run the migration verification script: `npx migrate-check`
-```
+Where a strangler pattern replaces the per-consumer loop, the traffic ladder is
+the unit instead: 0% → canary → half → all → old system idle, with a rollback at
+every rung and the old system left running until the last one holds.
 
-A compulsory deprecation adds a removal date and the tooling that makes it achievable. An advisory one leaves the date open.
+## 4. Remove only against evidence
 
-## Step 3: Migrate Consumers Incrementally
-
-One consumer at a time, never all at once. For each:
-
-```
-1. Identify all touchpoints with the deprecated system
-2. Update to use the replacement
-3. Verify behavior matches (tests, integration checks)
-4. Remove references to the old system
-5. Confirm no regressions
-```
-
-Under the Churn Rule, this is the deprecating team's work, not the consumers'.
-
-For a strangler rollout, the traffic ladder replaces the per-consumer loop:
-
-```
-Phase 1: New system handles 0%, old handles 100%
-Phase 2: New system handles 10% (canary)
-Phase 3: New system handles 50%
-Phase 4: New system handles 100%, old system idle
-Phase 5: Remove old system
-```
-
-## Step 4: Remove the Old System
-
-Only once every consumer has moved:
-
-```
-1. Verify zero active usage (metrics, logs, dependency analysis)
-2. Remove the code
-3. Remove associated tests, documentation, and configuration
-4. Remove the deprecation notices
-```
-
-Zero usage is proven by evidence, not by expectation — Hyrum's Law means the consumer you did not know about is the one that breaks.
+Zero usage is proven from metrics, logs, and dependency analysis — never
+expected. Hyrum's Law says the consumer you did not know about is the one that
+breaks. Then remove the code, its tests, its configuration, *and* the
+deprecation notices: a notice outliving the thing it deprecated is how the next
+reader learns to distrust every other notice.
 
 ## Verification
-
-After a rollout completes:
 
 - [ ] Replacement is production-proven and covers all critical use cases
 - [ ] Migration guide exists with concrete steps and examples

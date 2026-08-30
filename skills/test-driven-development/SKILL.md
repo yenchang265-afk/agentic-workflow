@@ -23,39 +23,19 @@ abstraction.
 **REFACTOR** — improve naming, extract shared logic, remove duplication, with
 tests green. Re-run the tests after every refactor step.
 
-Repeat per behavior. Worked RED→GREEN example:
-`references/testing-patterns.md` → The RED/GREEN Cycle.
+Repeat per behavior.
 
 **Done when** every acceptance criterion has a test that failed before the
 implementation existed and passes after it.
 
 ## Prove-It (bug fixes)
 
-A bug report is a test request before it is a fix request. **Do not start by
-trying to fix it.**
+A bug report is a test request before it is a fix request: reproduce it in a
+test that fails for the reported reason, fix it, watch that test pass, then run
+the full suite for regressions.
 
-```
-Bug report arrives
-       │
-       ▼
-  Write a test that demonstrates the bug
-       │
-       ▼
-  Test FAILS (confirming the bug exists — and that you understood it)
-       │
-       ▼
-  Implement the fix
-       │
-       ▼
-  Test PASSES (proving the fix works)
-       │
-       ▼
-  Run full test suite (no regressions)
-```
-
-A fix without a failing-first reproduction is a guess: you cannot tell a bug you
-fixed from a bug you failed to trigger. Worked example:
-`references/testing-patterns.md` → The Prove-It Pattern.
+A fix without a failing-first reproduction is a guess — you cannot tell a bug
+you fixed from a bug you failed to trigger.
 
 ## What to write
 
@@ -73,11 +53,10 @@ and easy to debug when they fail.
 | **Medium** | Multi-process OK, localhost only, no external services | Seconds | The behavior crosses a boundary — API, database, file system |
 | **Large** | Multi-machine OK, external services allowed | Minutes | A critical user flow must work end-to-end; limit these to critical paths |
 
-Worked forms for the Medium and Large rows — component tests against the
-accessibility tree, supertest API tests, Playwright end-to-end flows — are in
-`references/testing-patterns.md`.
+Component tests address the accessibility tree rather than test ids, which is
+what keeps them from re-breaking on markup changes.
 
-Rules for each test, with worked examples in `references/testing-patterns.md`:
+Rules for each test:
 
 - **Test state, not interactions.** Assert on the outcome of an operation, never
   on which methods were called — interaction tests break under refactor even
@@ -88,12 +67,12 @@ Rules for each test, with worked examples in `references/testing-patterns.md`:
 - **Prefer real implementations** — then fakes, then stubs, then mocks
   (sparingly). Mock only at boundaries where the real dependency is slow,
   non-deterministic, or side-effectful.
-- **Arrange-Act-Assert** structure in every test.
 - **One assertion-concept per test**, named for the behavior it verifies ("sets
   completedAt when task is completed" — never "works").
-
-Flaky tests, snapshot abuse, over-mocking, and shared state are catalogued in
-`references/testing-patterns.md` → Test Anti-Patterns.
+- **Deterministic and isolated.** A test that depends on wall-clock timing, on
+  another test's leftover state, or on run order is a flake, and a flaky suite
+  stops being read at all. A test that cannot be made deterministic is deleted,
+  never skipped into permanence.
 
 ## Verification
 

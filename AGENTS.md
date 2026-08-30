@@ -196,7 +196,7 @@ flowchart TD
 - `skills/` — skill workflows (`SKILL.md` per directory) invoked by name via the `skill` tool
 - `prompts/verbs/engineering.md` — the per-verb procedures of `/agentic-workflow:engineering`, each inside an `<!-- aw:verb <names> -->` block; **generated** into `plugins/claude/verbs/` and `plugins/qwen/verbs/` (see "Per-verb command slicing" below)
 - `plugins/qwen/` — the Qwen Code host (**experimental** — interface and behavior may still change): generated `agents/`, `verbs/`, `skills/` and `hooks/`, plus hand-authored `commands/`. Reuses the Claude plugin's MCP server and hook sources; see `docs/qwen.md`
-- `references/` — supplementary checklists (`testing-patterns.md`, `security-checklist.md`, etc.) that skills pull in when needed
+- `references/` — supplementary checklists (`security-checklist.md`, `debugging-patterns.md`, etc.) that skills pull in when needed
 
 ### Per-verb command slicing
 
