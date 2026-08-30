@@ -38,6 +38,8 @@ import {
   appendNote,
   appendRunLog,
   auditNote,
+  buildFinishedNote,
+  buildStartedNote,
   claimFirst,
   claimTask,
   claimTaskSweepingDeadWriter,
@@ -1059,6 +1061,44 @@ const toast = (client: Client, message: string, variant: "info" | "success" | "w
   client.tui.showToast({ body: { message, variant } }).catch(() => {})
 
 /**
+ * How long a client call the ESC path AWAITS may run. Deliberately tighter than
+ * the hook-path budget: `onInterrupt` is awaited by the plugin's event hook,
+ * which is the one handler whose comments say it must always get through — park
+ * it and the interrupt is lost, so the trailing idle re-claims the work the user
+ * just ESC'd out of. Both calls it bounds are best-effort refinements (which
+ * session to halt, stopping passes the user cannot see); the cleanup that
+ * actually honours the ESC runs after them, so waiting longer buys nothing.
+ */
+const INTERRUPT_CALL_TIMEOUT_MS = 2_000
+
+/**
+ * How long opening or closing a fan-out PASS session may take. These sit outside
+ * every other bound the run has: the create runs before the stage timer exists,
+ * and the delete runs in a `finally` after the pass is done — so an un-boxed one
+ * wedges the drive with no ESC out of it, since the halt is only consulted
+ * between passes.
+ */
+const PASS_SESSION_TIMEOUT_MS = 30_000
+
+/**
+ * Resolve `promise`, or `fallback` once `ms` passes; a rejection resolves with
+ * `fallback` too. For calls whose result is best-effort and whose failure mode
+ * is already "carry on without it" — `.catch()` guards a rejection, not a hang,
+ * and opencode's SDK sets `req.timeout = false`, so an un-boxed client call can
+ * hang for the life of the process. Nothing is cancelled; the abandoned promise
+ * keeps handlers, so a late rejection is never unhandled.
+ */
+const withinCallDeadline = <T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> =>
+  new Promise<T>((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), ms)
+    const settle = (value: T) => {
+      clearTimeout(timer)
+      resolve(value)
+    }
+    promise.then(settle, () => settle(fallback))
+  })
+
+/**
  * The toast variant for a gate move. Core sets `variant` on a REFUSAL to grade
  * it (`info` = nothing to do, `warning` = wrong folder), and on a SUCCESS to
  * mark a move that landed with a caveat — a ship whose PR did not open. Without
@@ -1593,11 +1633,18 @@ export const runStagePasses = async (
   const openPassSession = async (pass: StagePass): Promise<string> => {
     if (concurrency === 1) return sessionID
     try {
-      const created = await client.session.create({
-        body: { parentID: sessionID, ...(pass.focus ? { title: `${stage}: ${pass.focus}` } : {}) },
-      })
+      // Time-boxed: this runs BEFORE any stage timer exists, so a `session.create`
+      // that never settles wedges the whole drive un-ESC-ably (the halt is only
+      // consulted between passes). The deadline lands in the catch below, which
+      // already knows how to degrade — the pass runs on the shared session,
+      // serialized, exactly as it does when creation fails outright.
+      const created = await withinCallDeadline(
+        client.session.create({ body: { parentID: sessionID, ...(pass.focus ? { title: `${stage}: ${pass.focus}` } : {}) } }),
+        PASS_SESSION_TIMEOUT_MS,
+        null,
+      )
       const id = created?.data?.id
-      if (!id) throw new Error("session.create returned no id")
+      if (!id) throw new Error("session.create returned no id, or did not answer within its deadline")
       setWorkflow(id, { ...state, passOf: sessionID })
       passSessions.get(sessionID)?.add(id)
       return id
@@ -1610,7 +1657,10 @@ export const runStagePasses = async (
   /** Tear a pass session down. Never the driving session — that outlives the stage. */
   const closePassSession = async (passSessionID: string): Promise<void> => {
     if (passSessionID === sessionID) return
-    await client.session.delete({ path: { id: passSessionID } }).catch(() => {})
+    // Bounded for the same reason the create is, and it matters more: this runs
+    // in a `finally`, so a hung delete holds the pass — and the stage — open with
+    // its work already done.
+    await withinCallDeadline(client.session.delete({ path: { id: passSessionID } }).catch(() => {}), PASS_SESSION_TIMEOUT_MS, undefined)
     // Unregister only AFTER the session is gone: a late workflow_verdict from
     // a subtask still settling in the abort-grace window walks up the parent
     // chain, and with the pass unregistered first it resolved to the DRIVING
@@ -2303,7 +2353,7 @@ const driveChain = async (
     if (preFire) return preFire
     const { task, iteration } = step.state
     const trackBuild = stage === "build" && task
-    if (trackBuild) await appendNote(deps.$, task, auditNote(`BUILD started (iteration ${iteration + 1})`, new Date(), actor), deps.log)
+    if (trackBuild) await appendNote(deps.$, task, auditNote(buildStartedNote(iteration + 1), new Date(), actor), deps.log)
     // A degraded isolation (detached HEAD, checkout failure) must be visible in
     // the task's audit trail, not just a console warn — the run otherwise looks
     // identical to an isolated one while writing into the main tree.
@@ -2326,7 +2376,7 @@ const driveChain = async (
       iteration,
       step.action.kind === "fire" ? step.action.promptElided : undefined,
     )
-    if (trackBuild) await appendNote(deps.$, task, auditNote(`BUILD finished (iteration ${iteration + 1})`, new Date(), actor), deps.log)
+    if (trackBuild) await appendNote(deps.$, task, auditNote(buildFinishedNote(iteration + 1), new Date(), actor), deps.log)
     // Post-stage boundary: the loop was cleared or a halt armed while the stage
     // ran. The interrupt path leaves `getWorkflow` set (so `onIdle`'s catch stays
     // intact on a reject-on-abort), so the closure clears it itself.
@@ -2672,7 +2722,11 @@ export const onInterrupt = async (deps: Deps, sessionID: string): Promise<void> 
   // exactly like the tool guard and workflow_verdict do. Best-effort: on a
   // session-API failure fall back to the raw id (the old behavior).
   if (!state && anyWorkflowActive()) {
-    const drive = await findDrivingWorkflow(deps.client, sessionID).catch(() => null)
+    const drive = await withinCallDeadline(
+      findDrivingWorkflow(deps.client, sessionID).catch(() => null),
+      INTERRUPT_CALL_TIMEOUT_MS,
+      null,
+    )
     if (drive) {
       sessionID = drive.sessionID
       state = drive.state
@@ -2735,7 +2789,10 @@ export const onInterrupt = async (deps: Deps, sessionID: string): Promise<void> 
   // sessions, so ESC on the driving session never reached them — without this
   // the remaining lens/axis turns keep burning after the user asked to stop.
   for (const id of passSessions.get(sessionID) ?? []) {
-    await deps.client.session.abort({ path: { id } }).catch(() => {})
+    // Time-boxed for the same reason the chain walk above is: this handler is
+    // awaited by the event hook, and one pass session whose abort never settles
+    // would swallow the ESC entirely — including the cleanup below it.
+    await withinCallDeadline(deps.client.session.abort({ path: { id } }).catch(() => {}), INTERRUPT_CALL_TIMEOUT_MS, undefined)
   }
   await releasePendingMarker(deps, priorPending) // dropped one-shot work must not leave a held claim
   if (wasWatching) await releaseWatchLease(deps)
@@ -3098,7 +3155,10 @@ export const disposeWatch = (): void => {
   for (const [dir, entry] of watchLeases) {
     watchLeases.delete(dir)
     clearInterval(entry.heartbeat)
-    void releaseLease(entry.deps.$, dir, entry.tasksDir, leaseOwner())
+    // The `.catch` is not optional on a `void`ed promise: dispose runs while the
+    // process is shutting down, where a rejected release (the tree is gone, the
+    // shell is dead) becomes an unhandled rejection rather than a lost lease.
+    void releaseLease(entry.deps.$, dir, entry.tasksDir, leaseOwner()).catch(() => {})
   }
 }
 

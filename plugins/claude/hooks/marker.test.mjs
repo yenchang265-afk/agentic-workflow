@@ -3,7 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
-import { backlogRoot, markerWriterAlive, readTasksDir, runsDir } from "./src/marker.mjs"
+import { backlogRoot, isSameMachine, liveMarker, machineIdSync, markerWriterAlive, readTasksDir, runsDir } from "./src/marker.mjs"
 
 /**
  * The guards must look for the stage marker exactly where the MCP server writes
@@ -96,17 +96,59 @@ test("a malformed config layer reads as absent rather than throwing", () => {
   fs.rmSync(repo, { recursive: true, force: true })
 })
 
+/** A marker stamped by this very process — the only shape that can read alive. */
+const ours = (pid) => ({ pid, machine: machineIdSync() })
+
 test("markerWriterAlive: a live pid reads alive; a gone, absent, or non-pid value reads dead", () => {
   // Our own pid is the self-validating probe: it must read alive, or the check
   // proves nothing. 999999999 is beyond every Linux pid_max default, so kill(2)
   // reports ESRCH. Everything non-pid-shaped (an older marker without the field,
   // a garbled value) reads dead — which the caller treats as fail OPEN.
-  assert.equal(markerWriterAlive(process.pid), true)
-  assert.equal(markerWriterAlive(999_999_999), false)
+  assert.equal(markerWriterAlive(ours(process.pid)), true)
+  assert.equal(markerWriterAlive(ours(999_999_999)), false)
+  assert.equal(markerWriterAlive(ours(undefined)), false)
+  assert.equal(markerWriterAlive(ours(null)), false)
+  assert.equal(markerWriterAlive(ours(0)), false)
+  assert.equal(markerWriterAlive(ours(-1)), false)
+  assert.equal(markerWriterAlive(ours(1.5)), false)
+  assert.equal(markerWriterAlive(ours("123")), false)
   assert.equal(markerWriterAlive(undefined), false)
   assert.equal(markerWriterAlive(null), false)
-  assert.equal(markerWriterAlive(0), false)
-  assert.equal(markerWriterAlive(-1), false)
-  assert.equal(markerWriterAlive(1.5), false)
-  assert.equal(markerWriterAlive("123"), false)
+})
+
+test("a pid without its namespace proves nothing — the reading that ENFORCES needs proof", () => {
+  // This is the direction core's `liveness.ts` refuses to bless the bare probe
+  // for: "alive" here KEEPS the deadline starve, so a foreign pid that happens
+  // to exist locally (sibling containers from one image, a bind-mounted repo)
+  // would block Bash and Write repo-wide, addressed to nobody. Our own live pid
+  // under someone else's namespace must therefore read dead.
+  const self = machineIdSync()
+  assert.equal(markerWriterAlive({ pid: process.pid, machine: { host: "some-other-box", boot: self.boot } }), false)
+  assert.equal(markerWriterAlive({ pid: process.pid, machine: { host: self.host, boot: "00000000-0000-0000-0000-000000000000" } }), false)
+  // An older server stamped no machine at all: not provably local, so not alive
+  // — the fail-OPEN direction every uncertainty in these hooks takes.
+  assert.equal(markerWriterAlive({ pid: process.pid }), false)
+})
+
+test("isSameMachine refuses every uncertainty, including a one-sided boot id", () => {
+  const self = machineIdSync()
+  assert.equal(isSameMachine(self, self), true)
+  assert.equal(isSameMachine({ host: self.host }, { host: self.host, boot: "b" }), false)
+  assert.equal(isSameMachine({ host: self.host, boot: "b" }, { host: self.host, boot: null }), false)
+  assert.equal(isSameMachine({}, self), false)
+  assert.equal(isSameMachine(null, self), false)
+})
+
+test("liveMarker is the one rule: expired + dead writer reads as NO marker", () => {
+  const past = Date.now() - 60_000
+  const future = Date.now() + 60_000
+  const dead = { stage: "verify", deadline: past, ...ours(999_999_999) }
+  const live = { stage: "verify", deadline: past, ...ours(process.pid) }
+  assert.equal(liveMarker(dead), null)
+  assert.equal(liveMarker(live), live, "an expired marker whose writer runs is a late loop, not a dead one")
+  const future_ = { stage: "verify", deadline: future }
+  assert.equal(liveMarker(future_), future_)
+  const noDeadline = { stage: "verify" }
+  assert.equal(liveMarker(noDeadline), noDeadline, "an older server's marker stays trusted")
+  assert.equal(liveMarker(null), null)
 })

@@ -35,7 +35,18 @@ import { failOpen } from "./crash.mjs"
  * at line starts (audit notes are whole lines): a body QUOTING the literal
  * text mid-line must not read as lifecycle state. MUST stay behaviorally in
  * sync with store.ts `lastMarkerIndex`/`wasInterrupted`.
+ *
+ * The marker strings are COPIES, not imports: pulling `task/store.js` into this
+ * bundle drags `yaml` in with it, and esbuild's CJS interop shim then throws
+ * "Dynamic require of \"process\" is not supported" at load — a hook that cannot
+ * start. So they stay literals, and `reconcile.test.mjs` asserts each one equals
+ * core's exported constant. A "MUST stay in sync" comment is not a mechanism: a
+ * reworded note on either host leaves every run reading as never-started, with
+ * nothing failing.
  */
+const PLAN_APPROVED_MARKER = "> Plan approved"
+const BUILD_STARTED_MARKER = "> BUILD started"
+const BUILD_FINISHED_MARKER = "> BUILD finished"
 const lastMarkerIndex = (body, marker) => {
   for (let idx = body.lastIndexOf(marker); idx !== -1; idx = body.lastIndexOf(marker, idx - 1)) {
     if (idx === 0 || body[idx - 1] === "\n") return idx
@@ -44,11 +55,11 @@ const lastMarkerIndex = (body, marker) => {
 }
 
 const wasInterrupted = (body) => {
-  const anchor = lastMarkerIndex(body, "> Plan approved")
+  const anchor = lastMarkerIndex(body, PLAN_APPROVED_MARKER)
   const window = anchor === -1 ? body : body.slice(anchor)
-  const lastStart = lastMarkerIndex(window, "> BUILD started")
+  const lastStart = lastMarkerIndex(window, BUILD_STARTED_MARKER)
   if (lastStart === -1) return false
-  return lastMarkerIndex(window, "> BUILD finished") < lastStart
+  return lastMarkerIndex(window, BUILD_FINISHED_MARKER) < lastStart
 }
 
 const read = () =>
@@ -76,7 +87,34 @@ const fsClient = {
   app: { log: async () => undefined },
 }
 
+/**
+ * How long this hook may spend before it reports what it has.
+ *
+ * The host kills a hook at 60s and drops the WHOLE envelope — every warning
+ * below with it — and this work scales with the repo: a full read of every
+ * `in-progress/*.md`, three readdir sweeps, and `auditBacklog`'s reads, on
+ * backlogs that live on exactly the filesystems where this is slow (the WSL
+ * `/mnt/c` class design 42 cites). So it gets its own tighter bound and degrades
+ * to a PARTIAL report, the same shape OpenCode's `RECONCILE_TIMEOUT_MS` gives
+ * the same job on the other host — and it says so, because a silently truncated
+ * recovery notice is indistinguishable from a healthy backlog.
+ *
+ * Checked between units of work rather than enforced by a timer: the sweeps are
+ * synchronous `fs` calls, so nothing can interrupt one that has started.
+ */
+const RECONCILE_BUDGET_MS = 30_000
+
+/** Ids of the claim markers held under `<status>/.claims`, newest-first order irrelevant. */
+const claimIds = (root, tasksDir, status) => {
+  try {
+    return fs.readdirSync(path.join(root, tasksDir, status, ".claims")).filter((n) => !n.startsWith("."))
+  } catch {
+    return []
+  }
+}
+
 const main = async () => {
+  const deadline = Date.now() + RECONCILE_BUDGET_MS
   let input = {}
   try {
     input = JSON.parse(await read())
@@ -89,11 +127,16 @@ const main = async () => {
   const root = backlogRoot(cwd)
   const tasksDir = readTasksDir(root)
 
+  let truncated = false
   const notes = []
   const inProgress = path.join(root, tasksDir, "in-progress")
   try {
     for (const name of fs.readdirSync(inProgress)) {
       if (!name.endsWith(".md")) continue
+      if (Date.now() > deadline) {
+        truncated = true
+        break
+      }
       const body = fs.readFileSync(path.join(inProgress, name), "utf8")
       if (wasInterrupted(body)) notes.push(name.replace(/\.md$/, ""))
     }
@@ -111,12 +154,15 @@ const main = async () => {
   }
   // A claim marker in queued/.claims/ with no live loop means a run died
   // mid-PLAN — it blocks every future claim of that task until removed.
-  let planClaims = []
-  try {
-    planClaims = fs.readdirSync(path.join(root, tasksDir, "queued", ".claims")).filter((n) => !n.startsWith("."))
-  } catch {
-    /* none */
-  }
+  const planClaims = claimIds(root, tasksDir, "queued")
+  // And the same one folder along, which this hook was blind to: a run that died
+  // between `claimTask` and its first `> BUILD started` note leaves a marker in
+  // in-progress/.claims. Nothing here released it (OpenCode's
+  // `releaseOrphanedClaims` sweep has no twin on this host) and nothing even
+  // MENTIONED it, so every gate verb refused the task as "a loop is driving this
+  // NOW" with no session-start hint of why. `workflow_doctor fix` does release
+  // it — which is exactly why naming it is the whole fix.
+  const buildClaims = claimIds(root, tasksDir, "in-progress")
 
   // Guarded, and it is the one await in this hook that reads the whole backlog:
   // an unreadable file or a permission error here used to reject out of `main`,
@@ -125,10 +171,23 @@ const main = async () => {
   // dropped silently. The audit is one section of that report, so a failure costs
   // that section and nothing else.
   let anomalies = []
-  try {
-    anomalies = await auditBacklog(fsClient, root, tasksDir)
-  } catch {
-    /* the rest of the report is still worth emitting */
+  if (Date.now() > deadline) truncated = true
+  else {
+    try {
+      // Raced, not merely awaited: the budget is what keeps the host's 60s kill
+      // — which drops the whole envelope — from taking the lines already
+      // collected above with it.
+      anomalies = await Promise.race([
+        auditBacklog(fsClient, root, tasksDir),
+        new Promise((resolve) => setTimeout(() => resolve(null), Math.max(0, deadline - Date.now())).unref()),
+      ])
+      if (anomalies === null) {
+        truncated = true
+        anomalies = []
+      }
+    } catch {
+      /* the rest of the report is still worth emitting */
+    }
   }
 
   // The MCP server (and the deterministic gate CLI) live in mcp-server/dist —
@@ -159,9 +218,18 @@ const main = async () => {
   const notesList = idList(notes)
   const snapshotsList = idList(snapshots)
   const claimsList = idList(planClaims)
+  const buildClaimsList = idList(buildClaims)
   if (notesList) lines.push(`agentic-workflow: interrupted task(s) in ${dirShown}/in-progress: ${notesList} — run \`/agentic-workflow:engineering recover <id>\` to resume.`)
   if (snapshotsList) lines.push(`agentic-workflow: loop state snapshot(s) present: ${snapshotsList} — \`/agentic-workflow:engineering recover <id>\` resumes at the exact stage.`)
   if (claimsList) lines.push(`agentic-workflow: leftover plan-claim marker(s) in ${dirShown}/queued/.claims: ${claimsList} — a prior run died mid-PLAN; \`workflow_doctor\` (fix:true) releases stale markers so the task can be claimed again.`)
+  if (buildClaimsList)
+    lines.push(
+      `agentic-workflow: leftover build-claim marker(s) in ${dirShown}/in-progress/.claims: ${buildClaimsList} — a prior run died between the claim and its first BUILD note; every gate verb refuses the task as driven until \`workflow_doctor\` (fix:true) releases it.`,
+    )
+  if (truncated)
+    lines.push(
+      `agentic-workflow: this session-start scan ran out of its ${RECONCILE_BUDGET_MS / 1000}s budget and is PARTIAL — run \`workflow_doctor\` for the full backlog report.`,
+    )
   if (hasAnomalies(anomalies)) {
     // Same cap as the id lists above: anomaly lines are also built from on-disk
     // names (formatAnomalies display-sanitizes each name), and a damaged backlog

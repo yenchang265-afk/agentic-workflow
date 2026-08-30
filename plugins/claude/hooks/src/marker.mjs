@@ -94,24 +94,83 @@ export const readMarker = (cwd, markerFile) => {
 }
 
 /**
- * Whether the marker's writer pid is a live process on this machine. Feeds the
+ * This machine's identity, the sync twin of core's `machineId` — hostname plus
+ * boot id, because two containers from one image commonly share a hostname
+ * while having SEPARATE pid namespaces. Duplicated from core rather than
+ * imported for the same reason everything else here is: core's own readers are
+ * async and take a host `Shell`.
+ */
+export const machineIdSync = () => {
+  let boot = ""
+  try {
+    boot = fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()
+  } catch {
+    /* no /proc — the token degrades to the hostname, and a boot-id stamp then mismatches, which is the safe direction */
+  }
+  return { host: os.hostname(), boot: boot.length > 0 ? boot : null }
+}
+
+/**
+ * Whether a stamped `{host, boot}` names the machine we are running on. Fails
+ * CLOSED on every uncertainty — no host, a mismatch, or a boot id present on
+ * one side only. The twin of core's `isSameMachine`; see there for why each
+ * arm is a refusal. Pure.
+ */
+export const isSameMachine = (stamped, self) => {
+  if (!stamped || typeof stamped !== "object") return false
+  if (typeof stamped.host !== "string" || stamped.host !== self.host) return false
+  const stampedBoot = typeof stamped.boot === "string" && stamped.boot.length > 0 ? stamped.boot : null
+  return stampedBoot === self.boot
+}
+
+/**
+ * Whether the marker's writer is PROVABLY a live process here. Feeds the
  * check-stage-guard's deadline starve: a stage past its deadline is starved of
  * guarded tools only while the loop that armed it is still running — a dead
  * writer's marker is a crashed run's leftover (nothing removes the file on a
  * SIGKILL/OOM/sleep), and blocking on it ruled the repo forever.
  *
- * `process.kill(pid, 0)` throws ESRCH for a gone pid; EPERM proves the pid
- * exists, so it counts as alive. No pid on the marker (an older server) or a
- * non-pid value returns false — fail OPEN, like every other uncertainty in
- * these hooks: a false "dead" only restores the pre-deadline behaviour, while a
- * false "alive" keeps the repo starved with nobody to hand control back to.
+ * This is the reading that ENFORCES, which is the opposite direction to core's
+ * `pidAlive` callers (they only ever relax a guard on a false reading, which is
+ * what `liveness.ts` blesses the bare probe for). So aliveness needs proof, and
+ * every uncertainty answers "not alive":
+ *
+ * - **The pid needs its namespace.** A bind-mounted repo or sibling containers
+ *   share this marker directory while having separate pid namespaces, so a
+ *   crashed writer's pid can exist here and read live — the wedge
+ *   `dead-marker.test.mjs` shipped to end, reopened one environment over. A
+ *   marker with no `machine` stamp (an older server) cannot be proven local.
+ * - **The probe is SELF-VALIDATING.** It must see our OWN pid first, or it
+ *   proves nothing about anyone else's — a sandbox where `kill` is refused
+ *   outright would otherwise report every pid alive.
+ * - **EPERM still means alive**: the process exists, owned by another user.
  */
-export const markerWriterAlive = (pid) => {
+export const markerWriterAlive = (marker) => {
+  const pid = marker?.pid
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (err) {
-    return err?.code === "EPERM"
+  if (!isSameMachine(marker?.machine, machineIdSync())) return false
+  const probe = (target) => {
+    try {
+      process.kill(target, 0)
+      return true
+    } catch (err) {
+      return err?.code === "EPERM"
+    }
   }
+  if (!probe(process.pid)) return false
+  return probe(pid)
 }
+
+/**
+ * The marker as every marker-scoped control must read it: null once it is a
+ * CRASHED run's leftover — past its deadline with no provably live writer.
+ *
+ * One helper because the rule is one rule: it was written in check-stage-guard
+ * alone, so `check-evidence` (which gates on `check === true` and nothing else)
+ * kept appending to a dead stage's ledger from every later session, and
+ * `decideSpawnGuard`'s docstring claimed "the same liveness rule" while
+ * implementing a weaker one. A marker with no deadline (an older server) stays
+ * trusted, and one whose writer is alive keeps enforcing however late it is.
+ */
+export const liveMarker = (marker, now = Date.now()) =>
+  marker && typeof marker.deadline === "number" && now > marker.deadline && !markerWriterAlive(marker) ? null : marker

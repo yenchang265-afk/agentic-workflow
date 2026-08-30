@@ -116,6 +116,35 @@ var readMarker = (cwd, markerFile) => {
     return null;
   }
 };
+var machineIdSync = () => {
+  let boot = "";
+  try {
+    boot = fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+  } catch {
+  }
+  return { host: os.hostname(), boot: boot.length > 0 ? boot : null };
+};
+var isSameMachine = (stamped, self) => {
+  if (!stamped || typeof stamped !== "object") return false;
+  if (typeof stamped.host !== "string" || stamped.host !== self.host) return false;
+  const stampedBoot = typeof stamped.boot === "string" && stamped.boot.length > 0 ? stamped.boot : null;
+  return stampedBoot === self.boot;
+};
+var markerWriterAlive = (marker) => {
+  const pid = marker?.pid;
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false;
+  if (!isSameMachine(marker?.machine, machineIdSync())) return false;
+  const probe = (target) => {
+    try {
+      process.kill(target, 0);
+      return true;
+    } catch (err) {
+      return err?.code === "EPERM";
+    }
+  };
+  if (!probe(process.pid)) return false;
+  return probe(pid);
+};
 
 // plugins/claude/hooks/src/emit.mjs
 var exitAfterWrite = (stream, payload, code) => {
@@ -145,10 +174,10 @@ var agentNameOf = (subagentType, prefixes = []) => {
   }
   return OURS.test(name) ? name : null;
 };
-var decideSpawnGuard = (marker, agent, now = Date.now()) => {
+var decideSpawnGuard = (marker, agent, now = Date.now(), writerAlive = () => false) => {
   if (!agent) return "allow";
   if (!marker || typeof marker !== "object") return "allow";
-  if (typeof marker.deadline === "number" && now > marker.deadline) return "allow";
+  if (typeof marker.deadline === "number" && now > marker.deadline && !writerAlive(marker)) return "allow";
   const kindAgents = Array.isArray(marker.kindAgents) ? marker.kindAgents : null;
   if (!kindAgents) return "allow";
   if (!kindAgents.includes(agent)) return "allow";
@@ -192,7 +221,7 @@ var main = async () => {
   const agent = agentNameOf(ti.subagent_type, d.agentPrefixes);
   if (!agent) return allow();
   const marker = readMarker(input.cwd || process.cwd(), d.stageMarkerFile);
-  if (decideSpawnGuard(marker, agent) !== "block") return allow();
+  if (decideSpawnGuard(marker, agent, Date.now(), markerWriterAlive) !== "block") return allow();
   return block(spawnDriftMessage(marker, agent));
 };
 main().catch(failOpen("check-spawn-stage"));

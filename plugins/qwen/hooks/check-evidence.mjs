@@ -78,6 +78,7 @@ var isReadTool = (d, tool) => d.read.includes(tool);
 // plugins/claude/hooks/src/evidence.mjs
 import fs from "node:fs";
 import path from "node:path";
+var EVIDENCE_MAX_BYTES = 1024 * 1024;
 var READ_PATH_KEYS = ["file_path", "absolute_path", "path", "notebook_path", "paths"];
 var evidenceEntry = (d, tool, toolInput, command) => {
   const ti = toolInput || {};
@@ -100,6 +101,10 @@ var noteEvidence = (runsDirPath, evidenceFile, stage, entry) => {
   if (!entry) return;
   const file = path.join(runsDirPath, evidenceFile);
   try {
+    try {
+      if (fs.statSync(file).size > EVIDENCE_MAX_BYTES) return;
+    } catch {
+    }
     fs.appendFileSync(file, "\n" + JSON.stringify({ stage: stage ?? null, commands: entry.commands, reads: entry.reads }) + "\n");
   } catch {
   }
@@ -148,6 +153,36 @@ var readMarker = (cwd, markerFile) => {
     return null;
   }
 };
+var machineIdSync = () => {
+  let boot = "";
+  try {
+    boot = fs2.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+  } catch {
+  }
+  return { host: os.hostname(), boot: boot.length > 0 ? boot : null };
+};
+var isSameMachine = (stamped, self) => {
+  if (!stamped || typeof stamped !== "object") return false;
+  if (typeof stamped.host !== "string" || stamped.host !== self.host) return false;
+  const stampedBoot = typeof stamped.boot === "string" && stamped.boot.length > 0 ? stamped.boot : null;
+  return stampedBoot === self.boot;
+};
+var markerWriterAlive = (marker) => {
+  const pid = marker?.pid;
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false;
+  if (!isSameMachine(marker?.machine, machineIdSync())) return false;
+  const probe = (target) => {
+    try {
+      process.kill(target, 0);
+      return true;
+    } catch (err) {
+      return err?.code === "EPERM";
+    }
+  };
+  if (!probe(process.pid)) return false;
+  return probe(pid);
+};
+var liveMarker = (marker, now = Date.now()) => marker && typeof marker.deadline === "number" && now > marker.deadline && !markerWriterAlive(marker) ? null : marker;
 
 // plugins/claude/hooks/src/pretooluse.mjs
 var readStdin = () => new Promise((resolve) => {
@@ -188,7 +223,7 @@ var main = async () => {
   const d = dialectFor(hostFor());
   if (!d) return allow();
   const cwd = input.cwd || process.cwd();
-  const marker = readMarker(cwd, d.stageMarkerFile);
+  const marker = liveMarker(readMarker(cwd, d.stageMarkerFile));
   if (!marker || marker.check !== true) return allow();
   noteEvidence(runsDir(cwd), d.evidenceFile, String(marker.stage ?? ""), evidenceEntry(d, input.tool_name, input.tool_input || {}));
   return allow();

@@ -18,10 +18,11 @@ source with file:line references, and each finding citing both the seam where
 the class already lives and the seam where it is absent. Confidence labels:
 CONFIRMED = traced end to end; PLAUSIBLE = one link unverified.
 
-**Status.** Findings 1, 2, 3, 4, 6, 7 and 11 are FIXED (see the per-finding
-markers below), each with a regression test that fails without the fix, and
-their five rule candidates are now in AGENTS.md. The rest remain proposals for
-the backlog — each wants its own task through the ordinary gates.
+**Status.** Every finding 1–15 is now FIXED (see the per-finding markers
+below), each with a regression test that fails without the fix: 1, 2, 3, 4, 6, 7
+and 11 in the first pass, then 5, 8, 9, 10, 12, 13, 14 and 15 in the second,
+along with three of the minor findings in §16. The rule candidates they earned
+are in AGENTS.md.
 
 ## The classes that shipped repeatedly
 
@@ -133,6 +134,8 @@ lives; "seam" cites where it is missing.
 
 ### 5. Three newer `client.session.get` walks are unbounded — one of them on the ESC path — CONFIRMED
 
+> **FIXED.** All three walks are time-boxed — `withTimeout(…, SESSION_WALK_TIMEOUT_MS)` on both `impl.ts` hook paths (the deadline lands in the same arm a session-API failure does, so the edit guard still fails CLOSED) and `withinCallDeadline` on the ESC path, which also bounds `onInterrupt`'s pass aborts. Tested with a client that never answers.
+
 - **Class:** every client call a hook awaits is time-boxed, "above all the
   `client.session.get` walk" (`impl.ts:260-266, 300-304`; applied via
   `withinDeadline` at `impl.ts:1231, 1279` and via the bounded gate tools).
@@ -199,6 +202,8 @@ lives; "seam" cites where it is missing.
 
 ### 8. The runtime stage-ask denial exists only on OpenCode; on Claude/Qwen the `tools:` enumeration is the only wall — CONFIRMED
 
+> **FIXED.** `check-stage-ask.entry.mjs` is the marker-gated PreToolUse deny, routed on each host's own ask tool and failing OPEN on every uncertainty; `refuseDuringStage` (`stageDeadline !== null`, process-local, so a human's separate session is untouched) is the MCP gate tools' caller check, the server-side twin of `refuseIfDriven`.
+
 - **Class:** three layers deny a stage agent the ask tool, and the third —
   the plugin refusal that depends on no host config key — is "the only one
   covering a user-added kind's agent" (`impl.ts:913-935`; AGENTS.md).
@@ -220,6 +225,8 @@ lives; "seam" cites where it is missing.
 
 ### 9. The SessionStart reconcile is unbounded under the host's envelope-dropping 60s kill, and blind to `in-progress/.claims` — CONFIRMED
 
+> **FIXED.** `RECONCILE_BUDGET_MS` bounds the scan — checked between the synchronous sweeps, raced against the one async call — and a truncated report SAYS it is partial. `in-progress/.claims` is swept and named alongside `queued/.claims`. `reconcile.test.mjs` is new: the hook had no tests at all.
+
 - **Class:** work under a host deadline that drops the whole envelope gets its
   own tighter bound (design 42's 50s spawn timeout, `gate-command.mjs:142`;
   plan 20's `RECONCILE_TIMEOUT_MS = 30_000` + degrade-to-toast on OpenCode,
@@ -240,6 +247,8 @@ lives; "seam" cites where it is missing.
   so this half is friction, not a wedge.
 
 ### 10. OpenCode lacks the `workflowWorktree`/`worktree` split — an unisolated stage's writes are silently relocated, not refused — CONFIRMED
+
+> **FIXED.** `stageRunsIsolated` derives this stage's isolation from the manifest per call (no state field, so no staleness), and both pin arms REFUSE rather than relocate when it is false — same wording as the Claude guard's twin, so an operator who has seen one refusal recognises the other.
 
 - **Class:** a stage that runs unisolated after a worktree exists must have its
   stray writes refused, not corrected into the work branch
@@ -270,6 +279,8 @@ lives; "seam" cites where it is missing.
 
 ### 12. Stage-marker liveness has neither of `liveness.ts`'s disciplines, and its hook consumers enforce on a false "alive" — CONFIRMED (code), scenario environmental
 
+> **FIXED.** `writeStageMarker` stamps `machine: machineIdSync()`, and `markerWriterAlive` now proves aliveness: same machine (an absent stamp is not provably local), self-validating probe, EPERM still alive. `liveMarker` is the one expression of the dead-marker rule, shared by the guard and `check-evidence`; `decideSpawnGuard` takes the probe as an argument, which makes its "same liveness rule" docstring true.
+
 - **Class:** `pidGone` must prove death positively with a self-validating probe,
   and a pid is only meaningful beside its machine identity
   (`liveness.ts:45-65, 84-118`; AGENTS.md "A stale window is a proxy").
@@ -291,6 +302,8 @@ lives; "seam" cites where it is missing.
   the fix is server-side (stamp host/boot id on the marker).
 
 ### 13. Four writer/matcher pairs have no shared constant or no writer-side pin — CONFIRMED
+
+> **FIXED.** `PLAN_APPROVED_MARKER` is pinned on `approvePlan`'s own note; `BUILD_STARTED_MARKER`/`BUILD_FINISHED_MARKER` and their formatters are exported from core and used by both hosts (the reconcile hook keeps a copy — importing `task/store.js` drags `yaml` into that bundle and esbuild's CJS shim throws at load — and `reconcile.test.mjs` asserts the copy character for character); a server-side test pins the plan-park descriptor against the literal both hosts' `plan-gate-ask.mjs` matches.
 
 - **Class:** a marker is a contract with the note's writer; each anchor's
   writer is pinned by a test on the note it actually appends (AGENTS.md;
@@ -318,6 +331,8 @@ lives; "seam" cites where it is missing.
 
 ### 14. `check-evidence` ignores the dead-marker rule its sibling declares mandatory, and its ledger has no byte cap — CONFIRMED
 
+> **FIXED.** `check-evidence` reads the marker through `liveMarker`, so a crashed stage's ledger stops collecting every later session's reads, and `noteEvidence` stops appending past `EVIDENCE_MAX_BYTES` (the deny log's cap, for the deny log's reason).
+
 - **Class:** "every marker-scoped control below must read [an expired marker
   with a dead writer] as NO marker" (`check-stage-guard.entry.mjs:97-112`,
   enforced by `dead-marker.test.mjs`); durable append-only files are byte-capped
@@ -331,6 +346,8 @@ lives; "seam" cites where it is missing.
   `writeStageMarker` arm clears it.
 
 ### 15. `tasksDir`/`worktreesDir` pick write destinations from the repo layer with no rail — CONFIRMED
+
+> **FIXED.** Both keys parse through `WriteDirSchema` (no `..` segment, on either separator), and `tasksDir` must be repo-relative. The rail is on the VALUE, not a drop of the key: a repo choosing its own backlog location is legitimate, which is why `droppedRepoKeys` could never express this.
 
 - **Class:** a key that picks the directory a write lands in is authority, and
   the repo layer may not hold it (AGENTS.md; `ALLOWLIST_WIDENING_KEYS`,
@@ -348,6 +365,14 @@ lives; "seam" cites where it is missing.
   rule denies that layer. The fix shape already exists (`safeCwd`).
 
 ### 16. Lower-confidence and minor findings
+
+> **FIXED, except the first.** The pass-session calls are bounded
+> (`PASS_SESSION_TIMEOUT_MS`, degrading to the shared-session path the create's
+> catch already had), `disposeWatch`'s release has its sink, the replan-retry arm
+> fuses the stop digest (and `extractStopContext` retires on
+> `TASK_RESHAPED_MARKER` like its siblings), and the stale prose is gone. The
+> deny-telemetry item stays open on purpose: it wants an e2e probe against a real
+> OpenCode version, not code.
 
 - **OpenCode's deny telemetry may be inert** (PLAUSIBLE): the `permission.ask`
   observer's own header concedes "whether a hard `\"*\": deny` consults this

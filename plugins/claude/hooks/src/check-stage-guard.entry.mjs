@@ -27,19 +27,15 @@
  *     is the MAIN tree, so a command without the `cd <wt> && ` prefix is
  *     blocked unless it is read-only or a `git -C <wt> …`
  *     (@agentic-workflow/core/workflow/worktree-guard).
- *  3. Azure DevOps write backstop — ALWAYS ON: a sitter kind reaches ADO over
- *     its REST API (curl + PAT) and may only read, POST a thread-comment reply,
- *     or create a brand-new DRAFT pull request (dep-sitter/main-sitter's
- *     publish — drafts via `isDraft: true` in the body). Any other write —
- *     PATCH/PUT/DELETE, or a POST to an EXISTING PR's resource
- *     (complete/abandon/approve/reviewers/run-pipeline) — is denied outright.
- *     Two extra rails cover paths the loop itself never takes but a user
- *     environment might expose: the mutating `az repos pr`/`az pipelines` verbs
- *     are denied (in case an az CLI is on PATH and slips into a command), and —
- *     gated on a live ado loop marker — a BEST-EFFORT name-pattern blocklist of
- *     mutating tools on any Azure DevOps MCP server the user has connected. The
- *     stage prompts + host-pinned allowlist are the primary control; these are
- *     defense-in-depth (threat-model T8/T12/T13).
+ *  3. Azure DevOps guard — on whenever an ado-platform loop stage is live. A
+ *     sitter kind reaches ADO through the Azure DevOps MCP server ONLY, so this
+ *     is the primary control rather than a backstop behind a curl allowlist.
+ *     Two checks, both fail-closed: the write check enumerates the three writes
+ *     the loop may make (reads, thread comments/replies, and creating a DRAFT
+ *     pull request — `isDraft: true`), denying completion, abandonment,
+ *     approval, votes, reviewer changes, branch creation and pipeline runs; the
+ *     scope check holds the call to the tools THIS stage's manifest granted
+ *     (threat-model T8/T12/T13).
  *
  * Contract: exit 0 allows; exit 2 blocks and feeds stderr back to the model.
  */
@@ -57,7 +53,7 @@ import {
 } from "./dialect.mjs"
 import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, chainedGithubPrMutation, chainedGitPushViolation, isAdoMcpTool, isAdoMcpToolOutOfStageScope, isAdoMcpWriteViolation } from "./allowlist.mjs"
 import { allow, block, readStdin as read, rewriteInput } from "./pretooluse.mjs"
-import { backlogRoot, markerWriterAlive, readMarker, readTasksDir, runsDir } from "./marker.mjs"
+import { backlogRoot, liveMarker, readMarker, readTasksDir, runsDir } from "./marker.mjs"
 import { evidenceEntry, noteEvidence } from "./evidence.mjs"
 import { noteDeny } from "./deny.mjs"
 import { failOpen } from "./crash.mjs"
@@ -107,10 +103,11 @@ const main = async () => {
   // `taskDrivenByStageMarker` already give an expired marker; a marker with no
   // deadline (an older server) stays trusted, and one whose writer is still
   // alive keeps enforcing — the loop is genuinely live, however late.
-  const rawMarker = readMarker(cwd, d.stageMarkerFile)
-  const markerIsDead =
-    rawMarker && typeof rawMarker.deadline === "number" && Date.now() > rawMarker.deadline && !markerWriterAlive(rawMarker.pid)
-  const marker = markerIsDead ? null : rawMarker
+  //
+  // The rule itself lives in `liveMarker` because it is ONE rule: stated only
+  // here, `check-evidence` never got it and `decideSpawnGuard` claimed it in
+  // prose while implementing something weaker.
+  const marker = liveMarker(readMarker(cwd, d.stageMarkerFile))
   const tool = input.tool_name
   const ti = input.tool_input || {}
   const isBash = isBashTool(d, tool)

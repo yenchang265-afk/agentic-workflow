@@ -102,6 +102,31 @@ export const markClaimed = async ($: Shell, task: FileRef, actor?: string | null
 export const PLAN_APPROVED_MARKER = "> Plan approved"
 
 /**
+ * The audit notes a HOST appends around a build attempt. The only lifecycle
+ * markers in this file whose writer lives outside core — the OpenCode driver and
+ * the MCP server each hand-build the note — which is exactly why they need to be
+ * constants rather than the string literals they were.
+ *
+ * Three core parsers (`isReleasableClaim`, `wasInterrupted`, and the claim-state
+ * roll-up) and one bundled-hook twin (`reconcile.entry.mjs`, which cannot import
+ * core's source) matched those literals, so a reworded note on either host would
+ * not fail anything: its runs would simply read as never having started, and
+ * every claim would be handed back mid-build. `store.test.ts` pins the writers'
+ * shape, and the hook twin is pinned against these values.
+ */
+export const BUILD_STARTED_MARKER = "> BUILD started"
+export const BUILD_FINISHED_MARKER = "> BUILD finished"
+
+/**
+ * The note text a host appends when a build attempt starts or finishes —
+ * `iteration` 1-indexed, matching what the marker docs and the audit trail read.
+ * The formatter, not the marker, is what a writer should reach for: it is the
+ * one place the "(iteration N)" suffix the parsers tolerate is spelled.
+ */
+export const buildStartedNote = (iteration: number): string => `${BUILD_STARTED_MARKER.slice(2)} (iteration ${iteration})`
+export const buildFinishedNote = (iteration: number): string => `${BUILD_FINISHED_MARKER.slice(2)} (iteration ${iteration})`
+
+/**
  * The audited note `replanTask` appends when a human rejects a plan (or a
  * capped run is sent back). The rejection reason rides on this line, and
  * `extractReplanReason` parses it back so the next PLAN pass receives it as a
@@ -233,7 +258,7 @@ export const isClaimable = (task: Task): boolean =>
  * run; that case is recovered by hand via `recover <id>`. Pure.
  */
 export const isReleasableClaim = (task: Task): boolean =>
-  hasPlan(task) && !hasMarkerLine(lifecycleWindow(task.body), "> BUILD started")
+  hasPlan(task) && !hasMarkerLine(lifecycleWindow(task.body), BUILD_STARTED_MARKER)
 
 /**
  * The persisted plan text following `PLAN_HEADING`, or `undefined` if absent. Pure.
@@ -457,16 +482,25 @@ export const stopContextNote = (digest: string): string => `Run stopped ${STOP_A
 /**
  * The last stopped run's attempts digest, or `undefined` — pending only while
  * no newer plan has addressed it, under the same anchors as
- * `pendingPlanRejection` (the later of the last plan heading and the last
- * `Plan written` park note), and only off a line carrying the audit stamp, so
- * a plan merely quoting a stop note cannot inject one. `replanTask` fuses this
- * into the rejection reason when it re-queues a cap-stopped in-progress task,
- * which is how the next PLAN pass learns what every attempt kept failing on
- * instead of re-planning blind. Pure.
+ * `pendingPlanRejection` (the later of the last plan heading, the last
+ * `Plan written` park note, and the reshape marker), and only off a line
+ * carrying the audit stamp, so a plan merely quoting a stop note cannot inject
+ * one. `replanTask` fuses this into the rejection reason when it re-queues a
+ * cap-stopped in-progress task, which is how the next PLAN pass learns what
+ * every attempt kept failing on instead of re-planning blind. Pure.
+ *
+ * `TASK_RESHAPED_MARKER` is an anchor here for exactly the reason it is one for
+ * `pendingPlanRejection`: a retask rewrites the GOAL, and a digest of what
+ * every attempt at the old goal kept failing on is noise the next planner
+ * cannot act on. It was the one parser of the trio that did not retire on it.
  */
 export const extractStopContext = (task: Task): string | undefined => {
   const idx = lastMarkerIndex(task.body, RUN_STOPPED_MARKER)
-  const addressed = Math.max(lastMarkerIndex(task.body, PLAN_HEADING), lastMarkerIndex(task.body, PLAN_WRITTEN_MARKER))
+  const addressed = Math.max(
+    lastMarkerIndex(task.body, PLAN_HEADING),
+    lastMarkerIndex(task.body, PLAN_WRITTEN_MARKER),
+    lastMarkerIndex(task.body, TASK_RESHAPED_MARKER),
+  )
   if (idx === -1 || idx < addressed) return undefined
   const end = task.body.indexOf("\n", idx)
   const line = task.body.slice(idx, end === -1 ? task.body.length : end)
@@ -625,7 +659,7 @@ export const joinTaskBody = (prose: string, tail: string): string => {
  */
 export const isRecoverable = (task: Task): boolean => {
   const window = lifecycleWindow(task.body)
-  return hasPlan(task) && (hasMarkerLine(window, "> BUILD started") || hasMarkerLine(window, CLAIMED_MARKER))
+  return hasPlan(task) && (hasMarkerLine(window, BUILD_STARTED_MARKER) || hasMarkerLine(window, CLAIMED_MARKER))
 }
 
 /**
@@ -637,9 +671,9 @@ export const isRecoverable = (task: Task): boolean => {
  */
 export const wasInterrupted = (task: Task): boolean => {
   const window = lifecycleWindow(task.body)
-  const lastStart = lastMarkerIndex(window, "> BUILD started")
+  const lastStart = lastMarkerIndex(window, BUILD_STARTED_MARKER)
   if (lastStart === -1) return false
-  const lastFinish = lastMarkerIndex(window, "> BUILD finished")
+  const lastFinish = lastMarkerIndex(window, BUILD_FINISHED_MARKER)
   return lastFinish < lastStart
 }
 

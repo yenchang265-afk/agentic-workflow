@@ -223,6 +223,9 @@ var failOpen = (hook) => (err) => {
 };
 
 // plugins/claude/hooks/src/reconcile.entry.mjs
+var PLAN_APPROVED_MARKER = "> Plan approved";
+var BUILD_STARTED_MARKER = "> BUILD started";
+var BUILD_FINISHED_MARKER = "> BUILD finished";
 var lastMarkerIndex = (body, marker) => {
   for (let idx = body.lastIndexOf(marker); idx !== -1; idx = body.lastIndexOf(marker, idx - 1)) {
     if (idx === 0 || body[idx - 1] === "\n") return idx;
@@ -230,11 +233,11 @@ var lastMarkerIndex = (body, marker) => {
   return -1;
 };
 var wasInterrupted = (body) => {
-  const anchor = lastMarkerIndex(body, "> Plan approved");
+  const anchor = lastMarkerIndex(body, PLAN_APPROVED_MARKER);
   const window = anchor === -1 ? body : body.slice(anchor);
-  const lastStart = lastMarkerIndex(window, "> BUILD started");
+  const lastStart = lastMarkerIndex(window, BUILD_STARTED_MARKER);
   if (lastStart === -1) return false;
-  return lastMarkerIndex(window, "> BUILD finished") < lastStart;
+  return lastMarkerIndex(window, BUILD_FINISHED_MARKER) < lastStart;
 };
 var read = () => new Promise((resolve) => {
   let s = "";
@@ -254,7 +257,16 @@ var fsClient = {
   },
   app: { log: async () => void 0 }
 };
+var RECONCILE_BUDGET_MS = 3e4;
+var claimIds = (root, tasksDir, status) => {
+  try {
+    return fs2.readdirSync(path2.join(root, tasksDir, status, ".claims")).filter((n) => !n.startsWith("."));
+  } catch {
+    return [];
+  }
+};
 var main = async () => {
+  const deadline = Date.now() + RECONCILE_BUDGET_MS;
   let input = {};
   try {
     input = JSON.parse(await read());
@@ -263,11 +275,16 @@ var main = async () => {
   const cwd = input.cwd || process.cwd();
   const root = backlogRoot(cwd);
   const tasksDir = readTasksDir(root);
+  let truncated = false;
   const notes = [];
   const inProgress = path2.join(root, tasksDir, "in-progress");
   try {
     for (const name of fs2.readdirSync(inProgress)) {
       if (!name.endsWith(".md")) continue;
+      if (Date.now() > deadline) {
+        truncated = true;
+        break;
+      }
       const body = fs2.readFileSync(path2.join(inProgress, name), "utf8");
       if (wasInterrupted(body)) notes.push(name.replace(/\.md$/, ""));
     }
@@ -278,15 +295,22 @@ var main = async () => {
     snapshots = fs2.readdirSync(path2.join(root, tasksDir, "runs")).filter((n) => n.endsWith(".state.json")).map((n) => n.replace(/\.state\.json$/, ""));
   } catch {
   }
-  let planClaims = [];
-  try {
-    planClaims = fs2.readdirSync(path2.join(root, tasksDir, "queued", ".claims")).filter((n) => !n.startsWith("."));
-  } catch {
-  }
+  const planClaims = claimIds(root, tasksDir, "queued");
+  const buildClaims = claimIds(root, tasksDir, "in-progress");
   let anomalies = [];
-  try {
-    anomalies = await auditBacklog(fsClient, root, tasksDir);
-  } catch {
+  if (Date.now() > deadline) truncated = true;
+  else {
+    try {
+      anomalies = await Promise.race([
+        auditBacklog(fsClient, root, tasksDir),
+        new Promise((resolve) => setTimeout(() => resolve(null), Math.max(0, deadline - Date.now())).unref())
+      ]);
+      if (anomalies === null) {
+        truncated = true;
+        anomalies = [];
+      }
+    } catch {
+    }
   }
   const pluginRoot = process.env.AGENTIC_WORKFLOW_PLUGIN_ROOT || process.env.CLAUDE_PLUGIN_ROOT || path2.resolve(path2.dirname(fileURLToPath(import.meta.url)), "..");
   const serverBuilt = fs2.existsSync(process.env.AGENTIC_WORKFLOW_SERVER_JS || path2.join(pluginRoot, "mcp-server", "dist", "server.js"));
@@ -299,9 +323,18 @@ var main = async () => {
   const notesList = idList(notes);
   const snapshotsList = idList(snapshots);
   const claimsList = idList(planClaims);
+  const buildClaimsList = idList(buildClaims);
   if (notesList) lines.push(`agentic-workflow: interrupted task(s) in ${dirShown}/in-progress: ${notesList} \u2014 run \`/agentic-workflow:engineering recover <id>\` to resume.`);
   if (snapshotsList) lines.push(`agentic-workflow: loop state snapshot(s) present: ${snapshotsList} \u2014 \`/agentic-workflow:engineering recover <id>\` resumes at the exact stage.`);
   if (claimsList) lines.push(`agentic-workflow: leftover plan-claim marker(s) in ${dirShown}/queued/.claims: ${claimsList} \u2014 a prior run died mid-PLAN; \`workflow_doctor\` (fix:true) releases stale markers so the task can be claimed again.`);
+  if (buildClaimsList)
+    lines.push(
+      `agentic-workflow: leftover build-claim marker(s) in ${dirShown}/in-progress/.claims: ${buildClaimsList} \u2014 a prior run died between the claim and its first BUILD note; every gate verb refuses the task as driven until \`workflow_doctor\` (fix:true) releases it.`
+    );
+  if (truncated)
+    lines.push(
+      `agentic-workflow: this session-start scan ran out of its ${RECONCILE_BUDGET_MS / 1e3}s budget and is PARTIAL \u2014 run \`workflow_doctor\` for the full backlog report.`
+    );
   if (hasAnomalies(anomalies)) {
     const all = formatAnomalies(anomalies, tasksDir);
     for (const line of all.slice(0, MAX_LISTED)) lines.push(`agentic-workflow: ${line} \u2014 \`workflow_doctor\` reports and repairs.`);

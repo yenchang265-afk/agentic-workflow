@@ -69,13 +69,20 @@ export const agentNameOf = (subagentType, prefixes = []) => {
  *
  * A marker past its `deadline` is a crashed run's leftover — a SIGKILLed server
  * never runs `writeStageMarker(null)` — and must not refuse every later stage
- * spawn in the repo forever. Same liveness rule as the spawn-model stamp and
- * check-stage-guard. A marker with no deadline (an older version) stays trusted.
+ * spawn in the repo forever. A marker with no deadline (an older version) stays
+ * trusted.
+ *
+ * `writerAlive` is the SAME liveness rule check-stage-guard applies, injected
+ * because this module stays import-free: an expired marker whose writer is
+ * still running is a genuinely live loop, however late, and a spawn against it
+ * is still the protocol drift this guard exists to catch. The docstring claimed
+ * that parity for a while and the code did not have it — the default keeps the
+ * previous, weaker reading, so a caller that cannot probe loses nothing.
  */
-export const decideSpawnGuard = (marker, agent, now = Date.now()) => {
+export const decideSpawnGuard = (marker, agent, now = Date.now(), writerAlive = () => false) => {
   if (!agent) return "allow" // not one of this plugin's agents
   if (!marker || typeof marker !== "object") return "allow" // no loop stage — an ordinary session
-  if (typeof marker.deadline === "number" && now > marker.deadline) return "allow" // a dead loop's leftover
+  if (typeof marker.deadline === "number" && now > marker.deadline && !writerAlive(marker)) return "allow" // a dead loop's leftover
   const kindAgents = Array.isArray(marker.kindAgents) ? marker.kindAgents : null
   // Written by a version that predates this guard: it cannot tell a sibling
   // stage agent from an unrelated one, and guessing in the deny direction would

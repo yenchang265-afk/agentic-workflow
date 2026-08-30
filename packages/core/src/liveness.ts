@@ -1,3 +1,4 @@
+import fs from "node:fs"
 import os from "node:os"
 import type { Shell } from "./host.js"
 
@@ -92,6 +93,28 @@ export const machineId = async ($: Shell): Promise<MachineId> => {
   if (cached) return cached
   const out = await $`cat /proc/sys/kernel/random/boot_id`.quiet().nothrow()
   const boot = out.exitCode === 0 ? out.stdout.toString().trim() : ""
+  cached = { host: os.hostname(), boot: boot.length > 0 ? boot : null }
+  return cached
+}
+
+/**
+ * The same token for a writer that has no `Shell` and cannot await one: the MCP
+ * server's `writeStageMarker` is synchronous `fs` by construction, because it
+ * runs inside tool handlers that must leave no window where the marker on disk
+ * describes a stage other than the one about to run.
+ *
+ * Shares the memo with `machineId`, so a stamp written through one and compared
+ * through the other can never disagree — which is the whole point of a token
+ * whose only job is to be compared.
+ */
+export const machineIdSync = (): MachineId => {
+  if (cached) return cached
+  let boot = ""
+  try {
+    boot = fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()
+  } catch {
+    /* no /proc — the token degrades to the hostname, which `isSameMachine` refuses to match against a boot-id stamp */
+  }
   cached = { host: os.hostname(), boot: boot.length > 0 ? boot : null }
   return cached
 }

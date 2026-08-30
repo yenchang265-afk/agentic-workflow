@@ -709,19 +709,41 @@ var readMarker = (cwd, markerFile) => {
     return null;
   }
 };
-var markerWriterAlive = (pid) => {
-  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false;
+var machineIdSync = () => {
+  let boot = "";
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err?.code === "EPERM";
+    boot = fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+  } catch {
   }
+  return { host: os.hostname(), boot: boot.length > 0 ? boot : null };
 };
+var isSameMachine = (stamped, self) => {
+  if (!stamped || typeof stamped !== "object") return false;
+  if (typeof stamped.host !== "string" || stamped.host !== self.host) return false;
+  const stampedBoot = typeof stamped.boot === "string" && stamped.boot.length > 0 ? stamped.boot : null;
+  return stampedBoot === self.boot;
+};
+var markerWriterAlive = (marker) => {
+  const pid = marker?.pid;
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false;
+  if (!isSameMachine(marker?.machine, machineIdSync())) return false;
+  const probe = (target) => {
+    try {
+      process.kill(target, 0);
+      return true;
+    } catch (err) {
+      return err?.code === "EPERM";
+    }
+  };
+  if (!probe(process.pid)) return false;
+  return probe(pid);
+};
+var liveMarker = (marker, now = Date.now()) => marker && typeof marker.deadline === "number" && now > marker.deadline && !markerWriterAlive(marker) ? null : marker;
 
 // plugins/claude/hooks/src/evidence.mjs
 import fs2 from "node:fs";
 import path4 from "node:path";
+var EVIDENCE_MAX_BYTES = 1024 * 1024;
 var READ_PATH_KEYS = ["file_path", "absolute_path", "path", "notebook_path", "paths"];
 var evidenceEntry = (d, tool, toolInput, command) => {
   const ti = toolInput || {};
@@ -744,6 +766,10 @@ var noteEvidence = (runsDirPath, evidenceFile, stage, entry) => {
   if (!entry) return;
   const file = path4.join(runsDirPath, evidenceFile);
   try {
+    try {
+      if (fs2.statSync(file).size > EVIDENCE_MAX_BYTES) return;
+    } catch {
+    }
     fs2.appendFileSync(file, "\n" + JSON.stringify({ stage: stage ?? null, commands: entry.commands, reads: entry.reads }) + "\n");
   } catch {
   }
@@ -809,9 +835,7 @@ var main = async () => {
   if (host === null) return block2(unknownHostMessage(process.env.AGENTIC_WORKFLOW_HOST));
   const d = dialectFor(host);
   const tasksDir = readTasksDir(backlogRoot(cwd));
-  const rawMarker = readMarker(cwd, d.stageMarkerFile);
-  const markerIsDead = rawMarker && typeof rawMarker.deadline === "number" && Date.now() > rawMarker.deadline && !markerWriterAlive(rawMarker.pid);
-  const marker = markerIsDead ? null : rawMarker;
+  const marker = liveMarker(readMarker(cwd, d.stageMarkerFile));
   const tool = input.tool_name;
   const ti = input.tool_input || {};
   const isBash = isBashTool(d, tool);

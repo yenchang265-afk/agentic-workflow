@@ -26,6 +26,7 @@ const src = path.join(here, "src")
 const ENTRIES = [
   ["src/check-evidence.entry.mjs", "open"],
   ["src/check-spawn-stage.entry.mjs", "open"],
+  ["src/check-stage-ask.entry.mjs", "open"],
   ["src/check-stage-guard.entry.mjs", "open"],
   ["src/check-verdict-guard.entry.mjs", "open"],
   ["src/reconcile.entry.mjs", "open"],

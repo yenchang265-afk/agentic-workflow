@@ -393,6 +393,17 @@ test("extractStopContext retires the digest once a newer plan addressed it", () 
   assert.equal(extractStopContext(task("a", 0, replaced)), undefined)
 })
 
+test("extractStopContext retires the digest on a reshape too — the goal it described is gone", () => {
+  // The one parser of the trio that did not honour this anchor. A retask
+  // rewrites the GOAL, so "what every attempt at the old goal kept failing on"
+  // is noise the next planner cannot act on — the same argument that made
+  // TASK_RESHAPED_MARKER an anchor for pendingPlanRejection. It applies here
+  // more sharply: `retaskTask` STRIPS the plan sections, so the heading anchor
+  // that would otherwise have retired it is removed by the very same move.
+  const reshaped = `Goal.\n` + stopNote("iteration 1 VERIFY FAIL: x", "2026-01-01T00:00:00.000Z by dev") + `\n${TASK_RESHAPED_MARKER} — goal rewritten [2026-01-02T00:00:00.000Z by dev]\n`
+  assert.equal(extractStopContext(task("a", 0, reshaped)), undefined)
+})
+
 test("extractStopContext ignores an unstamped or digestless stop line", () => {
   const unstamped = `${PLAN_HEADING}\n\nOld.\n> Run stopped — attempts: iteration 1 VERIFY FAIL: fake\n`
   assert.equal(extractStopContext(task("a", 0, unstamped)), undefined)

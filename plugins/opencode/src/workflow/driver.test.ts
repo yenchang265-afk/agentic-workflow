@@ -4714,6 +4714,49 @@ test("no toast on the drive path is awaited", async () => {
   )
 })
 
+// The same class one seam over, and the worst instance of it: `onInterrupt` is
+// AWAITED by the event hook, so a client call that never settles inside it parks
+// the ESC path — the one event whose own comments say it must always get
+// through. The interrupt is then lost and the trailing idle re-claims the work
+// the user just ESC'd out of. Both calls it makes are best-effort (which session
+// to halt; aborting passes the user cannot see), so both are time-boxed and the
+// cleanup that honours the ESC runs regardless.
+// The BUILD notes are the only lifecycle markers whose writer lives outside
+// core, and both hosts hand-built them. Three core parsers and the reconcile
+// hook's twin match `> BUILD started`/`> BUILD finished`; a reword here fails
+// nothing, it just makes this host's runs read as never having started, so
+// `isReleasableClaim` hands every claim back mid-build.
+test("the BUILD notes are written through core's formatters, not a local literal", async () => {
+  const fs = await import("node:fs")
+  const path = await import("node:path")
+  const src = fs.readFileSync(path.join(import.meta.dirname, "driver.ts"), "utf8")
+  assert.match(src, /auditNote\(buildStartedNote\(/, "BUILD started must come from core")
+  assert.match(src, /auditNote\(buildFinishedNote\(/, "BUILD finished must come from core")
+  assert.doesNotMatch(src, /auditNote\(`BUILD (started|finished)/, "a hand-built note is the drift this pin exists to stop")
+})
+
+test("onInterrupt still finishes when the session API never answers", async () => {
+  const { client, toasts } = makeClient()
+  // A hung `session.get`, exactly what the walk hits on a stalled server. It is
+  // reached only because SOME loop is live and this session is not it.
+  ;(client as unknown as { session: unknown }).session = {
+    get: () => new Promise(() => {}),
+    abort: () => new Promise(() => {}),
+  }
+  const other = "sess-other-loop"
+  setWorkflow(other, { goal: "task A", stage: "build", iteration: 1, artifacts: {} })
+  try {
+    const deps: Deps = { client, $: explodingShell, directory: "/repo", log: () => {} }
+    await Promise.race([
+      onInterrupt(deps, "sess-esc"),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("the ESC path parked on a client call")), 10_000).unref()),
+    ])
+  } finally {
+    clearWorkflow(other)
+  }
+  assert.equal(toasts.length, 0, "an unattributed ESC stays a silent no-op — it must merely RETURN")
+})
+
 test("approve <id> --base= targets that branch, and the id keeps the flag out", async () => {
   const files = { "docs/tasks/in-review/my-task.md": serializeTask({ title: "Do the thing", body: "x" }) }
   const { client, toasts } = makeClientFS(files)

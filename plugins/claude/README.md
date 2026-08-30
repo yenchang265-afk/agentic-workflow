@@ -206,7 +206,9 @@ The whole engineering lifecycle lives on `/agentic-workflow:engineering` (`new`,
   `claim`, `doctor`, and every gate verb it will not run.
 - `hooks/` — a PreToolUse guard enforcing the read-only bash allowlist during
   VERIFY/REVIEW, worktree pinning, the stage deadline, and the Azure DevOps
-  write backstop; UserPromptSubmit hooks (`gate-command`/`gate-parse`) that
+  write backstop; a PreToolUse deny (`check-stage-ask`) refusing a question tool
+  while a loop stage is live, since a drive is unattended between the plan gate
+  and the ship gate; UserPromptSubmit hooks (`gate-command`/`gate-parse`) that
   handle the deterministic `approve` gate before the agent's turn and inject the
   invoked verb's instructions (`verb-slice`); and a SessionStart hook
   (`reconcile`) that reconciles interrupted loops. Azure DevOps is reached only

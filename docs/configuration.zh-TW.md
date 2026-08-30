@@ -127,7 +127,7 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 | 欄位 | 預設值 | 作用 |
 |-------|---------|--------------|
 | `maxIterations` | `3` | 在因為重複的 check 階段失敗而停止之前，迴圈可執行的最大疊代次數（engineering：VERIFY/REVIEW；某個清單可能會依類型覆寫此值）。當 engineering 的上限被觸發時，代表計畫本身可疑——用 `/agentic-workflow:engineering replan <id>` 把它送回去。 |
-| `tasksDir` | `"docs/tasks"` | 任務待辦的儲存庫相對根目錄；它的子資料夾就是各個任務狀態。也承載暫存的 `runs/` 機器狀態（快照、指標、階段標記、PR-sitter 帳本）。 |
+| `tasksDir` | `"docs/tasks"` | 任務待辦的儲存庫相對根目錄；它的子資料夾就是各個任務狀態。也承載暫存的 `runs/` 機器狀態（快照、指標、階段標記、PR-sitter 帳本）。必須是相對路徑且不得含有 `..` 片段——它指定迴圈會建立並寫入的目錄，而且會從儲存庫層讀取。 |
 | `ignoreBacklog` | `true` | 見下方強化項。設成 `false` 可將每次任務移動都提交為稽核紀錄（舊有行為）。 |
 | `stageTimeoutMinutes` | `60` | 單一階段的牆鐘時間上限；超過此時限的階段會讓迴圈失敗，而不是卡住不動。 |
 | `checkTimeoutMinutes` | `10` | 單一 driver 執行的檢查指令（`stageChecks` ／計畫發現的檢查）的牆鐘時間上限。與 `stageTimeoutMinutes` 分開，因為後者不涵蓋檢查：兩個 host 上檢查都跑在階段上限之外。超時的檢查會被殺掉並回報結束碼 `124` ⇒ 階段 ERROR。 |
@@ -138,7 +138,7 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 | `protectedBranches` | `[]` | 迴圈的任何階段都不得 `git push` 的額外分支，**疊加**在永久的 `main`/`master`/`HEAD` 底線之上。只能疊加——底線無法用設定關掉。 |
 | `ado` | 未設定 | Azure DevOps 的座標（`organization`、`project`、可選的 `repository`、`selfLogin`、`mcp`）；當任何一個生效平台是 `"ado"` 時**必填**——沒有它設定會快速失敗。`"ado"` 下 `selfLogin` 是**必填**的（PAT 無法解析出 sitter 的身分）。 |
 | `projectManagement` | 未設定 | 團隊的任務追蹤系統（Jira / Azure DevOps）以及本機任務如何與它配對。驅動任務撰寫預設值和 `/agentic-workflow:engineering status` 中的配對視圖。見下方。 |
-| `worktreesDir` | `".workflow-worktrees"` | 見下方強化項。設成 `false` 可退出此行為。 |
+| `worktreesDir` | `".workflow-worktrees"` | 見下方強化項。設成 `false` 可退出此行為。可以是絕對路徑，但不得含有 `..` 片段——與 `tasksDir` 同一道防線。 |
 | `taskBranch` | `"feature/"` | engineering 迴圈用來切出工作分支的分支名稱前綴（`<prefix><id>`）。設成 `false` 就直接在你目前已檢出的分支上建置——見下方強化項。 |
 | `notifyCommand` | 未設定 | 在迴圈終端事件之後觸發的 shell 指令——計畫停泊等待計畫閘門、run 抵達出貨閘門、stop、error——讓閘門不會在沒人看的 scrollback 裡放涼。以 `sh -c <command>` 執行，環境變數帶 `AW_EVENT`（`park`\|`done`\|`stop`\|`error`）、`AW_KIND`、`AW_TASK`、`AW_MESSAGE`；有 10 秒上限且 best-effort——通知器慢或失敗只會記警告，永不改變結果。例如 `notify-send` 或對聊天 webhook 的 `curl`。**含 shell 的鍵——只在使用者層級生效**，見下文。 |
 | `notifyEvents` | 未設定（＝全部） | 哪些終端事件會觸發 `notifyCommand`（`["park","done","stop","error"]` 的子集合）。不含 shell，所以 repo 層可以「收窄」——但永遠不能放寬——貢獻者會被通知的範圍。 |

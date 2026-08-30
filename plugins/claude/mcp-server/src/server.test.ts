@@ -715,6 +715,54 @@ test("workflow_stage refuses a stage whose marker it could not arm", () => {
 // out from under a live loop: `active.task.path` then pointed at a path that no
 // longer existed, so every later appendNote/snapshot/terminal move missed and
 // the claim marker was orphaned in the folder the task had left.
+// The gate tools' caller-identity check. OpenCode's `refuseIfDriven` fails
+// closed so a BUILD agent cannot approve its own task; on this host the agents'
+// `tools:` enumeration was the only thing standing between a stage subagent and
+// workflow_approve — and that only covers the agents this repo ships. The
+// rejection family already takes `active?.task?.id`; the approve/ship family had
+// nothing at all.
+test("the approve and ship tools refuse a caller inside a running stage", () => {
+  const src = source()
+  for (const name of ["workflow_task_approve", "workflow_plan_approve", "workflow_approve", "workflow_ship"]) {
+    assert.match(flat(toolBody(src, name)), /const driven = refuseDuringStage\(\) if \(driven\) return fail\(driven\)/, `${name} has no caller check`)
+  }
+  // The identity is process-local state, not the on-disk marker: a human's
+  // separate session runs its own server and must keep crossing gates freely.
+  assert.match(flat(code(src)), /const refuseDuringStage = \(\): string \| null => stageDeadline === null/)
+})
+
+// The BUILD notes are the only lifecycle markers whose WRITER lives outside
+// core: three core parsers and the reconcile hook's twin match `> BUILD
+// started`/`> BUILD finished`, and both hosts used to hand-build the string. A
+// reword here fails nothing — this host's runs simply read as never having
+// started, so `isReleasableClaim` hands every claim back mid-build.
+test("the BUILD notes are written through core's formatters, not a local literal", () => {
+  const body = code(source())
+  assert.match(body, /auditNote\(buildStartedNote\(/, "BUILD started must come from core")
+  assert.match(body, /auditNote\(buildFinishedNote\(/, "BUILD finished must come from core")
+  assert.doesNotMatch(body, /auditNote\(`BUILD (started|finished)/, "a hand-built note is the drift this pin exists to stop")
+})
+
+// The plan-park gate descriptor is a writer/matcher pair split across a package
+// boundary: three literals here, one literal in plan-gate-ask.mjs (and its qwen
+// copy). The hook fails OPEN by design, so a harmonizing reshape of these
+// objects — `gate: "plan"`, `gateKind`, a rename — degrades the plan-gate ask
+// back to prose-inside-data, the exact failure design 23 shipped to fix, with
+// every test still green. Neither side could catch that alone: the hook's own
+// tests build their own fixtures.
+test("the plan-park descriptor this server emits is the one plan-gate-ask matches", () => {
+  const hooksDir = path.join(pkgDir, "..", "hooks")
+  const emitted = [...code(source()).matchAll(/gate:\s*\{\s*kind:\s*"([a-z]+)",\s*id\b/g)].map((m) => m[1])
+  assert.ok(emitted.filter((k) => k === "plan").length >= 3, `the park arms must emit a plan descriptor — saw ${JSON.stringify(emitted)}`)
+
+  for (const hook of [path.join(hooksDir, "plan-gate-ask.mjs"), path.join(hooksDir, "..", "..", "qwen", "hooks", "plan-gate-ask.mjs")]) {
+    const src = fs.readFileSync(hook, "utf8")
+    const matched = src.match(/gate\.kind !== "([a-z]+)"/)?.[1]
+    assert.equal(matched, "plan", `${hook} must match the kind this server writes`)
+    assert.match(src, /typeof gate\.id !== "string"/, "and read the id off the same field name")
+  }
+})
+
 test("workflow_move enforces the same liveness guards as every other move", () => {
   const body = flat(toolBody(source(), "workflow_move"))
   assert.match(body, /resolveTaskIdAnywhere\(/, "the short-hash handle resolves here like everywhere else")

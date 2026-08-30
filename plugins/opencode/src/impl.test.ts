@@ -23,7 +23,7 @@ type Hooks = {
 
 const makeHooks = async (
   sessions: Record<string, string | undefined>,
-  opts: { failSessionApi?: boolean; failShell?: boolean; configJson?: string; failLog?: boolean; hangConfig?: boolean } = {},
+  opts: { failSessionApi?: boolean; hangSessionApi?: boolean; failShell?: boolean; configJson?: string; failLog?: boolean; hangConfig?: boolean } = {},
 ): Promise<Hooks> => {
   const client = {
     app: {
@@ -38,8 +38,9 @@ const makeHooks = async (
       },
     },
     session: {
-      get: async ({ path: { id } }: { path: { id: string } }) => {
+      get: async ({ path: { id } }: { path: { id: string } }): Promise<unknown> => {
         if (opts.failSessionApi) throw new Error("session API down")
+        if (opts.hangSessionApi) return new Promise(() => {})
         return { data: { parentID: sessions[id] } }
       },
     },
@@ -249,6 +250,79 @@ test("session-API failure while a worktree loop is live fails CLOSED for edit to
       () => hooks["tool.execute.before"]({ sessionID: "child", tool: "write", callID: "c1" }, { args: { filePath: "/repo/src/x.ts" } }),
       /could not be attributed/,
     )
+  } finally {
+    clearWorkflow("drv")
+  }
+})
+
+// The timeout is the RED half: without the deadline the hook never settles, and
+// a hang is not a failure any assertion can express.
+test("an UNISOLATED stage's stray write is refused, not relocated onto the build branch", async () => {
+  // The Claude marker splits `worktree` (this stage's, null for
+  // `isolation: "none"`) from `workflowWorktree` (the loop's); OpenCode's state
+  // has no such field, so the pin only ever CORRECTED — and PLAN re-entered on a
+  // replanned task whose worktree persists would have its code write rewritten
+  // onto the loop's build branch, landing in REVIEW's `base...branch` diff and
+  // in the PR as a change that stage was never allowed to make.
+  setWorkflow("drv", { ...worktreeWorkflow(), stage: "plan" })
+  try {
+    const hooks = await makeHooks({ child: "drv" })
+    await assert.rejects(
+      () => hooks["tool.execute.before"]({ sessionID: "child", tool: "write", callID: "c1" }, { args: { filePath: "/repo/src/x.ts" } }),
+      /PLAN stage does not build — it must not write \/repo\/src\/x\.ts/,
+    )
+    await assert.rejects(
+      () => hooks["tool.execute.before"]({ sessionID: "child", tool: "bash", callID: "c2" }, { args: { command: "npm run build" } }),
+      /PLAN stage does not build — "npm run build" would mutate the main tree/,
+    )
+    // Its own reads and inspection commands are untouched — the stage still works.
+    const readOnly = { args: { command: "git status" } }
+    await hooks["tool.execute.before"]({ sessionID: "child", tool: "bash", callID: "c3" }, readOnly)
+    assert.equal(readOnly.args.command, "git status")
+    // And the legitimate backlog write PLAN exists to make still lands.
+    const taskFile = { args: { filePath: "/repo/docs/tasks/queued/t.md" } }
+    await hooks["tool.execute.before"]({ sessionID: "child", tool: "write", callID: "c4" }, taskFile)
+    assert.equal(taskFile.args.filePath, "/repo/docs/tasks/queued/t.md", "the task file is not relocated into the worktree")
+  } finally {
+    clearWorkflow("drv")
+  }
+})
+
+test("an ISOLATED stage keeps the correcting pin — refusing there would burn an iteration", async () => {
+  setWorkflow("drv", worktreeWorkflow())
+  try {
+    const hooks = await makeHooks({ child: "drv" })
+    const mainTree = { args: { filePath: "/repo/src/x.ts" } }
+    await hooks["tool.execute.before"]({ sessionID: "child", tool: "write", callID: "c1" }, mainTree)
+    assert.equal(mainTree.args.filePath, "/repo/.worktrees/t/src/x.ts")
+  } finally {
+    clearWorkflow("drv")
+  }
+})
+
+test("a hanging session walk cannot wedge a tool call, and reads as 'can't tell'", { timeout: 10_000 }, async (t) => {
+  // The walk is one `client.session.get` per hop, and the SDK sets
+  // `req.timeout = false`. This hook runs for EVERY tool call of every
+  // unattributed session while any loop is live, so an un-boxed walk wedges a
+  // human's tool call in a session the loop does not even own — the plan-21
+  // spinner class, now in a hook. The deadline must land in the same arm a
+  // session-API failure does: fail CLOSED for edits.
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  setWorkflow("drv", worktreeWorkflow())
+  try {
+    const hooks = await makeHooks({}, { hangSessionApi: true })
+    // The assertion is attached BEFORE the clock is advanced: the deadline
+    // rejects inside the tick, and a rejection with no handler yet fails the
+    // test as an unhandled one.
+    const asserted = assert.rejects(
+      hooks["tool.execute.before"]({ sessionID: "child", tool: "write", callID: "c1" }, { args: { filePath: "/repo/src/x.ts" } }),
+      /could not be attributed/,
+    )
+    for (const ms of [11_000, 11_000]) {
+      await new Promise((r) => setImmediate(r))
+      t.mock.timers.tick(ms)
+    }
+    await asserted
   } finally {
     clearWorkflow("drv")
   }

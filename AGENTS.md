@@ -294,6 +294,20 @@ human-invoked verbs (`recover`, `doctor fix`) opt in; the unattended sweeps
 (`claimFirst`, the startup sweep) keep the wall-clock rule, because no one is
 waiting on them.
 
+**Which way the reading cuts decides how much proof it needs.** `liveness.ts`
+blesses the bare `pidAlive` probe only for callers that RELAX a guard on a false
+reading — core's marker readers do (a false "dead" merely lets `recover` through).
+The Claude/Qwen hook probe is the opposite: there "alive" keeps the deadline
+starve, so a false one blocks Bash and Write repo-wide addressed to nobody — the
+wedge `dead-marker.test.mjs` shipped to end, reopened one environment over by
+sibling containers sharing a bind-mounted repo. So `markerWriterAlive` proves
+aliveness or answers no: the marker's `machine` stamp must name THIS machine
+(`writeStageMarker` stamps `machineIdSync()`; an older server's absent stamp is
+not provably local), and the probe must see our OWN pid first or it proves
+nothing about anyone else's. `liveMarker` is the single expression of the rule —
+stated in one guard, `check-evidence` never got it and `decideSpawnGuard` claimed
+it in prose while implementing something weaker.
+
 ### `state.git.base` is a ref, not always a branch
 
 `taskBranch: false` runs the loop on the branch the tree already has checked
@@ -899,6 +913,18 @@ behaving as documented, and the only one covering a user-added kind's agent.
 Never write this as stage-prompt prose: the refusal message names the
 alternative at the moment the model errs, which is worth more than a line
 carried in every stage's context forever.
+
+**That third layer is host-agnostic too, and Claude/Qwen went without it.** Their
+`tools:` enumeration is a property of the agent files THIS repo ships, checked by
+a test that runs only here — an agent added to a consuming repo's own workflow
+kind, omitting `tools:`, inherits every tool the host offers, and no PreToolUse
+matcher could see the ask tool at all. `check-stage-ask.entry.mjs` is the twin:
+marker-gated (an ordinary session asks freely), and its own hook rather than a
+branch in `check-stage-guard` because that guard fails CLOSED on an unknown host,
+which here would refuse a HUMAN's question over a typo'd env var. The same
+asymmetry one seam over: the MCP gate tools had no caller-identity check at all,
+so `refuseDuringStage` (`stageDeadline !== null` — process-local, so a human's
+separate session is untouched) is the server-side twin of `refuseIfDriven`.
 
 This does not starve the gate mechanism above, and the reason is timing: every
 gate ask happens in a model turn where no loop owns the session — the task gate
