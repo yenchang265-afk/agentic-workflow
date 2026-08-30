@@ -5,8 +5,6 @@ description: Writing a document an agent consumes — a skill, an agent persona,
 
 # Writing for Agents
 
-> Adapted from [mattpocock/skills — writing-for-agents](https://github.com/mattpocock/skills/tree/fa3b2a6b355cf77ee0f2fb8c347f62ec42bbf022/skills/productivity/writing-for-agents) (v1.2). Reworked for this repository, where every skill is model-invoked and the same `skills/` directory serves the OpenCode, Claude Code and Qwen Code hosts.
-
 Reference for writing any document an agent consumes — a skill, this repo's
 `AGENTS.md` / `CLAUDE.md`, a stage prompt under
 `packages/core/workflows/<kind>/stages/`, an agent persona under
@@ -200,6 +198,14 @@ delete the rest.
   several skills point at), and `AGENTS.md` (durable, cross-task facts about the
   repo) — a rule restated in three skills belongs in one of those, with
   pointers.
+- The **environment** is a source of truth too — `package.json` scripts, a
+  kind's `workflow.json` manifest, the `.agentic-workflow.json` keys
+  `docs/configuration.md` documents, `--help` output — and a document that
+  restates it is a **cache**: a copy of a lookup, earning its load only when the
+  lookup is expensive. Cache what the agent cannot find by looking — the
+  unwritten convention, the reason behind a choice, the gotcha no config
+  confesses, which is what `AGENTS.md` is made of. Leave the one-file,
+  one-command lookups to the environment, where they cannot go stale.
 - Check every line for **relevance**: does it still bear on what the document
   does? A line loses relevance by never bearing on the task (mere exposition, or
   a branch that should be disclosed) or by going stale as the behaviour or world
@@ -229,6 +235,9 @@ After writing or editing a document an agent consumes:
       document) with pointers elsewhere
 - [ ] Each sentence passed the no-op test in isolation; failed sentences were
       deleted, not trimmed
+- [ ] Nothing restates what one lookup already answers — a `package.json`
+      script, a `workflow.json` field, a config key — unless that lookup is
+      expensive
 - [ ] Material only some branches need sits behind a context pointer, not inline
 - [ ] Every step (if any) ends on a checkable completion criterion
 - [ ] Prohibitions that survive are hard guardrails, each paired with the
