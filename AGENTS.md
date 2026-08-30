@@ -409,68 +409,66 @@ matches the WHOLE command string** against the agent frontmatter's
 `permission.bash` globs. So one allowlist has to satisfy both, and only OpenCode
 needs the `cd * && <glob>` twins — `gen-prompts.mjs` (`allowlistFor`) derives one
 per glob for every worktree-isolated stage. Declare **bare forms only** in
-`workflows/<kind>/workflow.json`; a hand-written `cd * && ` prefix there now fails
-`scripts/workflow-allowlist.test.mjs`.
+`workflows/<kind>/workflow.json`; a hand-written `cd * && ` prefix there fails
+`scripts/workflow-allowlist.test.mjs`. Deriving beats hand-listing because a
+missing twin is invisible until a stage runs: REVIEW, whose allowlist is
+*entirely* inspection commands, once had none at all, so on OpenCode every
+command it ran hit the `"*": deny` sentinel and the starved stage ERRORed instead
+of recording a verdict.
 
-Hand-listing them is how this broke twice: `npm outdated*` once shipped without
-its twin, and REVIEW — whose allowlist is *entirely* inspection commands — never
-had one at all, so on OpenCode every command it ran hit the `"*": deny` sentinel
-and the starved stage ERRORed instead of recording a verdict. The prompt half
-mattered as much as the data half: `worktree.instructions` used to order "prefix
-**every** shell command with `cd <wt> && `", i.e. exactly the form REVIEW's own
-allowlist denied. Keep that paragraph shaped per command-kind (inspection via
-`git -C <wt>`/absolute paths, runners via the prefix) — a blanket rule there is
-a blanket denial here.
+The prompt half matters as much as the data half. `worktree.instructions` must
+stay shaped per command-kind — inspection through `git -C <wt>` and absolute
+paths, runners through the `cd <wt> && ` prefix — because a blanket "prefix every
+shell command" order there is a blanket denial here.
 
-A glob is also **position-anchored**, so it must be declared in the shape the
-tool is actually invoked with, not the shape its docs list first. `mvn test*`
-matched a bare `mvn test` and nothing else: Maven and Gradle take global options
-(`-B`, `-pl core -am`, `--no-daemon`) and preceding phases (`clean`) BEFORE the
-goal, and Gradle qualifies tasks by module (`:core:test`), so `mvn clean test`
-and `./gradlew :core:test` hit the deny sentinel and VERIFY ERRORed on a runner
-the project has. Hence the second form per goal (`mvn * test*`, `gradle *:test*`).
-That is not a widening of what a check stage can reach: every glob ends in `*`
-compiled with dotAll, so a trailing second goal was always matched — the goal
-names are a scope boundary against a confused agent (T2), never a sandbox. When
-adding a runner, check where its argv puts the subcommand before copying the
-`npm test*` shape.
+A glob is **position-anchored**, so declare it in the shape the tool is actually
+invoked with, not the shape its docs list first. `mvn test*` matches a bare
+`mvn test` and nothing else: Maven and Gradle take global options (`-B`,
+`-pl core -am`, `--no-daemon`) and preceding phases (`clean`) BEFORE the goal, and
+Gradle qualifies tasks by module (`:core:test`), so `mvn clean test` and
+`./gradlew :core:test` fall to the deny sentinel and VERIFY ERRORs on a runner the
+project has. Hence the second form per goal (`mvn * test*`, `gradle *:test*`).
+That widens nothing: every glob ends in `*` compiled with dotAll, so a trailing
+second goal always matched — the goal names are a scope boundary against a
+confused agent (T2), never a sandbox.
 
-The JS package managers are the same trap one ecosystem over, and it bit
-because `npm test*` looked like proof they were covered: the WORKSPACE selector
-precedes the script (`npm -w apps/web test`, `pnpm -r test`, `pnpm --filter web
-test`, `yarn workspace web test`), and berry moves the subcommand outright
-(`yarn workspaces foreach run test`). None of those matched, so on a monorepo —
-which is what a two-stack shop has — every CI command fell to the deny sentinel.
-That matters more now that VERIFY's checks are DISCOVERED: the plan names the
-right command, admission refuses it, and the stage runs no checks at all behind
-one warning line. The flags there are ENUMERATED (`npm -w *`, `pnpm --filter*`)
-rather than tolerated generically, and that is load-bearing: `npm -* test*`
-would also match `npm --tag test publish`, because the glob only needs a literal
-" test" somewhere after the flag. Maven got away with `mvn * test*` only because
-`-Dtest=Foo` never produces a space-delimited " test"; npm's option syntax does.
+The JS package managers are the same trap one ecosystem over, and `npm test*`
+looks like proof they are covered. The WORKSPACE selector precedes the script
+(`npm -w apps/web test`, `pnpm -r test`, `pnpm --filter web test`,
+`yarn workspace web test`), and berry moves the subcommand outright
+(`yarn workspaces foreach run test`), so on a monorepo every CI command falls to
+the deny sentinel — which matters more now that VERIFY's checks are DISCOVERED:
+the plan names the right command, admission refuses it, and the stage runs no
+checks at all behind one warning line. The flags are ENUMERATED (`npm -w *`,
+`pnpm --filter*`) rather than tolerated generically, and that is load-bearing:
+`npm -* test*` would also match `npm --tag test publish`, because the glob only
+needs a literal " test" somewhere after the flag. Maven survives `mvn * test*`
+only because `-Dtest=Foo` never produces a space-delimited " test". When adding a
+runner, check where its argv puts the subcommand before copying the `npm test*`
+shape.
 
 A command-REWRITING plugin is the same starvation with no manifest fix: an
 rtk-style token proxy mutates the command in `tool.execute.before` BEFORE
-OpenCode evaluates permissions, so every allowlisted command reaches the
-matcher as `rtk <cmd>` — a shape no shipped glob matches — and the whole stage
-starves. The remedy is config, never the proxy: `bashAllowlistPrefix` derives a
+OpenCode evaluates permissions, so every allowlisted command reaches the matcher
+as `rtk <cmd>` — a shape no shipped glob matches — and the whole stage starves.
+The remedy is config, never the proxy: `bashAllowlistPrefix` derives a
 `<prefix> <glob>` twin of everything the stage ALREADY grants
 (`withCommandPrefixes`), and those — like `bashAllowlistExtra` globs — are
-appended AFTER the sentinel by the plugin's `config` hook,
-the only position that wins under OpenCode's **last-match-wins** evaluation —
-which is also why the generated maps' `"*": deny`-first ordering is semantic,
-not stylistic (`workflow-allowlist.test.mjs` pins it; a trailing `"*": deny`
-would remove the bash tool from the agent outright). Diagnostic to know:
-OpenCode's DeniedError dumps EVERY bash rule, pattern-unfiltered, so a stage
-transcript claiming "the deny-all rule wins over the specific allows" means "no
-glob matched the final command string" — check for a rewritten prefix first.
+appended AFTER the sentinel by the plugin's `config` hook, the only position that
+wins under OpenCode's **last-match-wins** evaluation. That is also why the
+generated maps' `"*": deny`-first ordering is semantic rather than stylistic
+(`workflow-allowlist.test.mjs` pins it; a trailing `"*": deny` would remove the
+bash tool from the agent outright). Diagnostic to know: OpenCode's DeniedError
+dumps EVERY bash rule, pattern-unfiltered, so a stage transcript claiming "the
+deny-all rule wins over the specific allows" means "no glob matched the final
+command string" — check for a rewritten prefix first.
 
-Derived rather than blanket because a blanket `"rtk *"` accepts `rtk npm
-publish` as readily as `rtk npm test`, and because **the same rewrite blinds
+Derived rather than blanket, because a blanket `"rtk *"` accepts `rtk npm
+publish` as readily as `rtk npm test` — and because **the same rewrite blinds
 every write backstop**: `isGitPushViolation`, `isGithubPrMutation` and
 `isFindMutation` all anchor on the BARE tool name, so `rtk git push --force
-origin main` reads as no violation on either host. Narrowing the allowlist
-cannot fix that half — `rtk git push origin main` matches a derived
+origin main` reads as no violation on either host. Narrowing the allowlist cannot
+fix that half — `rtk git push origin main` matches a derived
 `rtk git push origin *` glob quite legitimately, and only the classifier knows
 `main` is protected — so each segment is classified raw AND with one prefix hop
 stripped (`stripCommandPrefix`, twinned into `hooks/src/allowlist.mjs`). One hop
@@ -537,69 +535,60 @@ drifted REVIEW files its findings as the VERIFY verdict.
 
 ### A blocked turn cannot ask anything
 
-The gate hook runs `approve`'s move before the model and then blocks — which is
-right for a move nothing follows, and was wrong for the task gate: the obvious
-next question ("plan it now?") had nowhere to come from, so it fired in the
-interactive `new` flow and silently never on the command path. `approve` is now
-a CONDITIONAL hybrid: `gate-parse.mjs` declares the ASKING gates
-(`continueOnGate`, sourced from `gate-ask.mjs`'s `ASK_GATES` so the two cannot
-drift), and `gate-command.mjs` hands the turn back only when the CLI's
-`data.gate` agrees. Three things must not be "simplified":
+The gate hook runs `approve`'s move before the model and then blocks, which is
+right for a move nothing follows and wrong for the task gate — the obvious next
+question ("plan it now?") then has nowhere to come from. So `approve` is a
+CONDITIONAL hybrid: `gate-parse.mjs` declares the ASKING gates (`continueOnGate`,
+sourced from `gate-ask.mjs`'s `ASK_GATES` so the two cannot drift), and
+`gate-command.mjs` hands the turn back only when the CLI's `data.gate` agrees.
+Four things must not be "simplified":
 
 - **Never widen it to a blanket `continueTurn: true`.** That continues on
   refusals generally and on the terminal ship gate — the double-move the block
   exists to prevent.
 - **The continue path requires `ok` + a known `data.gate` + a string
   `data.id`.** Every uncertainty (an older `mcp-server/dist` emitting no `data`)
-  falls through to the block, i.e. to the old behaviour. A false block costs one
-  typed command; a false continue re-opens the double-move.
+  falls through to the block. A false block costs one typed command; a false
+  continue re-opens the double-move.
 - **The one refusal that may continue is the id-less AMBIGUITY, and only because
   NOTHING MOVED.** `resolveGateTask` merely lists, so a bare `approve` over
-  several candidates never reached `approveTask`/`approvePlan`/`shipTask` — there
+  several candidates never reached `approveTask`/`approvePlan`/`shipTask`; there
   is no move to double, and the follow-up asks for a FIRST approve on an id the
-  human picks. Hence it is pinned to `continueOnAmbiguity`
-  (`ASK_AMBIGUITY_VERBS`, the same one-source-of-truth arrangement as
-  `ASK_GATES`) rather than expressed as "continue on a refusal": wrong-folder and
-  not-found have nothing to choose between, and continuing there is the old bug
-  back. Before this, a slice set made the id-less form useless — the turn blocked
-  with "Multiple tasks awaiting" and no way to ask which, so the human had to
-  type an id per child.
+  human picks. It is therefore pinned to `continueOnAmbiguity`
+  (`ASK_AMBIGUITY_VERBS`, the same single-source arrangement as `ASK_GATES`)
+  rather than expressed as "continue on a refusal" — wrong-folder and not-found
+  have nothing to choose between, and continuing there is the old bug back.
 - **The follow-up is emitted by the harness, never asked for in prose** — same
   reason `stageModels` is bound by a hook. Prose may describe the ask; the
   imperative with the id and the host's `askTool` already substituted is what
-  carries it. For the same reason the ask also rides on the approve tools'
-  `next` (`okGate`): nothing intercepts a tool CALL, and a gate that asks on the
-  typed path and stays silent on the tool path is a coin flip the human never
-  made.
+  carries it. It rides the approve tools' `next` (`okGate`) too, because nothing
+  intercepts a tool CALL and a gate that asks on the typed path but not the tool
+  path is a coin flip the human never made.
 
-Which gate a folder-driven verb crossed is only knowable from `GateResult.data`
+Which gate a folder-driven verb crossed is knowable only from `GateResult.data`
 (`gate`, `id` — set on every success arm, `alreadyDone` retries included). Never
 re-derive it from `message`: that is prose, and it gets reworded.
 
 **OpenCode's plugin cannot originate a question.** The SDK's Question API
 (list/reply/reject) is not on `PluginInput["client"]`, and the read-only
-`tui.question(sessionID)` view belongs to the TUI plugin surface, which a normal
-plugin does not get (`tui?: never`) — so the `question` TOOL CALL and the
-`question.*` events are the only windows a plugin has onto one, and both only
-observe. Only the
-model's own `question` tool opens a window, so an ask there only exists where a
-model turn does: the command-prompt override after a handled verb, not the
-background `session.idle` drive where PLAN parks. And an ask whose answer the
-model cannot execute is worse than no ask — that host has no MCP tools and
-guards `docs/tasks/**`, which is why `workflow_gate`/`workflow_plan` exist.
-Both refuse a call from a session a loop is driving (`findDrivingWorkflow`,
-failing CLOSED): a plugin tool is offered to EVERY session, stage subagents
-included, and without that a BUILD agent can approve its own task.
+`tui.question(sessionID)` view belongs to the TUI plugin surface a normal plugin
+does not get (`tui?: never`) — the `question` tool call and the `question.*`
+events only observe. So an ask exists only where a model turn does: the
+command-prompt override after a handled verb, never the background
+`session.idle` drive where PLAN parks. And an ask whose answer the model cannot
+execute is worse than no ask — that host has no MCP tools and guards
+`docs/tasks/**`, which is why `workflow_gate`/`workflow_plan` exist. Both refuse
+a call from a session a loop is driving (`findDrivingWorkflow`, failing CLOSED):
+a plugin tool is offered to EVERY session, stage subagents included, and without
+that a BUILD agent can approve its own task.
 
-That left the ask itself as the one thing on this host carried by prose — a
-`NEXT STEP` line in `workflow_gate`'s result — and prose is what the
-orchestrator does not follow. Skipping it is not cosmetic: `workflow_plan` is
-the point of no return, because the drive it queues runs its stages as
+That leaves the ask itself carried by prose — a `NEXT STEP` line in
+`workflow_gate`'s result — which is exactly what an orchestrator skips.
+`workflow_plan` is the point of no return: the drive it queues runs its stages as
 `session.command` calls on the DRIVING session (concurrency 1), after which
-`refuseIfDriven` and the absence of a free model turn mean **nothing can ask
-the human anything** until the chain unwinds. Straight to `workflow_plan` and
-the window is gone for good. So the prose has a mechanism behind it, and both
-halves are load-bearing:
+`refuseIfDriven` and the absence of a free model turn mean **nothing can ask the
+human anything** until the chain unwinds. So the prose has a mechanism behind it,
+in two halves:
 
 - **`planFromAgent` refuses until the question was actually put** (`askUnanswered`,
   against the one-shot `askArmed` a task gate sets).
@@ -607,59 +596,56 @@ halves are load-bearing:
   work stays queued for the idle after the answer instead of the drive burying
   the window.
 
-Both fail **OPEN**, gated on `questionsObservable` — a session where no question
-has ever been seen is never refused. Against a host that shows us no window at
-all the rules go inert rather than stranding an approved task no verb can plan.
-That is the opposite asymmetry to `refuseIfDriven` two paragraphs up, and
-deliberately so: there a false allow ships unreviewed work, here a false refusal
-wedges the backlog and a false allow only restores the old behaviour. Both exits
-now **log** — "the human said yes" and "we could not tell" produced the same
-outcome and the same empty transcript, which is how this shipped broken twice.
+Both fail **OPEN**, gated on `questionsObservable`: a session where no question
+was ever seen is never refused, so against a host that shows no window the rules
+go inert rather than stranding an approved task no verb can plan. That is the
+opposite asymmetry to `refuseIfDriven` above, deliberately — there a false allow
+ships unreviewed work, here a false refusal wedges the backlog while a false
+allow only restores the old behaviour. Both exits **log**, because "the human
+said yes" and "we could not tell" otherwise produce the same outcome and the same
+empty transcript.
 
-**The signal is the `question` TOOL CALL, not the event name.** Both rules were
-fed only by the `question.asked`/`replied`/`rejected` events, and that is a
-host-named input the plugin has to keep guessing right: the SDK's event union
-carries the same window under two families (`question.*` and `question.v2.*`), so
-one wrong guess makes every rule above silently inert — fail-open, invisible,
-indistinguishable from working. So the PRIMARY source is
+**The signal is the `question` TOOL CALL, not the event name.** The SDK carries
+the same window under two event families (`question.*` and `question.v2.*`), and
+a wrong guess there makes every rule above silently inert — fail-open, invisible,
+indistinguishable from working. The primary source is
 `tool.execute.before`/`.after` (`noteQuestionToolCall`/`noteQuestionToolSettled`),
-a seam this plugin owns; `noteQuestionEvent` stays as an additive second source
-and now normalises `question.v2.*` down to the legacy names. The two converge
-rather than double-count because the asked event carries `tool.callID` — the same
-id the tool hooks carry — so windows are keyed by that token, never by a
-per-session flag. The flag also lost a real window: one message can open two, and
-the first settlement cleared it while the second was still up.
+a seam this plugin owns; `noteQuestionEvent` is an additive second source that
+normalises `question.v2.*` down to the legacy `question.asked`/`replied`/`rejected`
+names. They converge rather than
+double-count because the asked event carries `tool.callID`, so windows are keyed
+by that token and never by a per-session flag — one message can open two windows,
+and a flag is cleared by the first settlement while the second is still up.
 
-The deny (next section) runs **before** the recorder. A refused stage ask never
-reached the human, so recording it would both satisfy an armed gate ask nobody
-saw and hold `onIdle` off a session with no window in it.
+The stage-ask deny (next section) runs **before** the recorder: a refused stage
+ask never reached the human, so recording it would both satisfy an armed gate ask
+nobody saw and hold `onIdle` off a session with no window in it.
 
 **A token nobody removes is worse than no token at all**, because `onIdle`
-returns on it for the life of the process — stranding the session's queued drive
-*and* the on-disk claim it already placed, after which every gate verb refuses
-the task as "a loop is driving this NOW". There is deliberately **no timeout** (a
-window the human has not got to yet is legitimately open for hours); what bounds
-it is that every way a window dies without a settlement clears it: ESC
-(`onInterrupt`, for the interrupted id *and* the resolved driving one), the
-`stop`/`abort` verb, and any other tool starting in that session — a question
-blocks the turn, so a different tool call proves the window is down
-(`noteOtherToolCall`, the valve against a `tool.execute.after` that never fires).
+returns on it for the life of the process — stranding the queued drive *and* the
+on-disk claim it already placed, after which every gate verb refuses the task as
+"a loop is driving this NOW". There is deliberately **no timeout**: a window the
+human has not reached is legitimately open for hours. What bounds it is that
+every way a window dies without settling clears it — ESC (`onInterrupt`, for the
+interrupted id *and* the resolved driving one), the `stop`/`abort` verb, and any
+other tool starting in that session, since a question blocks the turn and a
+different tool call proves the window is down (`noteOtherToolCall`, the valve
+against a `tool.execute.after` that never fires).
 
-One more silent seam, and it is the one that cost the most: **`armTaskGateAsk`
-returning `""`**. `data.gate`/`data.id` live in core, which resolves to
-`packages/core/dist` — gitignored, rebuilt only by `pnpm install`, while the
-installed plugin points at the working tree. A new plugin against an old core
-dist lands there with `r.ok` true and no gate on it, and the result is BOTH halves
-of the bug at once: no `NEXT STEP` for the model to follow, and nothing armed for
-`askUnanswered` to enforce. It warns now, naming `pnpm install`.
+**`armTaskGateAsk` returning `""` is a silent seam.** `data.gate`/`data.id` live
+in core, which resolves to `packages/core/dist` — gitignored, rebuilt only by
+`pnpm install`, while the installed plugin points at the working tree. A new
+plugin against an old core dist lands with `r.ok` true and no gate on it, which
+is both halves of the bug at once: no `NEXT STEP` to follow, and nothing armed
+for `askUnanswered` to enforce. It warns, naming `pnpm install`.
 
 And **never `await` the drive inside the `event` hook.** `onIdle` is the entry to
 the whole build → verify → review chain, so awaiting it parks that handler for
 hours — including the ESC path, which lives in the same hook and is the one event
-that must get through while a loop runs. `void` it with an error sink. This is
+that must get through while a loop runs. `void` it with an error sink. That is
 safe only because `onIdle` reaches `driving.add` with no intervening `await`;
-anything added to that prologue must keep it synchronous, or two idle events will
-both start a drive.
+anything added to that prologue must keep it synchronous, or two idle events both
+start a drive.
 
 ### The plan gate asks in a turn of its own
 
