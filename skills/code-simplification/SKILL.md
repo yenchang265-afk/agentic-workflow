@@ -5,8 +5,6 @@ description: Reduces complexity in working code while preserving behavior exactl
 
 # Code Simplification
 
-> Inspired by the [Claude Code Simplifier plugin](https://github.com/anthropics/claude-plugins-official/blob/main/plugins/code-simplifier/agents/code-simplifier.md). Adapted here as a model-agnostic, process-driven skill for any AI coding agent.
-
 Reduce complexity while preserving exact behavior. Fewer lines is not the goal;
 comprehension speed is — every simplification must pass one test: would a new
 team member understand this faster than the original?

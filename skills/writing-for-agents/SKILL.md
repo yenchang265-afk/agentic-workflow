@@ -5,8 +5,6 @@ description: Writing a document an agent consumes — a skill, an agent persona,
 
 # Writing for Agents
 
-> Adapted from [mattpocock/skills — writing-for-agents](https://github.com/mattpocock/skills/tree/6654f6b60cd9d5be8b54c6fafe44346dabeb3b76/skills/productivity/writing-for-agents) (v1.2.3). Reworked for this repository, where every skill is model-invoked and the same `skills/` directory serves the OpenCode, Claude Code and Qwen Code hosts.
-
 Reference for writing any document an agent consumes — a skill, this repo's
 `AGENTS.md` / `CLAUDE.md`, a stage prompt under
 `packages/core/workflows/<kind>/stages/`, an agent persona under

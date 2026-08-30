@@ -4,8 +4,6 @@ The skill-specific branch of [`writing-for-agents`](SKILL.md): what changes when
 the document is a skill — frontmatter, the invocation choice, and router skills.
 Everything else about writing it is the universal reference in `SKILL.md`.
 
-> Adapted from [mattpocock/skills — writing-for-agents/SKILL-MECHANICS.md](https://github.com/mattpocock/skills/blob/6654f6b60cd9d5be8b54c6fafe44346dabeb3b76/skills/productivity/writing-for-agents/SKILL-MECHANICS.md) (v1.2.3).
-
 ## Frontmatter
 
 A skill is `skills/<name>/SKILL.md` with a YAML header carrying `name` (matching
