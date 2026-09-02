@@ -53,6 +53,8 @@ error naming it instead of guessing.
 ---
 title: <concise one-line title>        # required, non-empty
 priority: <integer>                    # lower runs first; default 0 unless the idea implies urgency
+blockedBy:                             # ONLY on a stacked slice: the sibling id(s) it builds on; omit otherwise
+  - <sibling-id>
 acceptance:                            # 2–5 concrete, testable criteria
   - <observable, checkable outcome>
   - <observable, checkable outcome>
@@ -67,6 +69,11 @@ Rules for good output:
 - **acceptance** — each item must be something the verify stage can *check*: an
   observable behavior, a returned value, a test that exists. No vague "works well".
 - **priority** — default `0`; raise the number only to deprioritize, lower is more urgent.
+- **blockedBy** — only when your prompt says a child BUILDS ON another child's
+  merged code: list that sibling's id. The loop then skips this task until the
+  sibling leaves the board (shipped, abandoned, or removed). Never list the
+  epic, never list a task outside this set, and omit the key entirely on an
+  independent slice — `priority` alone orders those.
 - **body** — the why/what context. The plan later lives in its own section below it.
 
 ## Filename

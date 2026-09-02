@@ -10,6 +10,7 @@ const task = (body: string): Task => ({
   priority: 1,
   acceptance: [],
   labels: [],
+  blockedBy: [],
   body,
   path: "/r/docs/tasks/in-progress/t.md",
 })

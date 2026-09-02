@@ -10,6 +10,7 @@ import {
   checkCommands,
   checksBlock,
   checksBudgetMs,
+  CHECK_RERUNS,
   classifyExit,
   finalizeCheckRecord,
   runChecks,
@@ -94,21 +95,89 @@ test("runChecks runs each command in the work tree, in order, and never throws o
     ],
     "/repo/.wt/add-foo",
   )
+  // The red check is run once more before it is believed (design 50).
   assert.deepEqual(
     calls.map((c) => [c.cmd, c.cwd]),
     [
+      ["npm test", "/repo/.wt/add-foo"],
       ["npm test", "/repo/.wt/add-foo"],
       ["tsc --noEmit", "/repo/.wt/add-foo"],
     ],
   )
   assert.deepEqual(
-    results.map((r) => [r.name, r.exitCode, r.outcome]),
+    results.map((r) => [r.name, r.exitCode, r.outcome, r.reruns, r.flaky]),
     [
-      ["tests", 1, "fail"],
-      ["types", 0, "pass"],
+      ["tests", 1, "fail", 1, undefined],
+      ["types", 0, "pass", undefined, undefined],
     ],
   )
   assert.match(results[0]!.output, /1 failing/)
+})
+
+// --- confirm before blaming (design 50) ---
+
+test("a check that fails then passes is FLAKY: outcome pass, first run's output kept, one rerun recorded", async () => {
+  let runs = 0
+  const calls: Call[] = []
+  const $ = makeShell((cmd) => (cmd === "npm test" && runs++ === 0 ? { exitCode: 1, stderr: "timeout in test 7" } : { exitCode: 0, stdout: "ok" }), calls)
+  const [r] = await runChecks($, [{ name: "tests", command: "npm test" }], "/wt")
+  assert.equal(calls.length, 2)
+  assert.equal(r!.outcome, "pass")
+  assert.equal(r!.exitCode, 0)
+  assert.equal(r!.flaky, true)
+  assert.equal(r!.reruns, 1)
+  assert.match(r!.output, /timeout in test 7/, "the failing run's tail is the evidence worth keeping")
+  assert.equal(anyFailed([r!]), false)
+})
+
+test("error and pass are never rerun — a missing runner does not come back, a green check proved itself", async () => {
+  for (const [exit, outcome] of [
+    [127, "error"],
+    [124, "error"],
+    [0, "pass"],
+  ] as const) {
+    const calls: Call[] = []
+    const [r] = await runChecks(makeShell(() => ({ exitCode: exit }), calls), [{ name: "c", command: "x" }], "/wt")
+    assert.equal(calls.length, 1, `exit ${exit}`)
+    assert.equal(r!.outcome, outcome)
+    assert.equal(r!.reruns, undefined)
+    assert.equal(r!.flaky, undefined)
+  }
+})
+
+test("onCheck fires per RUN, so the rerun restamps the claim under its own cap", async () => {
+  const stamps: string[] = []
+  await runChecks(makeShell(() => ({ exitCode: 1 })), [{ name: "c", command: "x", timeoutMinutes: 2 }], "/wt", 5_000, (def, cap) => {
+    stamps.push(`${def.name}:${cap}`)
+  })
+  assert.deepEqual(stamps, ["c:120000", "c:120000"])
+})
+
+test("checksBlock marks a flake and keeps its first-run output; a twice-failed check says so", () => {
+  const block = checksBlock([
+    { name: "tests", command: "npm test", exitCode: 0, outcome: "pass", output: "flaked here", reruns: 1, flaky: true },
+    { name: "lint", command: "npm run lint", exitCode: 1, outcome: "fail", output: "2 errors", reruns: 1 },
+    { name: "types", command: "tsc", exitCode: 0, outcome: "pass", output: "" },
+  ])
+  assert.match(block, /- tests \(npm test\) → PASS \(exit 0\) — FLAKY: the first run failed and a rerun passed/)
+  assert.match(block, /--- tests first-run \(failing\) output ---\nflaked here/)
+  assert.match(block, /- lint \(npm run lint\) → FAIL \(exit 1\) — failed 2 times running/)
+  assert.match(block, /- types \(tsc\) → PASS \(exit 0\)\n/)
+})
+
+test("checkAxis turns a flake into a non-blocking suggestion: the stage is not floored, the fact reaches the ship gate", () => {
+  const flaky: CheckResult = { name: "tests", command: "npm test", exitCode: 0, outcome: "pass", output: "flaked here", reruns: 1, flaky: true }
+  const axis = checkAxis([flaky])
+  assert.equal(axis?.verdict, "PASS")
+  assert.deepEqual(axis?.findings?.map((f) => f.severity), ["suggestion"])
+  assert.match(axis!.findings![0]!.detail, /is FLAKY — failed once, passed on rerun\nflaked here/)
+  const floored = withCheckFloor({ verdict: "PASS" }, [flaky])
+  assert.equal(effectiveVerdict(floored!), "PASS")
+  // Beside a real failure the axis is still FAIL, and the flake stays a suggestion.
+  const mixed = checkAxis([flaky, { name: "lint", command: "l", exitCode: 1, outcome: "fail", output: "", reruns: 1 }])
+  assert.equal(mixed?.verdict, "FAIL")
+  assert.deepEqual(mixed?.findings?.map((f) => f.severity), ["critical", "suggestion"])
+  assert.match(mixed!.findings![0]!.detail, /failed 2 times running/)
 })
 
 test("runChecks resolves a per-check cwd under the work tree", async () => {
@@ -215,11 +284,12 @@ test("checksBudgetMs sums each check's own cap, defaulting the cap-less ones", (
       ],
       60_000,
     ),
-    60_000 + 3 * 60_000,
+    // Every check may run 1 + CHECK_RERUNS times; the budget is the upper bound.
+    (60_000 + 3 * 60_000) * (1 + CHECK_RERUNS),
   )
   // A host that forgets the knob still gets a bounded budget — the same
   // omission-safety rule runChecks applies to its own timeout parameter.
-  assert.equal(checksBudgetMs([{ name: "tests", command: "npm test" }]), DEFAULT_CHECK_TIMEOUT_MS)
+  assert.equal(checksBudgetMs([{ name: "tests", command: "npm test" }]), DEFAULT_CHECK_TIMEOUT_MS * (1 + CHECK_RERUNS))
 })
 
 test("runChecks fires onCheck before each check with its effective cap — the liveness restamp seam", async () => {

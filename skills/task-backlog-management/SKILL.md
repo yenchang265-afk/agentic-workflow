@@ -40,6 +40,8 @@ YAML frontmatter plus a free-form markdown body:
 title: Add rate limiting to the API     # required
 type: story                             # optional; issue/work-item type
 epic: k2p9-search-rewrite               # optional; the LOCAL tracking epic this is a slice of
+blockedBy:                              # optional; ids that must leave the board before this is claimed
+  - k2p9-search-index
 priority: 2                             # optional; lower runs first (default 0)
 estimate: 3                             # optional; story points / effort
 assignee: jdoe@example.com              # optional
@@ -64,6 +66,12 @@ Written by the loop's PLAN stage, right before execution.
 
 - **id** = the filename without `.md` (`add-foo.md` → `add-foo`). Stable and
   human-visible.
+- **`blockedBy`** is the one dependency gate the loop enforces: a claim skips a
+  task while any listed id still sits in a non-terminal folder, and takes it once
+  every blocker has completed, been abandoned, or been removed (a dangling id
+  never wedges a task). It blocks claims only — approve/replan/ship are
+  untouched — and `status` lists what waits on what. `priority` orders; it does
+  not block.
 - **`epic`** names a task file in this backlog; `tracker.parent` names an item in
   someone else's system. Do not confuse them — the gates read `epic` to offer a
   set's slices as a choice and to walk to the next one, and a link that pointed
