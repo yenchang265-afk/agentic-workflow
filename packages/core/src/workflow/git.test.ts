@@ -1,6 +1,24 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { addWorktree, branchExists, commitAll, defaultBranchName, diffShortstat, headSha, listWorktrees, pushBranch, worktreeForBranch } from "./git.js"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
+import {
+  addWorktree,
+  branchExists,
+  CHECKPOINT_BLOB_MAX,
+  commitAll,
+  defaultBranchName,
+  diffShortstat,
+  headSha,
+  listWorktrees,
+  pushBranch,
+  screenCheckpoint,
+  screenedWarning,
+  secretShapedPath,
+  sweptPaths,
+  worktreeForBranch,
+} from "./git.js"
 
 /**
  * git.ts shells out via Bun's `$` (redirections, quoting) which the node+tsx
@@ -70,19 +88,78 @@ const PORCELAIN_PRUNABLE = [
   "",
 ].join("\n")
 
-test("commitAll stages everything by default and applies :(exclude) pathspecs when given", async () => {
+/** The screen's status probe always runs first; a clean tree screens nothing. */
+const STATUS_PROBE = "git -C /wt status --porcelain -z --untracked-files=all"
+
+test("commitAll screens first, then stages everything by default and applies :(exclude) pathspecs when given", async () => {
   const plain: string[] = []
-  await commitAll(makeShell(() => ({ exitCode: 0 }), plain), "/wt", "msg")
-  assert.equal(plain[0], "git -C /wt add -A")
+  const r = await commitAll(makeShell(() => ({ exitCode: 0 }), plain), "/wt", "msg")
+  assert.equal(plain[0], STATUS_PROBE)
+  assert.equal(plain[1], "git -C /wt add -A")
+  assert.deepEqual(r, { committed: true, screened: [] })
 
   const excluded: string[] = []
   await commitAll(makeShell(() => ({ exitCode: 0 }), excluded), "/wt", "msg", ["docs/tasks"])
-  assert.equal(excluded[0], "git -C /wt add -A -- . :(exclude)docs/tasks")
-  assert.equal(excluded[1], "git -C /wt commit -m msg")
+  assert.equal(excluded[1], "git -C /wt add -A -- . :(exclude)docs/tasks")
+  assert.equal(excluded[2], "git -C /wt commit -m msg")
 
   const empty: string[] = []
   await commitAll(makeShell(() => ({ exitCode: 0 }), empty), "/wt", "msg", [])
-  assert.equal(empty[0], "git -C /wt add -A")
+  assert.equal(empty[1], "git -C /wt add -A")
+})
+
+test("commitAll keeps secret-shaped paths out of the sweep as literal excludes and reports them", async () => {
+  // A porcelain entry starts with its XY code — ` M` has a leading SPACE, which
+  // the trimming `run` helper would eat; the screen must read it raw.
+  const porcelain = ["?? .env", "?? src/new.ts", " M src/x.ts", "?? certs/server.pem", " D gone.txt", "?? .env.example"].join("\u0000") + "\u0000"
+  const log: string[] = []
+  const shell = makeShell((cmd) => (cmd.startsWith(STATUS_PROBE) ? { exitCode: 0, stdout: porcelain } : { exitCode: 0 }), log)
+  const r = await commitAll(shell, "/wt", "msg", ["docs/tasks"])
+  assert.deepEqual(r.screened, [
+    { path: ".env", why: "secret-shaped" },
+    { path: "certs/server.pem", why: "secret-shaped" },
+  ])
+  assert.equal(r.committed, true)
+  assert.equal(log[1], "git -C /wt add -A -- . :(exclude)docs/tasks :(exclude,literal).env :(exclude,literal)certs/server.pem")
+  assert.match(screenedWarning(r.screened)!, /2 paths kept out of the automatic sweep — \.env \(secret-shaped\), certs\/server\.pem \(secret-shaped\)/)
+  assert.match(screenedWarning(r.screened)!, /git add <path>/)
+  assert.equal(screenedWarning([]), null)
+})
+
+test("commitAll's screen fails toward the sweep: a failed status probe screens nothing", async () => {
+  const log: string[] = []
+  const shell = makeShell((cmd) => (cmd.startsWith(STATUS_PROBE) ? { exitCode: 128, stderr: "not a git repo" } : { exitCode: 0 }), log)
+  const r = await commitAll(shell, "/wt", "msg")
+  assert.deepEqual(r, { committed: true, screened: [] })
+  assert.equal(log[1], "git -C /wt add -A")
+})
+
+test("sweptPaths reads porcelain -z: deletions skipped, rename sources consumed, XY codes never mistaken for the path", () => {
+  const z = ["?? a.txt", " M b.txt", "R  new.txt", "old.txt", " D c.txt", "D  d.txt", "A  e.txt", "MM f g.txt"].join("\u0000") + "\u0000"
+  assert.deepEqual(sweptPaths(z), ["a.txt", "b.txt", "new.txt", "e.txt", "f g.txt"])
+  assert.deepEqual(sweptPaths(""), [])
+})
+
+test("secretShapedPath judges the basename: keys, keystores, dotenv, ssh keys, credential files — never the doc conventions", () => {
+  for (const p of [".env", ".env.local", ".env.production", "a/b/.env", "certs/x.pem", "x.key", "k.p12", "k.pfx", "app.jks", "~/id_rsa", ".ssh/id_ed25519", "credentials.json", "service-account-prod.json", "client_secret_123.json", ".netrc", ".git-credentials", "infra/terraform.tfstate", "x.tfstate.backup", "secret.gpg", "C:\\repo\\.env"]) {
+    assert.equal(secretShapedPath(p), true, p)
+  }
+  for (const p of [".env.example", ".env.sample", ".env.template", ".env.dist", ".env.defaults", "id_rsa.pub", "src/env.ts", "README.md", "keys.ts", "package.json", ".npmrc", "pemfile.txt", ""]) {
+    assert.equal(secretShapedPath(p), false, p)
+  }
+})
+
+test("screenCheckpoint sizes the swept files and refuses a blob over CHECKPOINT_BLOB_MAX", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aw-ckpt-"))
+  fs.writeFileSync(path.join(dir, "small.bin"), Buffer.alloc(1024))
+  fs.writeFileSync(path.join(dir, "big.bin"), Buffer.alloc(CHECKPOINT_BLOB_MAX + 1))
+  const porcelain = ["?? small.bin", "?? big.bin", "?? missing.bin"].join("\u0000") + "\u0000"
+  const shell = makeShell((cmd) => (cmd.includes("status --porcelain") ? { exitCode: 0, stdout: porcelain } : { exitCode: 0 }))
+  try {
+    assert.deepEqual(await screenCheckpoint(shell, dir), [{ path: "big.bin", why: "oversized" }])
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test("branchExists maps a zero exit code to true", async () => {

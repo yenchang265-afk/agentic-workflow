@@ -16,6 +16,16 @@ test("graph round-trips every shipped manifest exactly", () => {
   }
 })
 
+test("the onPlanDefect slot and a fire's stall fields are edges/data the graph carries (designs 46/48)", () => {
+  const { manifest } = loadManifest(defaultWorkflowsDir(), "engineering")
+  const graph = manifestToGraph(manifest)
+  const defect = graph.edges.find((e) => e.from === "verify" && e.slot === "onPlanDefect")
+  assert.ok(defect, "verify's onPlanDefect arm became no edge — the slot list is missing it")
+  assert.equal(defect.to, "terminal:stop")
+  const onFail = graph.edges.find((e) => e.from === "review" && e.slot === "onFail")?.effect
+  assert.ok(onFail?.kind === "fire" && onFail.stallAfter === 2 && typeof onFail.stallMessage === "string")
+})
+
 test("a stage's optional model survives the graph round-trip", () => {
   const { manifest } = loadManifest(defaultWorkflowsDir(), "engineering")
   const withModel = parseManifest({

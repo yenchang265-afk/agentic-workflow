@@ -13,7 +13,9 @@
       "completed",
       "abandoned"
     ],
-    "humanGates": ["draft"],
+    "humanGates": [
+      "draft"
+    ],
     "pools": [
       {
         "status": "in-progress",
@@ -220,7 +222,13 @@
       "agent": "workflow-review",
       "prompt": "stages/review.md",
       "isolation": "worktree",
-      "requiredAxes": ["correctness", "readability", "architecture", "security", "performance"],
+      "requiredAxes": [
+        "correctness",
+        "readability",
+        "architecture",
+        "security",
+        "performance"
+      ],
       "requireEvidence": true,
       "bashAllowlist": [
         "git status*",
@@ -270,11 +278,17 @@
         "kind": "fire",
         "stage": "build",
         "countIteration": true,
+        "stallAfter": 2,
+        "stallMessage": "✗ Workflow stopped — verify failed the same way {stallAfter} times running (same criteria not met, same blocking findings), so another rebuild would be asked to fix the same things again. The plan is likely wrong: send it back to the PLAN stage with /agentic-workflow:engineering replan <id>.",
         "capMessage": "✗ Workflow stopped — verify failed after {maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agentic-workflow:engineering replan <id>."
       },
       "onError": {
         "kind": "stop",
         "message": "✗ Workflow stopped — verify could not run (environment/infrastructure error). Fix the environment, then /agentic-workflow:engineering recover the task."
+      },
+      "onPlanDefect": {
+        "kind": "stop",
+        "message": "✗ Workflow stopped — VERIFY reports the approved plan itself is defective (its reason is on the task file), so a rebuild cannot pass. Send it back to the PLAN stage with /agentic-workflow:engineering replan <id>."
       }
     },
     "review": {
@@ -290,11 +304,17 @@
         "dropArtifacts": [
           "verify"
         ],
+        "stallAfter": 2,
+        "stallMessage": "✗ Workflow stopped — review failed the same way {stallAfter} times running (same blocking findings), so another rebuild would be asked to fix the same things again. The plan is likely wrong: send it back to the PLAN stage with /agentic-workflow:engineering replan <id>.",
         "capMessage": "✗ Workflow stopped — review failed after {maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agentic-workflow:engineering replan <id>."
       },
       "onError": {
         "kind": "stop",
         "message": "✗ Workflow stopped — review could not run (environment/infrastructure error). Fix the environment, then /agentic-workflow:engineering recover the task."
+      },
+      "onPlanDefect": {
+        "kind": "stop",
+        "message": "✗ Workflow stopped — REVIEW reports the approved plan itself is defective (its reason is on the task file), so a rebuild cannot pass. Send it back to the PLAN stage with /agentic-workflow:engineering replan <id>."
       }
     }
   },

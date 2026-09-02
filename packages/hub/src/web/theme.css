@@ -1283,6 +1283,10 @@ body {
 .handle-error {
   background: var(--warn) !important;
 }
+.handle-plan-defect {
+  background: var(--gate) !important;
+  opacity: 0.7;
+}
 
 /* --- React Flow default overrides (scoped to out-specify dist/style.css) ---- */
 
@@ -1308,6 +1312,10 @@ body {
 }
 .creator-canvas .react-flow__edge.edge-error .react-flow__edge-path {
   stroke: var(--warn);
+}
+.creator-canvas .react-flow__edge.edge-plandefect .react-flow__edge-path {
+  stroke: var(--gate);
+  stroke-dasharray: 6 4;
 }
 /* The loop: a counted iteration edge firing back to an earlier stage. Thicker
    stroke plus the built-in .animated marching dashes make the cycle the most

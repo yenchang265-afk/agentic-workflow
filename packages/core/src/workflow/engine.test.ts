@@ -19,7 +19,7 @@ import {
 import type { CheckResult } from "./checks.js"
 import type { Action, Config, WorkflowState, TaskRef } from "./state.js"
 import { resumeAtBuild, startAtPlan } from "./state.js"
-import { planContractBlock, planVisualizationBlock, verdictContractBlock, verdictFeedbackBlock, workScopeBlock, type Verdict } from "./verdict.js"
+import { failureFingerprint, findingId, planContractBlock, planVisualizationBlock, verdictContractBlock, verdictFeedbackBlock, workScopeBlock, type Verdict } from "./verdict.js"
 import { checkDiscoveryBlock, discoveryAllowlist, noMachineChecksBlock } from "./discovered-checks.js"
 import { dependencyContractBlock } from "./declared-deps.js"
 
@@ -1350,6 +1350,94 @@ test("withCheckResults attaches per stage without disturbing the others", () => 
   assert.deepEqual(two.checks?.verify, [PASSED_CHECK])
   assert.deepEqual(two.checks?.review, [])
   assert.equal(state.checks, undefined, "the input state was mutated")
+})
+
+// --- the stall rule (design 46) and the plan-defect arm (design 48) ---
+
+const located = (location: string, axis = "correctness"): { verdict: Verdict; reason: string; axes: { axis: string; verdict: Verdict; findings: { severity: "critical"; detail: string; location: string }[] }[] } => ({
+  verdict: "FAIL",
+  reason: `wording ${Math.random()}`, // the reason never enters the fingerprint
+  axes: [{ axis, verdict: "FAIL", findings: [{ severity: "critical", detail: "d", location }] }],
+})
+
+test("an identical VERIFY failure twice running stops the run under stallAfter, well before the cap", () => {
+  const first = advance(eng, { ...mk("g"), stage: "verify", artifacts: { plan: "P" } }, config, "out", "FAIL", located("x.ts:1"))
+  assert.equal(first.action.kind, "fire")
+  assert.equal(first.state.attempts?.[0]?.fingerprint, failureFingerprint(located("x.ts:1")))
+  assert.deepEqual(first.state.attempts?.[0]?.findings, [findingId("correctness", located("x.ts:1").axes[0]!.findings[0]!)])
+  assert.doesNotMatch(first.state.artifacts.verify ?? "", /REPEAT/)
+  const second = advance(eng, { ...first.state, stage: "verify" }, config, "out", "FAIL", located("x.ts:1"))
+  assert.equal(second.action.kind, "stop")
+  assert.match((second.action as { message: string }).message, /verify failed the same way 2 times running/)
+  assert.match((second.action as { message: string }).message, /replan <id>/)
+  assert.equal("retryable" in second.action, false, "a stall is a failed run, not a transient one")
+  // The stall is on the ledger, and the feedback block named the repeat before stopping.
+  assert.equal(second.state.attempts?.length, 2)
+  assert.equal(second.state.iteration, 1, "stopped at iteration 2 of 3 — the cap would have cost one more BUILD+VERIFY")
+  assert.match(second.state.artifacts.verify ?? "", /REPEAT, also raised in iteration 1/)
+})
+
+test("a different failure, a reason-only failure, and a stall-less manifest never stall — the cap stays the bound", () => {
+  const s0 = { ...mk("g"), stage: "verify", artifacts: { plan: "P" } }
+  // Different finding location: a different failure.
+  const a = advance(eng, s0, config, "out", "FAIL", located("x.ts:1"))
+  const b = advance(eng, { ...a.state, stage: "verify" }, config, "out", "FAIL", located("x.ts:2"))
+  assert.equal(b.action.kind, "fire")
+  // Reason-only failures carry no fingerprint: never a stall, only the cap.
+  const prose = { verdict: "FAIL" as Verdict, reason: "same words every time" }
+  const p1 = advance(eng, s0, config, "out", "FAIL", prose)
+  const p2 = advance(eng, { ...p1.state, stage: "verify" }, config, "out", "FAIL", prose)
+  assert.equal(p2.action.kind, "fire")
+  assert.equal(p2.state.attempts?.[1]?.fingerprint, undefined)
+  const p3 = advance(eng, { ...p2.state, stage: "verify" }, config, "out", "FAIL", prose)
+  assert.equal(p3.action.kind, "stop")
+  assert.match((p3.action as { message: string }).message, /after 3 iterations/)
+  // A manifest without stallAfter is byte-identical to before.
+  const verify = eng.manifest.transitions.verify!
+  const { stallAfter: _s, stallMessage: _m, ...onFail } = verify.onFail as Extract<typeof verify.onFail, { kind: "fire" }>
+  const plain = { ...eng, manifest: { ...eng.manifest, transitions: { ...eng.manifest.transitions, verify: { ...verify, onFail } } } }
+  const q1 = advance(plain, s0, config, "out", "FAIL", located("x.ts:1"))
+  const q2 = advance(plain, { ...q1.state, stage: "verify" }, config, "out", "FAIL", located("x.ts:1"))
+  assert.equal(q2.action.kind, "fire")
+})
+
+test("the stall rule counts one stage's trailing attempts — another stage's failure in between does not reset it", () => {
+  // A wider cap, so the third counted failure below is judged by the stall
+  // rule and not by the cap (the cap is checked first and always wins).
+  const wide = { ...config, maxIterations: 5 }
+  const s0 = { ...mk("g"), stage: "verify", artifacts: { plan: "P" } }
+  const v1 = advance(eng, s0, wide, "out", "FAIL", located("x.ts:1"))
+  const r1 = advance(eng, { ...v1.state, stage: "review" }, wide, "out", "FAIL", located("y.ts:9", "security"))
+  assert.equal(r1.action.kind, "fire")
+  // VERIFY comes back failing on exactly what it failed on before the review round-trip.
+  const v2 = advance(eng, { ...r1.state, stage: "verify" }, wide, "out", "FAIL", located("x.ts:1"))
+  assert.equal(v2.action.kind, "stop")
+  assert.match((v2.action as { message: string }).message, /verify failed the same way 2 times running/)
+})
+
+test("a FAIL flagged planDefect takes the onPlanDefect arm on both check stages: a stop for replan, on the ledger, no iteration burned", () => {
+  for (const stage of ["verify", "review"]) {
+    const rec = { verdict: "FAIL" as Verdict, reason: "step 3 needs an API the SDK does not expose", planDefect: true }
+    const r = advance(eng, { ...mk("g"), stage, artifacts: { plan: "P" } }, config, "out", "FAIL", rec)
+    assert.equal(r.action.kind, "stop", stage)
+    assert.match((r.action as { message: string }).message, /approved plan itself is defective/, stage)
+    assert.match((r.action as { message: string }).message, /replan <id>/, stage)
+    assert.equal("retryable" in r.action, false, stage)
+    assert.equal(r.state.iteration, 0, stage)
+    assert.deepEqual(r.state.attempts, [{ stage, iteration: 0, verdict: "FAIL", reason: rec.reason }], stage)
+  }
+  // Unflagged: the onFail rebuild, exactly as before. A PASS ignores the flag (admission refuses it anyway).
+  const plain = advance(eng, { ...mk("g"), stage: "verify", artifacts: { plan: "P" } }, config, "out", "FAIL", { verdict: "FAIL", reason: "red" })
+  assert.equal(plain.action.kind, "fire")
+  const pass = advance(eng, { ...mk("g"), stage: "verify", artifacts: { plan: "P" } }, config, "out", "PASS", { verdict: "PASS", planDefect: true })
+  assert.equal(pass.action.kind, "fire")
+  assert.equal((pass.action as { stage: string }).stage, "review")
+  // A kind that declares no arm routes the flagged FAIL through onFail as before.
+  const { onPlanDefect: _arm, ...verify } = eng.manifest.transitions.verify!
+  const armless = { ...eng, manifest: { ...eng.manifest, transitions: { ...eng.manifest.transitions, verify } } }
+  const fallback = advance(armless, { ...mk("g"), stage: "verify", artifacts: { plan: "P" } }, config, "out", "FAIL", { verdict: "FAIL", reason: "r", planDefect: true })
+  assert.equal(fallback.action.kind, "fire")
+  assert.equal((fallback.action as { stage: string }).stage, "build")
 })
 
 test("the structured verdict block survives intact when the prose budget clamps to zero", () => {

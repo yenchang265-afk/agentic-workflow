@@ -223,6 +223,9 @@ test("the attempts ledger survives saveState → loadState", async () => {
     attempts: [
       { stage: "verify", iteration: 0, verdict: "FAIL", reason: "two tests are red" },
       { stage: "review", iteration: 1, verdict: "FAIL" },
+      // The stall/repeat fields (design 46) must be declared or zod strips them
+      // and a recovered run never sees a stall or a repeat finding again.
+      { stage: "verify", iteration: 2, verdict: "FAIL", reason: "red", fingerprint: "0badf00d", findings: ["a1b2c3d4", "deadbeef"] },
     ],
   }
   await saveState(fakeShell(), dir, "docs/tasks", "add-rl", withLedger)

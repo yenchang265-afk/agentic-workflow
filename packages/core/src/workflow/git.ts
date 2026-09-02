@@ -16,6 +16,16 @@ const run = async ($: Shell, cwd: string, args: string[]): Promise<{ ok: boolean
   return { ok: out.exitCode === 0, stdout: out.stdout.toString().trim(), stderr: out.stderr.toString().trim() }
 }
 
+/**
+ * `run` without the trim — for porcelain whose FIRST byte is significant (a
+ * ` M path` status entry starts with a space `trim` would eat, turning the
+ * entry's XY code into the path's first character).
+ */
+const runRaw = async ($: Shell, cwd: string, args: string[]): Promise<{ ok: boolean; stdout: string }> => {
+  const out = await $`git -C ${cwd} ${args}`.quiet().nothrow()
+  return { ok: out.exitCode === 0, stdout: out.stdout.toString() }
+}
+
 /** Whether `cwd` is inside a git work tree. */
 export const isGitRepo = async ($: Shell, cwd: string): Promise<boolean> =>
   (await run($, cwd, ["rev-parse", "--is-inside-work-tree"])).ok
@@ -109,20 +119,139 @@ export const checkoutBranch = async ($: Shell, cwd: string, branch: string): Pro
  */
 export const CHECKPOINT_LOCKFILE_EXCLUDES: readonly string[] = ["*package-lock.json", "*npm-shrinkwrap.json", "*pnpm-lock.yaml", "*yarn.lock", "*bun.lock", "*bun.lockb"]
 
+/** Why a path was kept out of the automatic checkpoint sweep. */
+export type ScreenReason = "secret-shaped" | "oversized"
+
+export interface ScreenedPath {
+  readonly path: string
+  readonly why: ScreenReason
+}
+
 /**
- * Stage everything and commit. Returns false when there was nothing to commit
- * or the commit failed — callers treat both as "no checkpoint taken".
+ * Basenames the checkpoint sweep refuses on SHAPE alone: private keys and
+ * keystores, dotenv files (the `.example`/`.sample`/`.template` conventions are
+ * documentation and pass), SSH private keys, and the credential-file names the
+ * common SDKs write. Judged by name because the sweep cannot read intent: a
+ * `.pem` an install step dropped in the tree is a leak whether or not the plan
+ * mentioned it, and a checkpoint is permanent history on a branch the PR
+ * carries. Deliberately tight — a false positive only costs the agent an
+ * explicit `git add <path>` (the exclusion narrows the AUTOMATIC `add -A` and
+ * nothing else, exactly like `CHECKPOINT_LOCKFILE_EXCLUDES`), while a false
+ * negative is a secret in history. `.npmrc`/`.pypirc` are NOT here: repos
+ * commit them for mirror config, and the redaction pass covers their tokens
+ * where they are echoed.
+ */
+export const CHECKPOINT_SECRET_BASENAMES: readonly RegExp[] = [
+  /^\.env(\..+)?$/i,
+  /\.(pem|key|p12|pfx|jks|keystore|asc|gpg|kdbx)$/i,
+  /^id_(rsa|dsa|ecdsa|ed25519)$/,
+  /^(credentials|service[-_]?account[^/]*|client[-_]secret[^/]*)\.json$/i,
+  /^\.(netrc|pgpass|git-credentials)$/,
+  /\.tfstate(\.backup)?$/,
+]
+
+/** The dotenv names that are documentation, never configuration. */
+const DOTENV_DOC_RE = /^\.env\.(example|sample|template|dist|defaults?)$/i
+
+/**
+ * Largest blob the automatic sweep commits (5 MiB). A build artifact, a
+ * downloaded model, a coverage archive: none belongs in a feature commit, and
+ * once pushed it is in the PR forever. Same escape hatch as above.
+ */
+export const CHECKPOINT_BLOB_MAX = 5 * 1024 * 1024
+
+/** Whether a repo-relative path is one the sweep refuses by NAME. Pure. */
+export const secretShapedPath = (relPath: string): boolean => {
+  const base = relPath.replace(/\\/g, "/").split("/").pop() ?? ""
+  if (!base) return false
+  if (DOTENV_DOC_RE.test(base)) return false
+  return CHECKPOINT_SECRET_BASENAMES.some((re) => re.test(base))
+}
+
+/**
+ * Parse `git status --porcelain -z` into the paths a checkpoint's `add -A`
+ * would sweep: every entry that is not a deletion. A rename/copy entry carries
+ * a second NUL-terminated path (the source); it is consumed and ignored. Pure.
+ */
+export const sweptPaths = (porcelainZ: string): readonly string[] => {
+  const tokens = porcelainZ.split("\u0000")
+  const out: string[] = []
+  for (let i = 0; i < tokens.length; i++) {
+    const entry = tokens[i]!
+    if (entry.length < 4) continue
+    const xy = entry.slice(0, 2)
+    const p = entry.slice(3)
+    if (xy[0] === "R" || xy[0] === "C") i++ // the rename source follows as its own token
+    if (xy.includes("D")) continue
+    out.push(p)
+  }
+  return out
+}
+
+/**
+ * The paths a checkpoint at `cwd` must keep OUT of its automatic sweep, and
+ * why. Name-screened first (no I/O), then size-screened by `stat` — a path
+ * that cannot be stat'ed (raced away, a dangling symlink) is not a blob and
+ * passes. Never throws: the screen is a guard on the sweep, and a guard that
+ * fails must fail toward the old behaviour (the sweep runs), not toward
+ * losing the checkpoint.
+ */
+export const screenCheckpoint = async ($: Shell, cwd: string): Promise<readonly ScreenedPath[]> => {
+  const status = await runRaw($, cwd, ["status", "--porcelain", "-z", "--untracked-files=all"])
+  if (!status.ok) return []
+  const out: ScreenedPath[] = []
+  for (const p of sweptPaths(status.stdout)) {
+    if (secretShapedPath(p)) {
+      out.push({ path: p, why: "secret-shaped" })
+      continue
+    }
+    try {
+      const st = fs.statSync(path.join(cwd, p))
+      if (st.isFile() && st.size > CHECKPOINT_BLOB_MAX) out.push({ path: p, why: "oversized" })
+    } catch {
+      // not a regular file we can size — not a blob
+    }
+  }
+  return out
+}
+
+export interface CheckpointResult {
+  /** False when there was nothing to commit or the commit failed — "no checkpoint taken". */
+  readonly committed: boolean
+  /** What the screen kept out of the sweep this time — for the host to WARN about; empty is the common case. */
+  readonly screened: readonly ScreenedPath[]
+}
+
+/** One warning line for a non-empty `screened`, or null. Pure. */
+export const screenedWarning = (screened: readonly ScreenedPath[]): string | null => {
+  if (!screened.length) return null
+  const list = screened.map((s) => `${s.path} (${s.why})`).join(", ")
+  return (
+    `checkpoint: ${screened.length} path${screened.length === 1 ? "" : "s"} kept out of the automatic sweep — ${list}. ` +
+    "A path that genuinely belongs to the change is committed with an explicit `git add <path> && git commit`."
+  )
+}
+
+/**
+ * Stage everything and commit — the automatic checkpoint. `committed` is false
+ * when there was nothing to commit or the commit failed; callers treat both as
+ * "no checkpoint taken".
  *
  * `excludes` (repo-relative paths) are kept OUT of the checkpoint via git's
  * `:(exclude)` pathspec — hosts pass the backlog dir when checkpointing a
  * worktree, so its checkout-time frozen copy of `docs/tasks` never rides the
- * feature branch (task-file lifecycle lives on the main tree).
+ * feature branch (task-file lifecycle lives on the main tree). The screen
+ * (`screenCheckpoint`) adds its own exclusions the same way — inside this
+ * function rather than at each caller, so that no checkpoint site can be
+ * written without it. `:(exclude,literal)` because a screened path is a NAME,
+ * and a name with a glob character in it must not widen into a pattern.
  */
-export const commitAll = async ($: Shell, cwd: string, message: string, excludes?: readonly string[]): Promise<boolean> => {
-  const addArgs =
-    excludes && excludes.length > 0 ? ["add", "-A", "--", ".", ...excludes.map((e) => `:(exclude)${e}`)] : ["add", "-A"]
-  if (!(await run($, cwd, addArgs)).ok) return false
-  return (await run($, cwd, ["commit", "-m", message])).ok
+export const commitAll = async ($: Shell, cwd: string, message: string, excludes?: readonly string[]): Promise<CheckpointResult> => {
+  const screened = await screenCheckpoint($, cwd)
+  const specs = [...(excludes ?? []).map((e) => `:(exclude)${e}`), ...screened.map((s) => `:(exclude,literal)${s.path}`)]
+  const addArgs = specs.length > 0 ? ["add", "-A", "--", ".", ...specs] : ["add", "-A"]
+  if (!(await run($, cwd, addArgs)).ok) return { committed: false, screened }
+  return { committed: (await run($, cwd, ["commit", "-m", message])).ok, screened }
 }
 
 /**

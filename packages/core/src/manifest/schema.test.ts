@@ -3,6 +3,9 @@ import fs from "node:fs"
 import path from "node:path"
 import { test } from "node:test"
 import { effectiveAllowlist, FANOUT_MAX, gateStatuses, parseManifest } from "./schema.js"
+import { defaultWorkflowsDir } from "./dir.js"
+
+const WORKFLOWS_DIR = defaultWorkflowsDir()
 
 const base = {
   kind: "k",
@@ -80,6 +83,32 @@ test("rejects a fire at an unknown stage and a counted fire without capMessage",
       }),
     /needs a capMessage/,
   )
+})
+
+test("stallAfter needs countIteration, is min 2, and onPlanDefect is validated like every other arm", () => {
+  const withFail = (onFail: unknown, extra: Record<string, unknown> = {}) => ({
+    ...base,
+    transitions: { ...base.transitions, check: { ...base.transitions.check, onFail, ...extra } },
+  })
+  assert.throws(() => parseManifest(withFail({ kind: "fire", stage: "work", stallAfter: 2 })), /stallAfter .* needs countIteration/)
+  assert.throws(() => parseManifest(withFail({ kind: "fire", stage: "work", countIteration: true, capMessage: "c", stallAfter: 1 })))
+  const m = parseManifest(withFail({ kind: "fire", stage: "work", countIteration: true, capMessage: "c", stallAfter: 2, stallMessage: "s {stallAfter}" }))
+  const onFail = m.transitions.check!.onFail
+  assert.ok(onFail?.kind === "fire" && onFail.stallAfter === 2 && onFail.stallMessage === "s {stallAfter}")
+  assert.throws(
+    () => parseManifest(withFail(base.transitions.check.onFail, { onPlanDefect: { kind: "fire", stage: "nope" } })),
+    /unknown stage "nope"/,
+  )
+  const arm = parseManifest(withFail(base.transitions.check.onFail, { onPlanDefect: { kind: "stop", message: "replan" } }))
+  assert.deepEqual(arm.transitions.check!.onPlanDefect, { kind: "stop", message: "replan" })
+  // The shipped engineering manifest opts in on both check stages.
+  const eng = JSON.parse(fs.readFileSync(path.join(WORKFLOWS_DIR, "engineering", "workflow.json"), "utf8"))
+  for (const stage of ["verify", "review"]) {
+    assert.equal(eng.transitions[stage].onFail.stallAfter, 2, stage)
+    assert.match(eng.transitions[stage].onFail.stallMessage, /\{stallAfter\}.*replan <id>/s, stage)
+    assert.equal(eng.transitions[stage].onPlanDefect.kind, "stop", stage)
+    assert.match(eng.transitions[stage].onPlanDefect.message, /replan <id>/, stage)
+  }
 })
 
 test("rejects a backlog pool whose entryStage names no stage", () => {

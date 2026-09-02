@@ -81,6 +81,7 @@ import {
   checkoutBranch,
   CHECKPOINT_LOCKFILE_EXCLUDES,
   commitAll,
+  screenedWarning,
   commitPaths,
   currentBranch,
   ensureExcluded,
@@ -1330,7 +1331,12 @@ const checkpoint = async (deps: Deps, config: Config, state: WorkflowState, mess
   // Lockfiles are excluded in BOTH modes (see CHECKPOINT_LOCKFILE_EXCLUDES):
   // VERIFY's npm install churn must not ride the checkpoint into REVIEW's diff.
   const excludes = state.git?.worktree ? [config.tasksDir, ...CHECKPOINT_LOCKFILE_EXCLUDES] : [...CHECKPOINT_LOCKFILE_EXCLUDES]
-  await withCommitLock(tree, () => commitAll(deps.$, tree, message, excludes))
+  const result = await withCommitLock(tree, () => commitAll(deps.$, tree, message, excludes))
+  // Secret-shaped or oversized paths the sweep refused (design 47). Warned, not
+  // failed: the checkpoint still lands without them, and the human reads this
+  // line — a silent exclusion would look like the agent never wrote the file.
+  const warning = screenedWarning(result.screened)
+  if (warning) await deps.log("warn", `loop: ${warning}`)
 }
 
 /** Commit backlog path changes on the MAIN tree, serialized against other commits there. */

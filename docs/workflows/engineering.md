@@ -167,6 +167,24 @@ rebuild) into `status`, the terminal report on both hosts, and the hub's
 review cards, so the decision to approve isn't made blind to what actually
 changed.
 
+Three things bound a run short of the iteration cap. **The stall rule**: each
+counted failure is fingerprinted on its structure — the criteria not met and
+the blocking findings, never the reason prose — and a check stage that fails
+the same way twice running stops the loop there (`stallAfter: 2` in the
+manifest) rather than spending the third iteration on a rebuild asked to fix
+the same things again; a reason-only FAIL has no fingerprint and never stalls.
+Every blocking finding also carries a stable id in the rebuild's feedback
+block, and one that comes back is rendered as a **repeat** naming the iteration
+it was last raised in. **The plan-defect arm**: VERIFY or REVIEW may record a
+FAIL with `planDefect: true` and a reason when what fails is the approved plan
+itself — a step that cannot be implemented as written — and the loop stops for
+`replan <id>` instead of rebuilding; the flag is refused on a PASS or without a
+reason. **The checkpoint screen**: the automatic checkpoint's `git add -A`
+keeps secret-shaped paths (`.env*`, `*.pem`, `*.key`, SSH private keys,
+credential files) and blobs over 5 MiB out of the sweep and warns which ones;
+a path that truly belongs to the change is committed with an explicit
+`git add <path>`. See designs 46–48.
+
 ### Slice sets (`new` on a heavy idea)
 
 `new <idea>` can split a large idea into sibling child drafts plus a
