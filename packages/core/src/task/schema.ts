@@ -131,6 +131,22 @@ export const TaskFrontmatterSchema = z.object({
    */
   autoPlan: z.boolean().optional(),
   /**
+   * Ids of tasks in this backlog that must leave the board before this one is
+   * CLAIMED: the loop skips a task while any named id still sits in a
+   * non-terminal status folder (`ACTIVE_STATUSES`). Completed, abandoned, and
+   * removed blockers all unblock — a dangling id is a normal state, exactly as
+   * it is for `epic`, so a dependency on work that will never land cannot wedge
+   * the task forever. This is the mechanism `epic` deliberately is not: `epic`
+   * is descriptive and `priority` only orders, so stacked slices (a child that
+   * builds on a sibling's merged code) had no gate but the human's own
+   * sequencing. Blocks CLAIMS only — the human gates (approve/replan/ship) are
+   * untouched, and `status` names what is blocked and by what.
+   *
+   * In the schema for the reason `epic` and `autoPlan` are: zod strips unknown
+   * keys, so an off-schema key is deleted by the first rewrite.
+   */
+  blockedBy: StringListSchema.default([]),
+  /**
    * Selection order — lower runs first. Defaults to 0. This is the loop's own
    * scheduling knob and is a plain integer, not the tracker's named priority
    * (Jira Highest…Lowest, ADO 1–4); map by hand when pairing.
@@ -159,6 +175,8 @@ export interface Task {
   readonly epic?: string
   /** Auto-approve this task's plan when it parks (set by `approve --auto-plan`). */
   readonly autoPlan?: boolean
+  /** Task ids that must leave the board (complete/abandon/remove) before this one is claimed. */
+  readonly blockedBy: readonly string[]
   readonly priority: number
   readonly estimate?: number
   readonly assignee?: string
@@ -309,6 +327,7 @@ export const parseTask = (filename: string, content: string, path: string): Task
     estimate: fm.estimate,
     assignee: fm.assignee,
     labels: fm.labels,
+    blockedBy: fm.blockedBy,
     acceptance: fm.acceptance,
     tracker: fm.tracker,
     body: (body ?? "").trim(),
@@ -324,6 +343,7 @@ export interface TaskInput {
   readonly type?: string
   readonly epic?: string
   readonly autoPlan?: boolean
+  readonly blockedBy?: readonly string[]
   readonly priority?: number
   readonly estimate?: number
   readonly assignee?: string
@@ -346,6 +366,7 @@ export const taskToInput = (task: Task): TaskInput => ({
   type: task.type,
   epic: task.epic,
   autoPlan: task.autoPlan,
+  blockedBy: task.blockedBy,
   priority: task.priority,
   estimate: task.estimate,
   assignee: task.assignee,
@@ -439,6 +460,7 @@ export const serializeTask = (input: TaskInput): string => {
     type: input.type,
     epic: input.epic,
     autoPlan: input.autoPlan,
+    blockedBy: input.blockedBy,
     priority: input.priority,
     estimate: input.estimate,
     assignee: input.assignee,
@@ -453,6 +475,7 @@ export const serializeTask = (input: TaskInput): string => {
   // Emitted only when TRUE: `autoPlan: false` and "no flag" mean the same
   // thing, and serializing the false would put a dead key on every task.
   if (fm.autoPlan === true) out.autoPlan = true
+  if (fm.blockedBy.length) out.blockedBy = fm.blockedBy
   out.priority = fm.priority
   if (fm.estimate !== undefined) out.estimate = fm.estimate
   if (fm.assignee !== undefined) out.assignee = fm.assignee

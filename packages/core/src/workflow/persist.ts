@@ -99,6 +99,10 @@ const WorkflowStateSchema = z.object({
           exitCode: z.number().int(),
           outcome: z.enum(["pass", "fail", "error"]),
           output: z.string(),
+          // Design 50's rerun facts — declared or a resumed run's prompt would
+          // render a flaked check as a plain PASS and its suggestion would vanish.
+          reruns: z.number().int().min(0).optional(),
+          flaky: z.literal(true).optional(),
         }),
       ),
     )

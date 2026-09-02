@@ -57,6 +57,26 @@ export const selectOrder = (tasks: readonly Task[]): Task[] =>
 export const selectNext = (tasks: readonly Task[]): Task | null => selectOrder(tasks)[0] ?? null
 
 /**
+ * The `blockedBy` ids of `task` that are still OPEN — present in `openIds`,
+ * the ids of every task in a non-terminal status. A blocker that completed,
+ * was abandoned, or was removed is not in that set and so no longer blocks:
+ * a dangling id must never wedge a task (design 49). A task naming itself
+ * is ignored rather than deadlocked. Pure.
+ */
+export const openBlockers = (task: Task, openIds: ReadonlySet<string>): string[] =>
+  task.blockedBy.filter((id) => id !== task.id && openIds.has(id))
+
+/** Whether a claim must skip `task` for now. Pure. */
+export const isBlocked = (task: Task, openIds: ReadonlySet<string>): boolean => openBlockers(task, openIds).length > 0
+
+/** Every id in a non-terminal status folder — the set `openBlockers` judges against. Pure. */
+export const openTaskIds = (byStatus: Readonly<Partial<Record<TaskStatus, readonly Task[]>>>): Set<string> => {
+  const out = new Set<string>()
+  for (const status of ACTIVE_STATUSES) for (const t of byStatus[status] ?? []) out.add(t.id)
+  return out
+}
+
+/**
  * The other slices of `epic` still sitting in `tasks`, in the order a human is
  * meant to approve them — `selectOrder`, the same order a claim would take them
  * in, so the walk never suggests a slice out of sequence.
@@ -695,12 +715,24 @@ export interface BacklogSummary {
   /** in-review tasks awaiting a human diff review (/agentic-workflow:engineering approve). */
   readonly awaitingReview: readonly string[]
   /**
+   * queued/in-progress tasks a claim skips because a `blockedBy` id is still
+   * on the board, each with the open blockers. Omitted (not empty) when
+   * nothing is blocked, the same omit-when-absent rule `epics` follows.
+   */
+  readonly blocked?: readonly BlockedTask[]
+  /**
    * Per-epic slice progress, one entry per tracking draft that still has linked
    * children on the board. Omitted (not empty) when the backlog has none, so a
    * slice-set-free repo's summary is unchanged — the same omit-when-absent rule
    * every `epic`/`siblings` key follows.
    */
   readonly epics?: readonly EpicProgress[]
+}
+
+/** A task a claim skips, and the still-open ids holding it. */
+export interface BlockedTask {
+  readonly id: string
+  readonly by: readonly string[]
 }
 
 /**
@@ -736,15 +768,24 @@ export const summarizeBacklog = (
   const inProgress = byStatus["in-progress"] ?? []
   const held = new Set(claimedIds)
   const epics = epicProgress(byStatus)
+  // A blocked task is not "queued, not yet planned" or "build-ready": no claim
+  // will take it, so those lists would name work no verb can start. It gets
+  // its own list, with the blockers, which is the actionable fact.
+  const open = openTaskIds(byStatus)
+  const blocked: BlockedTask[] = [...(byStatus["queued"] ?? []), ...inProgress]
+    .filter((t) => isBlocked(t, open))
+    .map((t) => ({ id: t.id, by: openBlockers(t, open) }))
+  const blockedIds = new Set(blocked.map((b) => b.id))
   return {
     counts,
     awaitingTask: ids((byStatus["draft"] ?? []).filter((t) => !isEpicType(t.type))),
-    awaitingPlan: ids(byStatus["queued"] ?? []),
+    awaitingPlan: ids((byStatus["queued"] ?? []).filter((t) => !blockedIds.has(t.id))),
     gated: ids((byStatus["plan-review"] ?? []).filter(hasPlan)),
-    claimable: ids(inProgress.filter((t) => isClaimable(t) && !held.has(t.id))),
+    claimable: ids(inProgress.filter((t) => isClaimable(t) && !held.has(t.id) && !blockedIds.has(t.id))),
     claimHeld: ids(inProgress.filter((t) => isClaimable(t) && held.has(t.id))),
     interrupted: ids(inProgress.filter(wasInterrupted)),
     awaitingReview: ids(byStatus["in-review"] ?? []),
+    ...(blocked.length ? { blocked } : {}),
     ...(epics.length ? { epics } : {}),
   }
 }
@@ -798,6 +839,9 @@ export const nextActions = (s: BacklogSummary, cmd: string): readonly string[] =
   if (s.claimable.length) out.push(`build-ready: ${idList(s.claimable)} — ${cmd} claim [id]`)
   if (s.interrupted.length) out.push(`interrupted: ${idList(s.interrupted)} — ${cmd} recover <id>`)
   if (s.claimHeld.length) out.push(`claim held (a loop is driving it, or the claim is stale): ${idList(s.claimHeld)} — ${cmd} doctor reports; doctor fix releases provably-dead holders`)
+  for (const b of s.blocked ?? []) {
+    out.push(`blocked: ${b.id} waits on ${b.by.join(", ")} — ships, abandons or removes of those unblock it (or edit its blockedBy)`)
+  }
   // A fully-shipped set is actionable too: the tracker never leaves draft/ on
   // its own, and "close it by hand" was documented but never surfaced anywhere.
   for (const e of s.epics ?? []) {

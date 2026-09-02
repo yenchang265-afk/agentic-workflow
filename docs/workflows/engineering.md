@@ -167,6 +167,17 @@ rebuild) into `status`, the terminal report on both hosts, and the hub's
 review cards, so the decision to approve isn't made blind to what actually
 changed.
 
+Two more mechanisms guard the unattended stretch. **`blockedBy`**: a task
+whose frontmatter lists ids still on the board (any non-terminal folder) is
+skipped by every claim walk — no marker taken, the sibling behind it claimed
+instead — and unblocks the moment those ids complete, are abandoned, or are
+removed, so a dangling id never wedges it; only claims are gated, and `status`
+names what waits on what. **The check rerun**: a discovered check that exits
+non-zero is run once more before it is believed (never an `error`, never a
+`pass`); a fail-then-pass is reported to VERIFY as FLAKY with the failing
+run's output, carried to the ship gate as a non-blocking suggestion, and floors
+nothing, while a fail-then-fail floors the stage as before. See designs 49–50.
+
 ### Slice sets (`new` on a heavy idea)
 
 `new <idea>` can split a large idea into sibling child drafts plus a

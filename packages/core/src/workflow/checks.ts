@@ -35,6 +35,15 @@ export const DEFAULT_CHECK_TIMEOUT_MS = 10 * 60_000
 export const CHECKS_AXIS = "checks"
 
 /**
+ * How many times a check that FAILED is run again before its failure is
+ * believed (design 50). One: a fail-then-pass is the flake signature, and a
+ * second failure is confirmation enough — a third run would only be paid by
+ * genuinely red suites, which are the common case. `error` and `pass` are never
+ * rerun: a missing runner does not come back, and a green check proved itself.
+ */
+export const CHECK_RERUNS = 1
+
+/**
  * `pass` ⇒ exit 0. `error` ⇒ the check could not run at all. `fail` ⇒ it ran and
  * said no.
  */
@@ -52,6 +61,15 @@ export interface CheckResult {
    * summary is at the end.
    */
   readonly output: string
+  /** Extra runs taken after a first failure (at most `CHECK_RERUNS`). Absent when the first run settled it. */
+  readonly reruns?: number
+  /**
+   * The first run failed and a rerun passed. `outcome` is the rerun's PASS —
+   * the stage is not floored — but `output` keeps the FIRST run's failing tail,
+   * and `checkAxis` turns the flake into a non-blocking `suggestion` finding so
+   * it reaches the ship gate instead of vanishing behind a green line.
+   */
+  readonly flaky?: true
 }
 
 /**
@@ -157,15 +175,36 @@ export const runChecks = async (
     // A check's own cap wins over the stage-wide one. Without it the stage cap is
     // set by the slowest check, and every faster one is effectively unbounded.
     const cap = def.timeoutMinutes ? def.timeoutMinutes * 60_000 : timeoutMs
-    await onCheck?.(def, cap)
-    const out = await awaitCheck($`${{ raw: def.command }}`.cwd(cwd).quiet().nothrow(), cap)
-    const text = `${out.stdout.toString()}${out.stderr.toString()}`.trim()
+    const once = async (): Promise<{ exitCode: number; outcome: CheckOutcome; output: string }> => {
+      // Fired per RUN, not per check: a rerun is another full cap on a stamp
+      // that has already aged by one cap, which is exactly the gap the
+      // restamp exists to close.
+      await onCheck?.(def, cap)
+      const out = await awaitCheck($`${{ raw: def.command }}`.cwd(cwd).quiet().nothrow(), cap)
+      const text = `${out.stdout.toString()}${out.stderr.toString()}`.trim()
+      return { exitCode: out.exitCode, outcome: classifyExit(out.exitCode), output: tail(text, CHECK_OUTPUT_MAX) }
+    }
+    const first = await once()
+    // Confirm before blaming: a `fail` — and only a `fail` — is run once more.
+    // Without this a flaky suite sent the loop back to BUILD with a `critical`
+    // finding for a defect that does not exist, and BUILD then "fixed" it.
+    let last = first
+    let reruns = 0
+    while (last.outcome === "fail" && reruns < CHECK_RERUNS) {
+      last = await once()
+      reruns++
+    }
+    const flaky = reruns > 0 && last.outcome === "pass"
     results.push({
       name: def.name,
       command: def.command,
-      exitCode: out.exitCode,
-      outcome: classifyExit(out.exitCode),
-      output: tail(text, CHECK_OUTPUT_MAX),
+      exitCode: last.exitCode,
+      outcome: last.outcome,
+      // A flake keeps the FAILING run's tail — that is the evidence a human
+      // wants; the passing run printed nothing worth reading.
+      output: flaky ? first.output : last.output,
+      ...(reruns ? { reruns } : {}),
+      ...(flaky ? { flaky: true as const } : {}),
     })
   }
   return results
@@ -180,7 +219,11 @@ export const runChecks = async (
  * crash-evidence arm treats as safe to take over. Pure.
  */
 export const checksBudgetMs = (defs: readonly CheckDef[], timeoutMs: number = DEFAULT_CHECK_TIMEOUT_MS): number =>
-  defs.reduce((sum, def) => sum + (def.timeoutMinutes ? def.timeoutMinutes * 60_000 : timeoutMs), 0)
+  // Every check may legally run 1 + CHECK_RERUNS times; the budget is an UPPER
+  // bound on the phase, so it counts the reruns whether or not they happen.
+  // Advertising the single-run sum would let a rerun phase outlive its own
+  // deadline and read as a dead run to `taskDrivenByStageMarker`.
+  defs.reduce((sum, def) => sum + (def.timeoutMinutes ? def.timeoutMinutes * 60_000 : timeoutMs), 0) * (1 + CHECK_RERUNS)
 
 /** Whether any check came back non-green. Pure. */
 export const anyFailed = (results: readonly CheckResult[]): boolean => results.some((r) => r.outcome !== "pass")
@@ -190,10 +233,18 @@ export const anyFailed = (results: readonly CheckResult[]): boolean => results.s
  * output. Pre-rendered because `TemplateValue` has no arrays. Pure.
  */
 export const checksBlock = (results: readonly CheckResult[]): string => {
-  const lines = results.map((r) => `- ${r.name} (${r.command}) → ${r.outcome.toUpperCase()} (exit ${r.exitCode})`)
+  const lines = results.map(
+    (r) =>
+      `- ${r.name} (${r.command}) → ${r.outcome.toUpperCase()} (exit ${r.exitCode})` +
+      (r.flaky
+        ? " — FLAKY: the first run failed and a rerun passed; not a regression, but name it in your verdict"
+        : r.reruns
+          ? ` — failed ${1 + r.reruns} times running`
+          : ""),
+  )
   const outputs = results
-    .filter((r) => r.outcome !== "pass" && r.output)
-    .map((r) => `\n--- ${r.name} output ---\n${r.output}`)
+    .filter((r) => (r.outcome !== "pass" || r.flaky) && r.output)
+    .map((r) => `\n--- ${r.name} ${r.flaky ? "first-run (failing) output" : "output"} ---\n${r.output}`)
   return [...lines, ...outputs].join("\n")
 }
 
@@ -221,17 +272,27 @@ export const checkCommands = (results: readonly CheckResult[]): string[] => resu
  */
 export const checkAxis = (results: readonly CheckResult[]): AxisResult | null => {
   const bad = results.filter((r) => r.outcome !== "pass")
-  if (!bad.length) return null
+  const flaky = results.filter((r) => r.flaky)
+  if (!bad.length && !flaky.length) return null
   return {
     axis: CHECKS_AXIS,
-    verdict: bad.some((r) => r.outcome === "error") ? "ERROR" : "FAIL",
-    findings: bad.map((r) => ({
-      severity: "critical" as const,
-      detail:
-        `${r.name} exited ${r.exitCode} (${r.command})` +
-        (r.outcome === "error" ? " — the check could not run" : "") +
-        (r.output ? `\n${r.output}` : ""),
-    })),
+    // Flakes alone leave the axis a PASS: a `suggestion` is non-blocking, so the
+    // floor does not fire — but the finding rides `suggestionFindings` to the
+    // ship gate, where "this suite flaked" is a fact the human should weigh.
+    verdict: bad.some((r) => r.outcome === "error") ? "ERROR" : bad.length ? "FAIL" : "PASS",
+    findings: [
+      ...bad.map((r) => ({
+        severity: "critical" as const,
+        detail:
+          `${r.name} exited ${r.exitCode} (${r.command})` +
+          (r.outcome === "error" ? " — the check could not run" : r.reruns ? ` — failed ${1 + r.reruns} times running` : "") +
+          (r.output ? `\n${r.output}` : ""),
+      })),
+      ...flaky.map((r) => ({
+        severity: "suggestion" as const,
+        detail: `${r.name} (${r.command}) is FLAKY — failed once, passed on rerun` + (r.output ? `\n${r.output}` : ""),
+      })),
+    ],
   }
 }
 
