@@ -97,6 +97,7 @@ const task = (id: string, priority: number): Task => ({
   priority,
   acceptance: [],
   labels: [],
+  blockedBy: [],
   body: "",
   path: `/r/${TASKS}/queued/${id}.md`,
 })

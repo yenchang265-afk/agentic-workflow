@@ -128,14 +128,15 @@ const fakeShell = (
 
 const file = (
   id: string,
-  opts: { plan?: boolean; started?: boolean; claimed?: boolean; priority?: number } = {},
+  opts: { plan?: boolean; started?: boolean; claimed?: boolean; priority?: number; blockedBy?: readonly string[] } = {},
 ): FakeFile => {
   const plan = opts.plan ? `\n${PLAN_HEADING}\n\n1. Do the thing.\n` : ""
   const claimed = opts.claimed ? `\n> CLAIMED — loop starting [2026-01-01T00:00:00.000Z]\n` : ""
   const started = opts.started ? `\n> BUILD started (iteration 1) — 2026-01-01T00:00:00.000Z\n` : ""
+  const blocked = opts.blockedBy?.length ? `blockedBy:\n${opts.blockedBy.map((b) => `  - ${b}`).join("\n")}\n` : ""
   return {
     name: `${id}.md`,
-    content: `---\ntitle: ${id}\npriority: ${opts.priority ?? 2}\n---\n\nBody of ${id}.\n${plan}${claimed}${started}`,
+    content: `---\ntitle: ${id}\npriority: ${opts.priority ?? 2}\n${blocked}---\n\nBody of ${id}.\n${plan}${claimed}${started}`,
   }
 }
 
@@ -155,6 +156,48 @@ const source = (
     loaded: eng,
     isDriving: () => false,
   })
+
+// --- blockedBy (design 49): a claim skips a task while a blocker is still on the board ---
+
+test("a build-ready task blocked by an open sibling is skipped; the walk claims the sibling instead", async () => {
+  const shellLog: string[] = []
+  const src = source(
+    {
+      "in-progress": [file("stacked", { plan: true, priority: 0, blockedBy: ["base"] })],
+      queued: [file("base")],
+    },
+    new Set<string>(),
+    { shellLog },
+  )
+  const { item, skip } = await src.claimNext()
+  assert.equal(skip, null)
+  assert.equal(item?.id, "base", "the blocker is planned; the blocked task waits")
+  assert.ok(!shellLog.some((c) => c.startsWith("mkdir ") && c.includes("stacked")), "no claim marker is taken on a blocked task")
+})
+
+test("a blocker that completed, was abandoned, or never existed does not block", async () => {
+  const cases: Record<string, FakeFile[]>[] = [
+    { "in-progress": [file("stacked", { plan: true, blockedBy: ["base"] })], completed: [file("base")] },
+    { "in-progress": [file("stacked", { plan: true, blockedBy: ["base"] })], abandoned: [file("base")] },
+    { "in-progress": [file("stacked", { plan: true, blockedBy: ["never-written"] })] },
+  ]
+  for (const folders of cases) {
+    const { item } = await source(folders).claimNext()
+    assert.equal(item?.id, "stacked")
+  }
+})
+
+test("a fully blocked backlog says what waits on what, not merely 'nothing claimable'", async () => {
+  const src = source({
+    "in-progress": [file("stacked", { plan: true, blockedBy: ["base"] })],
+    "plan-review": [file("base", { plan: true })],
+    queued: [file("later", { blockedBy: ["base", "stacked"] })],
+  })
+  const { item, skip } = await src.claimNext()
+  assert.equal(item, null)
+  assert.match(skip?.message ?? "", /2 task\(s\) blocked by open work: stacked \(waits on base\), later \(waits on base, stacked\)/)
+  assert.equal(skip?.actionable, true)
+})
 
 test("claims build-ready in-progress work before queued plan work", async () => {
   const src = source({
@@ -433,7 +476,7 @@ test("a claim is handed out with the real-FS body, not the stale listing's", asy
 })
 
 test("taskGoal joins title and body", () => {
-  assert.equal(taskGoal({ id: "x", title: "T", priority: 1, acceptance: [], labels: [], body: "B", path: "/p" }), "T\n\nB")
+  assert.equal(taskGoal({ id: "x", title: "T", priority: 1, acceptance: [], labels: [], blockedBy: [], body: "B", path: "/p" }), "T\n\nB")
 })
 
 test("claimSkipReason precedence: held beats empty beats started", () => {

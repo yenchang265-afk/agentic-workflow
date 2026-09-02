@@ -3,7 +3,10 @@ import type { LoadedManifest } from "../manifest/schema.js"
 import { resolveClaimPredicate } from "../manifest/registry.js"
 import type { WorkflowState } from "../workflow/state.js"
 import type { Task } from "../task/schema.js"
+import type { TaskStatus } from "../task/statuses.js"
 import {
+  ACTIVE_STATUSES,
+  type BlockedTask,
   claimFirst,
   confirmedStrayPlanRequestIds,
   extractPlan,
@@ -11,6 +14,8 @@ import {
   isRecoverable,
   isReleasableClaim,
   listByStatus,
+  openBlockers,
+  openTaskIds,
   releaseClaim,
   replanFor,
   selectOrder,
@@ -82,6 +87,10 @@ export const claimSkipReason = (
   // quoting the bare constant promised a 15m auto-release the sweep would not
   // deliver for another hour.
   staleMinutes: number = STALE_CLAIM_MINUTES,
+  // Tasks the walk skipped because a `blockedBy` id is still on the board
+  // (design 49). Named so an idle watcher over a fully-blocked backlog says
+  // WHY, not "nothing claimable".
+  blocked: readonly BlockedTask[] = [],
 ): ClaimSkipReason => {
   if (heldIds.length) {
     return {
@@ -99,6 +108,15 @@ export const claimSkipReason = (
       message:
         `watch: 0 claimable — ${startedIds.length} in-progress task(s) already started: ` +
         `${startedIds.join(", ")} (run /agentic-workflow:engineering recover <id>)`,
+      actionable: true,
+    }
+  }
+  if (claimableCount === 0 && blocked.length) {
+    return {
+      message:
+        `watch: 0 claimable — ${blocked.length} task(s) blocked by open work: ` +
+        blocked.map((b) => `${b.id} (waits on ${b.by.join(", ")})`).join(", ") +
+        " — ships, abandons or removes of the blockers unblock them",
       actionable: true,
     }
   }
@@ -223,10 +241,34 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
       let primaryTasks: readonly Task[] = []
       let primaryClaimable = 0
       let lastPoolCount = 0
+      const blocked: BlockedTask[] = []
+      // The open-id set `blockedBy` is judged against — listed LAZILY, only
+      // once some candidate declares a blocker, so a backlog that never uses
+      // the key pays no extra listings per tick.
+      let openIds: Set<string> | null = null
+      const openSet = async (): Promise<Set<string>> => {
+        if (openIds) return openIds
+        const byStatus: Partial<Record<TaskStatus, readonly Task[]>> = {}
+        for (const status of ACTIVE_STATUSES) byStatus[status] = await listByStatus(client, directory, tasksDir, status, log)
+        openIds = openTaskIds(byStatus)
+        return openIds
+      }
       for (const [i, pool] of pools.entries()) {
         const tasks = await listByStatus(client, directory, tasksDir, pool.status, log)
         const predicate = pool.claimPredicate ? resolveClaimPredicate(pool.claimPredicate) : null
-        const ordered = selectOrder(predicate ? tasks.filter(predicate) : tasks)
+        // A blocked task is skipped BEFORE the predicate and the ordering: it
+        // is not a candidate at all, so no claim marker is taken on it and a
+        // lower-priority sibling behind it is claimed instead.
+        let eligible: readonly Task[] = tasks
+        if (tasks.some((t) => t.blockedBy.length)) {
+          const open = await openSet()
+          eligible = tasks.filter((t) => {
+            const by = openBlockers(t, open)
+            if (by.length) blocked.push({ id: t.id, by })
+            return by.length === 0
+          })
+        }
+        const ordered = selectOrder(predicate ? eligible.filter(predicate) : eligible)
         // Read per pool, not once for the walk: each status folder owns its own
         // `.requests/`, so a request for a queued task can never hoist that id
         // once it has moved on to a higher-priority pool. Usually one `ls -1` of
@@ -287,7 +329,7 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
       const started = primaryTasks.filter(isRecoverable).map((t) => t.id)
       return {
         item: null,
-        skip: claimSkipReason(primaryTasks.length, primaryClaimable, lastPoolCount, started, heldIds, deps.staleMinutes),
+        skip: claimSkipReason(primaryTasks.length, primaryClaimable, lastPoolCount, started, heldIds, deps.staleMinutes, blocked),
       }
     },
 

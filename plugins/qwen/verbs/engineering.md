@@ -54,8 +54,11 @@
        them by `priority` (0, 1, 2 …). A worktree branches from `origin/main`
        and can't see an unmerged sibling's code, so the human approves and
        ships stacked children one at a time in that order — `priority` orders
-       claims but does **not** block, so this human sequencing is the
-       dependency gate.
+       claims but does **not** block — so give each stacked child a
+       `blockedBy: [<the sibling it builds on>]` frontmatter list: the loop
+       skips a task while any listed id is still on the board (it unblocks once
+       that sibling ships, is abandoned, or is removed), and `status` names
+       what waits on what. Independent slices carry no `blockedBy`.
   4. Spawn the **`workflow-task-author`** subagent (`agent` tool) once with the
      confirmed set to write the draft file(s) — one draft, or N child drafts
      plus one epic tracking file. No plan is written now — the loop's PLAN

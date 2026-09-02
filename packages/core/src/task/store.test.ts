@@ -28,7 +28,10 @@ import {
   unaddressedRejectionCount,
   findByIdIn,
   hasPlan,
+  isBlocked,
   isClaimable,
+  openBlockers,
+  openTaskIds,
   isOrphanedClaim,
   isOrphanedStartedClaim,
   isRecoverable,
@@ -100,6 +103,7 @@ const task = (id: string, priority: number, body = ""): Task => ({
   priority,
   acceptance: [],
   labels: [],
+  blockedBy: [],
   body,
   path: `/r/docs/tasks/in-progress/${id}.md`,
 })
@@ -728,6 +732,58 @@ test("audit-suffixed build markers still satisfy the claim/interrupt greps", () 
 
 const empty = () =>
   Object.fromEntries(STATUSES.map((s) => [s, []])) as unknown as Record<TaskStatus, ReturnType<typeof task>[]>
+
+// --- blockedBy (design 49) ---
+
+test("openBlockers keeps only blockers still on the board; a dangling or self id never blocks", () => {
+  const open = new Set(["a", "b", "me"])
+  const t = { ...task("me", 0), blockedBy: ["a", "gone", "me", "b"] }
+  assert.deepEqual(openBlockers(t, open), ["a", "b"])
+  assert.equal(isBlocked(t, open), true)
+  assert.equal(isBlocked({ ...task("me", 0), blockedBy: ["gone"] }, open), false)
+  assert.equal(isBlocked(task("me", 0), open), false)
+})
+
+test("openTaskIds spans every active status and none of the terminal ones", () => {
+  const byStatus = empty()
+  byStatus["draft"] = [task("d", 0)]
+  byStatus["in-review"] = [task("r", 0)]
+  byStatus["completed"] = [task("c", 0)]
+  byStatus["abandoned"] = [task("x", 0)]
+  assert.deepEqual([...openTaskIds(byStatus)].sort(), ["d", "r"])
+})
+
+test("summarizeBacklog lists blocked tasks with their open blockers and keeps them out of the claimable lists", () => {
+  const byStatus = empty()
+  byStatus["queued"] = [task("free", 0, "idea"), { ...task("stacked", 1, "idea"), blockedBy: ["base", "shipped"] }]
+  byStatus["in-progress"] = [
+    { ...task("base", 0, `${PLAN_HEADING}\n\n1. Go.`), blockedBy: [] },
+    { ...task("ready-but-blocked", 0, `${PLAN_HEADING}\n\n1. Go.`), blockedBy: ["free"] },
+  ]
+  byStatus["completed"] = [task("shipped", 0)]
+  const s = summarizeBacklog(byStatus)
+  assert.deepEqual(s.blocked, [
+    { id: "stacked", by: ["base"] },
+    { id: "ready-but-blocked", by: ["free"] },
+  ])
+  assert.deepEqual(s.awaitingPlan, ["free"])
+  assert.deepEqual(s.claimable, ["base"])
+  const lines = nextActions(s, "/aw")
+  assert.ok(lines.some((l) => l === "blocked: stacked waits on base — ships, abandons or removes of those unblock it (or edit its blockedBy)"), lines.join("\n"))
+  // Nothing blocked: the key is omitted and no line renders.
+  const none = summarizeBacklog(empty())
+  assert.equal("blocked" in none, false)
+})
+
+test("blockedBy round-trips through serializeTask/parseTask and is omitted when empty", () => {
+  const text = serializeTask({ title: "T", blockedBy: ["a1b2-base", "c3d4-other"], acceptance: [] })
+  assert.match(text, /blockedBy:\n  - a1b2-base\n  - c3d4-other\n/)
+  const parsed = parseTask("x.md", text, "/p/x.md")
+  assert.deepEqual(parsed.blockedBy, ["a1b2-base", "c3d4-other"])
+  assert.deepEqual(taskToInput(parsed).blockedBy, ["a1b2-base", "c3d4-other"])
+  assert.doesNotMatch(serializeTask({ title: "T", acceptance: [] }), /blockedBy/)
+  assert.deepEqual(parseTask("y.md", "---\ntitle: T\n---\n", "/p/y.md").blockedBy, [])
+})
 
 test("summarizeBacklog counts every status and empty flag lists", () => {
   const s = summarizeBacklog(empty())

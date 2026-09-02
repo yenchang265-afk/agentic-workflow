@@ -214,6 +214,22 @@ test("the verdict-block seam survives saveState → loadState; a legacy snapshot
   assert.equal(loaded?.feedback, undefined)
 })
 
+test("a check result's rerun facts survive the snapshot — a resumed run must not render a flake as a plain PASS", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "agentic-workflow-persist-"))
+  const withChecks: WorkflowState = {
+    ...sampleState,
+    checks: {
+      verify: [
+        { name: "tests", command: "npm test", exitCode: 0, outcome: "pass", output: "flaked", reruns: 1, flaky: true },
+        { name: "lint", command: "npm run lint", exitCode: 1, outcome: "fail", output: "2 errors", reruns: 1 },
+        { name: "types", command: "tsc", exitCode: 0, outcome: "pass", output: "" },
+      ],
+    },
+  }
+  await saveState(fakeShell(), dir, "docs/tasks", "add-rl", withChecks)
+  assert.deepEqual(await loadState(fakeClient(dir), dir, "docs/tasks", "add-rl"), withChecks)
+})
+
 test("the attempts ledger survives saveState → loadState", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "agentic-workflow-persist-"))
   // A recovered run must not forget what earlier iterations already tried, or it
