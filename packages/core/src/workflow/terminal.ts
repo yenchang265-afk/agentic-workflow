@@ -594,14 +594,32 @@ const NOTIFY_MESSAGE_MAX = 1000
  * reach the shell as syntax.
  */
 const notifyTerminal = async (ctx: TerminalCtx, report: TerminalReport): Promise<void> => {
+  if (report.kind === "park-free") return
+  const id = "taskId" in report ? (report.taskId ?? "") : ""
+  await notifyLoopEvent(ctx, { event: report.kind, kind: ctx.state.kind ?? "engineering", taskId: id, message: report.message })
+}
+
+/** An event `notifyCommand` may announce: the four terminal ones, or a stage fire (design 54, opt-in). */
+export type NotifyEvent = "park" | "done" | "stop" | "error" | "stage"
+
+/**
+ * Fire `notifyCommand` for one loop event — the choke point `notifyTerminal`
+ * always was, exported so the hosts can announce a STAGE fire through the
+ * same bounded, best-effort, escaped path (design 54). `stage` is opt-in: it
+ * fires only when `notifyEvents` names it, where the terminal events fire by
+ * default — a run pings four or more times per stage under it, and a notifier
+ * wired for "the gate is waiting" must not start buzzing per stage unasked.
+ */
+export const notifyLoopEvent = async (
+  ctx: Pick<TerminalCtx, "$" | "config" | "log">,
+  args: { readonly event: NotifyEvent; readonly kind: string; readonly taskId: string; readonly message: string },
+): Promise<void> => {
   const command = ctx.config.notifyCommand
   if (!command) return
-  if (report.kind === "park-free") return
-  const event = report.kind
-  if (ctx.config.notifyEvents && !ctx.config.notifyEvents.includes(event)) return
-  const id = "taskId" in report ? (report.taskId ?? "") : ""
-  const message = report.message.replace(/\s+/g, " ").trim().slice(0, NOTIFY_MESSAGE_MAX)
-  const kind = ctx.state.kind ?? "engineering"
+  const { event, kind } = args
+  if (ctx.config.notifyEvents ? !ctx.config.notifyEvents.includes(event) : event === "stage") return
+  const id = args.taskId
+  const message = args.message.replace(/\s+/g, " ").trim().slice(0, NOTIFY_MESSAGE_MAX)
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     const run = ctx.$`env ${`AW_EVENT=${event}`} ${`AW_KIND=${kind}`} ${`AW_TASK=${id}`} ${`AW_MESSAGE=${message}`} sh -c ${command}`

@@ -337,7 +337,11 @@ watch 租約（每個 clone 一個 watch 模式的行程，橫跨所有類型）
    ```
    立即在這一輪恢復——重新認領任務，並回到其狀態快照停止時的確切階段
    （會先重新讀取任務檔案，以防你在卡住期間編輯過它），然後繼續
-   BUILD → VERIFY → REVIEW。
+   BUILD → VERIFY → REVIEW。板子上恰好只有一個中斷任務時，不帶 id 的 `recover`
+   就恢復它；`status` 在 body 這麼說或狀態快照點名時都會列為中斷，所以死在 VERIFY
+   或 REVIEW 的崩潰也看得到（設計 53）。迴圈執行期間，`status` 也會回報迭代與上限、
+   階段期限；`notifyEvents: ["stage"]` 讓 `notifyCommand` 在每次階段觸發時通知你；
+   OpenCode 在階段用掉牆鐘上限的 80% 時警告一次（設計 54）。
 
 ## 延伸閱讀
 

@@ -7,6 +7,7 @@ import {
   type TaskStatus,
 } from "@agentic-workflow/core/task/store"
 import { listPlanRequestIds } from "@agentic-workflow/core/task/plan-request"
+import { listSnapshotIds } from "@agentic-workflow/core/workflow/persist"
 import { readText } from "../io.js"
 import { isPaired, shortIdOf, type Task } from "@agentic-workflow/core/task/schema"
 import { auditBacklog, hasAnomalies } from "@agentic-workflow/core/task/audit"
@@ -87,7 +88,7 @@ export const getBacklog = async (deps: HubDeps, req: ParsedRequest): Promise<Jso
   // backlog-root-wide and runs for every backlog kind.
   const summary =
     kind === "engineering"
-      ? summarizeBacklog(tasks as Readonly<Record<TaskStatus, readonly Task[]>>, claimedIds)
+      ? summarizeBacklog(tasks as Readonly<Record<TaskStatus, readonly Task[]>>, claimedIds, await listSnapshotIds(deps.client, deps.directory, deps.tasksDir))
       : null
   const anomalies = await auditBacklog(deps.client, deps.directory, deps.tasksDir, auditStatuses(deps.boards))
 

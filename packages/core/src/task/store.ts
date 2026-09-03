@@ -730,11 +730,18 @@ export interface EpicProgress {
 export const summarizeBacklog = (
   byStatus: Readonly<Record<TaskStatus, readonly Task[]>>,
   claimedIds: readonly string[] = [],
+  // Ids with a state snapshot on disk (`listSnapshotIds`, design 53). The
+  // body's BUILD markers only ever witnessed a BUILD crash; a run that died
+  // at VERIFY or REVIEW left a finished BUILD pair and read as "not
+  // interrupted" — while its snapshot, the exact-stage oracle `recover` resumes
+  // from, sat unlisted. Optional so every caller that predates it is unchanged.
+  snapshotIds: readonly string[] = [],
 ): BacklogSummary => {
   const counts = Object.fromEntries(STATUSES.map((s) => [s, byStatus[s]?.length ?? 0])) as Record<TaskStatus, number>
   const ids = (tasks: readonly Task[]): string[] => tasks.map((t) => t.id)
   const inProgress = byStatus["in-progress"] ?? []
   const held = new Set(claimedIds)
+  const snapshots = new Set(snapshotIds)
   const epics = epicProgress(byStatus)
   return {
     counts,
@@ -743,7 +750,10 @@ export const summarizeBacklog = (
     gated: ids((byStatus["plan-review"] ?? []).filter(hasPlan)),
     claimable: ids(inProgress.filter((t) => isClaimable(t) && !held.has(t.id))),
     claimHeld: ids(inProgress.filter((t) => isClaimable(t) && held.has(t.id))),
-    interrupted: ids(inProgress.filter(wasInterrupted)),
+    // A snapshot beside a body that was never started is a stale leftover, not
+    // an interruption — `recover` refuses a claimable task, so listing it here
+    // would name a verb that cannot act.
+    interrupted: ids(inProgress.filter((t) => wasInterrupted(t) || (snapshots.has(t.id) && !isClaimable(t)))),
     awaitingReview: ids(byStatus["in-review"] ?? []),
     ...(epics.length ? { epics } : {}),
   }
@@ -807,6 +817,13 @@ export const nextActions = (s: BacklogSummary, cmd: string): readonly string[] =
   }
   return out
 }
+
+/**
+ * The one task an id-less `recover` may mean, or null — exactly one interrupted
+ * task on the board (design 53). Two or more is an ambiguity the host lists;
+ * zero is usage. Pure.
+ */
+export const soleInterrupted = (s: BacklogSummary): string | null => (s.interrupted.length === 1 ? (s.interrupted[0] ?? null) : null)
 
 /** The statuses a task is still live in — everything but completed/abandoned. */
 export const ACTIVE_STATUSES: readonly TaskStatus[] = ["draft", "queued", "plan-review", "in-progress", "in-review"]

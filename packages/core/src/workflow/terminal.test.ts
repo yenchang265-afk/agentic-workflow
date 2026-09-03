@@ -7,7 +7,7 @@ import { PLAN_HEADING } from "../task/store.js"
 import { serializeTask } from "../task/schema.js"
 import type { Action, WorkflowState } from "./state.js"
 import type { Outcome } from "./metrics.js"
-import { runTerminal, type TerminalCtx } from "./terminal.js"
+import { notifyLoopEvent, runTerminal, type TerminalCtx } from "./terminal.js"
 
 /**
  * The shared terminal handler, driven against a tiny in-memory backlog (the same
@@ -137,6 +137,25 @@ test("no notifyCommand means no notifier invocation at all", async () => {
   const { ctx, log } = makeCtx({ "queued/t.md": body(true) }, planState())
   await runTerminal(ctx, park)
   assert.ok(!log.some((c) => c.startsWith("env AW_EVENT=")))
+})
+
+test("a stage event fires the notifier only when notifyEvents opts in; terminal events fire by default (design 54)", async () => {
+  const fire = async (notifyEvents?: ("park" | "done" | "stop" | "error" | "stage")[]) => {
+    const { ctx, log } = makeCtx({ "queued/t.md": body(true) }, planState(), { config: { notifyCommand: "notify-send test", ...(notifyEvents ? { notifyEvents } : {}) } })
+    await notifyLoopEvent(ctx, { event: "stage", kind: "engineering", taskId: "t", message: "engineering: firing verify (iteration 2)" })
+    return log.find((c) => c.startsWith("env AW_EVENT=stage"))
+  }
+  assert.equal(await fire(), undefined, "unset notifyEvents means the terminal events only — a stage ping is opt-in")
+  assert.equal(await fire(["park", "done"]), undefined)
+  const pinged = await fire(["stage"])
+  assert.ok(pinged, "opted in: the stage event runs the notifier")
+  assert.match(pinged, /AW_KIND=engineering/)
+  assert.match(pinged, /AW_TASK=t/)
+  assert.match(pinged, /AW_MESSAGE=engineering: firing verify \(iteration 2\)/)
+  // The terminal events keep firing by default beside an opted-in stage.
+  const { ctx, log } = makeCtx({ "queued/t.md": body(true) }, planState(), { config: { notifyCommand: "notify-send test" } })
+  await runTerminal(ctx, park)
+  assert.ok(log.some((c) => c.startsWith("env AW_EVENT=park")))
 })
 
 test("a park veto still notifies as an error event, and a failing notifier changes nothing", async () => {

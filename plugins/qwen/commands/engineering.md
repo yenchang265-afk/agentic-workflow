@@ -1,6 +1,6 @@
 ---
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] [--all] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | recover <id> | kinds | doctor [fix|config] | init | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] [--all] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | recover [id] | kinds | doctor [fix|config] | init | stop | status
 ---
 
 You are about to work the **engineering agentic loop** (typed as
@@ -32,7 +32,7 @@ on and who does the work; it is deliberately not a procedure.
 - **`remove <id>`** — hard-delete a task from the backlog. **The hook's, before your turn.** Destructive.
 - **`plan <id>`** — run PLAN on one approved task and park the plan for the gate. **Yours.**
 - **`claim [id]`** — drive the next plan-approved task, or with an id that one: build-ready work through BUILD → VERIFY → REVIEW, else one to plan. **Yours.**
-- **`recover <id>`** — resume a run that stopped early. **Yours.**
+- **`recover [id]`** — resume a run that stopped early (id optional when exactly one is interrupted). **Yours.**
 - **`stop`** (alias: `abort`) — abort the active loop. **Yours.**
 - **`status`** (or bare) — the active loop plus the backlog roll-up. **Yours.**
 - **`kinds`** — the workflow kinds and which are enabled. **Yours.**

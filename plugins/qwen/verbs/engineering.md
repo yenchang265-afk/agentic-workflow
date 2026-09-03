@@ -296,7 +296,9 @@
   substrate.
 <!-- /aw:verb claim -->
 <!-- aw:verb recover -->
-- **`recover <id>`** — call `mcp__agentic-workflow__workflow_recover({id})` and
+- **`recover [id]`** — call `mcp__agentic-workflow__workflow_recover({id})` (id
+  optional: with none, it resumes the ONE interrupted task on the board and
+  refuses with a list when there are several) and
   resume driving from the action it returns: `workflow_stage`, then spawn the
   subagent it names with the `agent` tool. If it refuses because
   the claim's holder may still be alive, report its reason as given — the wait

@@ -11,7 +11,7 @@ import { STALE_CLAIM_MINUTES, staleClaimMinutes } from "@agentic-workflow/core/c
 import { machineIdSync } from "@agentic-workflow/core/liveness"
 import { DEFAULT_CONFIG, bashAllowlistPrefixes, parseGateOptions, stageBashGlobs, loadConfig } from "@agentic-workflow/core/config"
 import { SHIP_PUBLISH_MODES, type Action, type Config, type ShipPublish, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
-import { advance, composePrompt, composePromptWithStats, firstStep, withCheckResults } from "@agentic-workflow/core/workflow/engine"
+import { advance, composePrompt, composePromptWithStats, firstStep, iterationCap, withCheckResults } from "@agentic-workflow/core/workflow/engine"
 import { checkCommands, checksBudgetMs, finalizeCheckRecord, runChecks } from "@agentic-workflow/core/workflow/checks"
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
 import type { AdoGateway } from "@agentic-workflow/core/source/ado-gateway"
@@ -99,8 +99,8 @@ import {
   type GateCtx,
   type GateResult,
 } from "@agentic-workflow/core/workflow/gate"
-import { runTerminal as coreRunTerminal, type TerminalCtx, type TerminalReport } from "@agentic-workflow/core/workflow/terminal"
-import { loadState, saveState } from "@agentic-workflow/core/workflow/persist"
+import { notifyLoopEvent, runTerminal as coreRunTerminal, type TerminalCtx, type TerminalReport } from "@agentic-workflow/core/workflow/terminal"
+import { listSnapshotIds, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
 import { type Task } from "@agentic-workflow/core/task/schema"
 import {
   appendNote,
@@ -116,6 +116,7 @@ import {
   confirmedStrayPlanRequestIds,
   findByIdIn,
   isClaimable,
+  soleInterrupted,
   isOrphanedPlanClaim,
   isOrphanedStartedClaim,
   isRecoverable,
@@ -2189,6 +2190,13 @@ server.registerTool(
 
     if (action.kind === "fire") {
       await snapshot()
+      // One ping per stage fire (design 54) — opt-in via `notifyEvents: ["stage"]`;
+      // bounded and best-effort like every notifier call, so it cannot delay or
+      // fail the transition it announces.
+      await notifyLoopEvent(
+        { $: sh, config, log },
+        { event: "stage", kind: activeManifest().manifest.kind, taskId: state.task?.id ?? "", message: `${activeManifest().manifest.kind}: firing ${action.stage} (iteration ${state.iteration + 1})` },
+      )
       const nextDef = stageDef(activeManifest().manifest, action.stage)
       const nextModel = stageModel(activeManifest().manifest.kind, nextDef)
       const nextPasses = passLabels(activeManifest().manifest.kind, nextDef)
@@ -2523,7 +2531,9 @@ server.registerTool(
     // The claim markers are what split body-claimable tasks into claimable vs
     // claim-held; without them every held task misreports as "ready" here (the
     // OpenCode host has always passed them — this one silently didn't).
-    const summary = summarizeBacklog(byStatus, await listClaimIds(sh, directory, config.tasksDir))
+    // Snapshots are the exact-stage oracle `recover` resumes from; without them
+    // a VERIFY/REVIEW crash (BUILD pair complete) read as not interrupted here.
+    const summary = summarizeBacklog(byStatus, await listClaimIds(sh, directory, config.tasksDir), await listSnapshotIds(fsClient, directory, config.tasksDir))
     const hints = nextActions(summary, "/agentic-workflow:engineering")
     const anomalies = await auditBacklog(fsClient, directory, config.tasksDir)
     const pm = config.projectManagement
@@ -2535,7 +2545,18 @@ server.registerTool(
     // filtered by pid so the loop is not reported twice.
     const elsewhere = (await liveStageMarkers(sh, directory, config.tasksDir)).filter((m) => m.pid !== process.pid)
     return ok({
-      active: active ? { stage: active.stage, iteration: active.iteration + 1, task: active.task?.id ?? active.goal } : null,
+      // The loop's own budget and clock (design 54): the iteration cap it is
+      // counting toward and how long the stage in flight has left — facts this
+      // process holds and used to report only for loops driven ELSEWHERE.
+      active: active
+        ? {
+            stage: active.stage,
+            iteration: active.iteration + 1,
+            maxIterations: iterationCap(activeManifest().manifest, config),
+            ...(stageDeadline !== null ? { stageDeadlineInMinutes: Math.max(0, Math.ceil((stageDeadline - Date.now()) / 60_000)) } : {}),
+            task: active.task?.id ?? active.goal,
+          }
+        : null,
       ...(elsewhere.length
         ? {
             drivenElsewhere: elsewhere.map(
@@ -3074,12 +3095,29 @@ server.registerTool(
   "workflow_recover",
   {
     description:
-      "Resume an interrupted in-progress task from its state snapshot (exact stage) or, failing that, from its persisted plan at BUILD. Refuses never-started tasks (use workflow_start/workflow_claim) and planless ones (re-plan first). Returns the next action + prompt.",
-    inputSchema: { id: z.string() },
+      "Resume an interrupted in-progress task from its state snapshot (exact stage) or, failing that, from its persisted plan at BUILD. Refuses never-started tasks (use workflow_start/workflow_claim) and planless ones (re-plan first). Returns the next action + prompt. With no id, resumes the ONE interrupted task on the board; several is an ambiguity it lists.",
+    inputSchema: { id: z.string().optional() },
   },
-  async ({ id }) => {
+  async ({ id: given }) => {
     await loadCfg()
     if (active) return fail(`A loop is already driving "${workflowId(active)}" — finish or workflow_stop it first.`)
+    let id = given ?? ""
+    if (!id) {
+      // Id-less form (design 53): exactly one interrupted task is unambiguous;
+      // the same oracle `workflow_status` reports (BUILD markers + snapshots).
+      const byStatus = {} as Record<TaskStatus, Task[]>
+      for (const s of STATUSES) byStatus[s] = await listByStatus(fsClient, directory, config.tasksDir, s, log)
+      const summary = summarizeBacklog(byStatus, await listClaimIds(sh, directory, config.tasksDir), await listSnapshotIds(fsClient, directory, config.tasksDir))
+      const sole = soleInterrupted(summary)
+      if (!sole) {
+        return fail(
+          summary.interrupted.length
+            ? `Several interrupted tasks — name one: ${summary.interrupted.join(", ")}.`
+            : "No interrupted task on the board — nothing to recover (workflow_status lists what is actionable).",
+        )
+      }
+      id = sole
+    }
     // Accept the short-hash handle, same as workflow_start and the gate tools.
     const resolved = await resolveTaskIdAnywhere(sh, directory, config.tasksDir, id, log)
     if (resolved && "ambiguous" in resolved) {

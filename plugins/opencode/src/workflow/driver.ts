@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { writeFileAtomic } from "@agentic-workflow/core/fsatomic"
 import { type Task } from "@agentic-workflow/core/task/schema"
-import { advance, composePrompt, firstStep, withCheckResults } from "@agentic-workflow/core/workflow/engine"
+import { advance, composePrompt, firstStep, iterationCap, withCheckResults } from "@agentic-workflow/core/workflow/engine"
 import {
   clearOpencodeStageMarker,
   liveStageMarkers,
@@ -50,6 +50,7 @@ import {
   findByIdIn,
   hasPlan,
   isClaimable,
+  soleInterrupted,
   isOrphanedPlanClaim,
   isOrphanedStartedClaim,
   isRecoverable,
@@ -92,9 +93,9 @@ import {
 } from "@agentic-workflow/core/workflow/git"
 import type { AdoGateway } from "@agentic-workflow/core/source/ado-gateway"
 import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
-import { clearState, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
+import { clearState, listSnapshotIds, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
 import { abandonTask, approveAny, approvePlan, planCaveats, rejectAny, removeTask, retaskTask, type GateCandidate, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
-import { runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
+import { notifyLoopEvent, runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
 import {
@@ -1452,6 +1453,9 @@ export const deriveActivity = (
   return { tools, ...(files.size ? { files: [...files].sort() } : {}) }
 }
 
+/** How far into a stage's wall-clock cap the near-deadline warning fires (design 54). */
+const NEAR_DEADLINE_FRACTION = 0.8
+
 const runStage = async (
   client: Client,
   sessionID: string,
@@ -1459,12 +1463,18 @@ const runStage = async (
   args: string,
   timeoutMinutes: number,
   model?: string,
+  // Fired once at `NEAR_DEADLINE_FRACTION` of the cap while the stage is still
+  // running (design 54): the only warning a human gets before a stage times
+  // out and the run ERRORs. Never awaited — a slow log must not hold the stage.
+  onNearDeadline?: (elapsedMinutes: number) => void,
 ): Promise<{ text: string; usage?: StageUsage; activity?: { tools: readonly StageToolUsage[]; files?: readonly string[] } }> => {
   const command = client.session.command({
     path: { id: sessionID },
     body: { command: stage, arguments: args, ...(model ? { model } : {}) },
   })
   let timer: ReturnType<typeof setTimeout> | undefined
+  const warnAfterMs = timeoutMinutes * 60_000 * NEAR_DEADLINE_FRACTION
+  const warnTimer = onNearDeadline ? setTimeout(() => onNearDeadline(Math.round(warnAfterMs / 60_000)), warnAfterMs) : undefined
   let timedOut = false
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
@@ -1532,6 +1542,7 @@ const runStage = async (
     throw err
   } finally {
     clearTimeout(timer)
+    clearTimeout(warnTimer)
   }
 }
 
@@ -1762,6 +1773,9 @@ export const runStagePasses = async (
         passArgs,
         timeoutMinutes,
         model,
+        (elapsed) => {
+          void deps.log("warn", `loop: ${stage} has been running ${elapsed}m of its ${timeoutMinutes}m cap — it times out (and the run ERRORs) at ${timeoutMinutes}m`)
+        },
       )
       const ms = Date.now() - t0
       const stamp = new Date().toISOString()
@@ -2440,6 +2454,15 @@ const driveChain = async (
     // call up there stays: `step.state` is legitimately replaced by the isolation
     // and check-command recomposition above it, and this one cannot know that yet.
     setWorkflow(sessionID, step.state)
+    // One ping per stage fire (design 54) — opt-in via `notifyEvents: ["stage"]`;
+    // bounded and best-effort like every notifier call, so it cannot delay or
+    // fail the transition it announces.
+    if (step.action.kind === "fire") {
+      await notifyLoopEvent(
+        { $: deps.$, config, log: deps.log },
+        { event: "stage", kind: loaded.manifest.kind, taskId: step.state.task?.id ?? "", message: `${loaded.manifest.kind}: firing ${step.action.stage} (iteration ${step.state.iteration + 1})` },
+      )
+    }
     // And publish it to DISK at the same point, for the same reason. The
     // snapshot is `recover`'s only oracle (`loadState` resumes at `snap.stage`,
     // and an ESC deliberately KEEPS it), but the only write used to be the one
@@ -2637,7 +2660,10 @@ const backlogSummary = async (deps: Deps, config: Config) => {
     byStatus[status] = await listByStatus(deps.client, deps.directory, config.tasksDir, status, deps.log)
   }
   const claimedIds = await listClaimIds(deps.$, deps.directory, config.tasksDir)
-  return summarizeBacklog(byStatus, claimedIds)
+  // Snapshots are the exact-stage oracle `recover` resumes from; without them
+  // a VERIFY/REVIEW crash (BUILD pair complete) read as not interrupted here.
+  const snapshotIds = await listSnapshotIds(deps.client, deps.directory, config.tasksDir)
+  return summarizeBacklog(byStatus, claimedIds, snapshotIds)
 }
 
 /**
@@ -2883,7 +2909,12 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
     // the one it fires itself) strands its BUILD holding the task's claim
     // marker, and a typed `plan <id>`/`claim` waits for the human's NEXT message.
     // A watcher is deliberately not enrolled — its own timer is the re-kick.
-    if (work || oneShotClaim) deferIdle(deps.directory, sessionID)
+    if (work || oneShotClaim) {
+      deferIdle(deps.directory, sessionID)
+      // Say so (design 54): a typed `plan`/`claim` that goes quiet here used to
+      // look like a swallowed command, and the re-kick can be minutes away.
+      await deps.log("info", `loop: this tree is busy with another run — your ${work ? "queued work" : "claim"} waits for it to finish`)
+    }
     return
   }
   undeferIdle(sessionID) // this drive is the re-kick; no stale waiting-list entry
@@ -4060,7 +4091,7 @@ export const autoAdvanceParkedPlan = async (
 const USAGE =
   `Usage: ${ECMD} new <idea> · retask <id> [note] · approve [id] [--base=<branch>] [--pr|--push|--local] · replan [id] [reason] · ` +
   "abandon <id> [reason] · remove <id> --force · plan <id> · " +
-  "claim [id] · watch [interval] · unwatch · recover <id> · kinds · doctor [fix|config] · init · stop · status"
+  "claim [id] · watch [interval] · unwatch · recover [id] · kinds · doctor [fix|config] · init · stop · status"
 const kindUsage = (kind: string): string => `Usage: /agentic-workflow:${kind} claim · watch [interval] · unwatch · stop · status`
 
 /**
@@ -4317,7 +4348,21 @@ export const handleCommand = async (
 
   if (verb === "recover") {
     let id = rest
-    if (!id) return report(client, `Usage: ${ECMD} recover <id>.`, "warning")
+    if (!id) {
+      // Id-less form (design 53): exactly one interrupted task is unambiguous;
+      // the same oracle `status` reports (BUILD markers + snapshots).
+      const summary = await backlogSummary(deps, config).catch(() => null)
+      const sole = summary ? soleInterrupted(summary) : null
+      if (!sole) {
+        const many = summary?.interrupted ?? []
+        return report(
+          client,
+          many.length ? `Several interrupted tasks — name one: ${ECMD} recover <id> (${many.join(", ")}).` : `Usage: ${ECMD} recover <id> — no interrupted task on the board.`,
+          "warning",
+        )
+      }
+      id = sole
+    }
     // Same busy guard as `claim`: recovering while this session drives a
     // DIFFERENT task would clearWorkflow that run's state and abandon it mid-stage.
     if (driving.has(sessionID) || getWorkflow(sessionID)) {
@@ -4630,7 +4675,11 @@ export const handleCommand = async (
     // foreshadowed. The stage markers are the same oracle recover/doctor
     // consult; our own process's marker is filtered by pid so a status typed
     // in the driving session doesn't report its own loop twice.
-    const elsewhere = (await liveStageMarkers(deps.$, deps.directory, config.tasksDir)).filter((m) => m.pid !== process.pid)
+    const markers = await liveStageMarkers(deps.$, deps.directory, config.tasksDir)
+    const elsewhere = markers.filter((m) => m.pid !== process.pid)
+    // This process's own live marker: the stage in flight and its deadline —
+    // facts status reported for loops driven ELSEWHERE and not for its own.
+    const own = markers.find((m) => m.pid === process.pid)
     const elsewhereLine = elsewhere.length
       ? ` · driven elsewhere: ${elsewhere
           .map((m) => `${m.taskId ?? `a ${m.kind} item`} @ ${m.stage} (${m.host}${m.pid !== undefined ? ` pid ${String(m.pid)}` : ""}, deadline in ${String(Math.max(0, Math.ceil((m.deadline - Date.now()) / 60_000)))}m)`)
@@ -4646,7 +4695,9 @@ export const handleCommand = async (
     }
     const what = state.task ? `task ${state.task.id}` : state.goal
     const prefix = isWatching ? `${watchLabel}. ` : ""
-    return report(client, `${prefix}Loop: ${state.stage} · iteration ${state.iteration + 1} · ${what}${backlogLine}${pairingSuffix}${elsewhereLine}${kindsLine}`, "info")
+    const cap = iterationCap(manifestFor(state.kind ?? "engineering").manifest, config)
+    const deadlineLine = own ? ` · stage deadline in ${String(Math.max(0, Math.ceil((own.deadline - Date.now()) / 60_000)))}m` : ""
+    return report(client, `${prefix}Loop: ${state.stage} · iteration ${state.iteration + 1}/${cap} · ${what}${deadlineLine}${backlogLine}${pairingSuffix}${elsewhereLine}${kindsLine}`, "info")
   }
 
   // The loop is a pure executor — there is no free-text mode. Anything
