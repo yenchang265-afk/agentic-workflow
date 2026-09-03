@@ -237,11 +237,13 @@ const BaseConfigSchema = z.object({
    */
   notifyCommand: z.string().min(1).optional(),
   /**
-   * Which terminal events fire `notifyCommand`. Absent ⇒ all of them. Not
-   * shell-bearing (the value space is four literals), so a repo may narrow —
+   * Which events fire `notifyCommand`. Absent ⇒ every TERMINAL event (park,
+   * done, stop, error); `stage` — one ping per stage the loop fires (design
+   * 54) — is opt-in, since a run pings four or more times under it. Not
+   * shell-bearing (the value space is five literals), so a repo may narrow —
    * but never widen — what its contributors get pinged about.
    */
-  notifyEvents: z.array(z.enum(["park", "done", "stop", "error"])).optional(),
+  notifyEvents: z.array(z.enum(["park", "done", "stop", "error", "stage"])).optional(),
   /**
    * Branch-name PREFIX the engineering loop cuts its work branch with
    * (`<prefix><id>`), or `false` — "cut nothing; run BUILD/VERIFY/REVIEW on the

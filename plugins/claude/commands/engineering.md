@@ -1,6 +1,6 @@
 ---
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] [--all] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | recover <id> | kinds | doctor [fix|config] | init | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] [--all] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | recover [id] | kinds | doctor [fix|config] | init | stop | status
 ---
 
 You are about to work the **engineering agentic loop** (typed as
@@ -33,7 +33,7 @@ on and who does the work; it is deliberately not a procedure.
 - **`new <idea>`** — interview into planless draft(s); **`plan <id>`** — run
   PLAN on one approved task and park the plan; **`claim [id]`** — drive the next
   plan-approved task, or with an id that one (BUILD → VERIFY → REVIEW, else one
-  to plan); **`recover <id>`** — resume
+  to plan); **`recover [id]`** — resume
   a run that stopped early; **`stop`** (alias `abort`) — abort the active loop;
   **`status`** (or bare) — loop + backlog roll-up; **`kinds`** — enabled
   workflow kinds; **`doctor [fix|config]`** — audit (with `fix`, repair) the

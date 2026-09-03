@@ -58,6 +58,7 @@ import {
   STATUSES,
   writeTask,
   summarizeBacklog,
+  soleInterrupted,
   type TaskStatus,
   wasInterrupted,
 } from "./store.js"
@@ -839,6 +840,34 @@ test("blockedBy round-trips through serializeTask/parseTask and is omitted when 
   assert.deepEqual(taskToInput(parsed).blockedBy, ["a1b2-base", "c3d4-other"])
   assert.doesNotMatch(serializeTask({ title: "T", acceptance: [] }), /blockedBy/)
   assert.deepEqual(parseTask("y.md", "---\ntitle: T\n---\n", "/p/y.md").blockedBy, [])
+})
+
+// --- interrupted via the snapshot oracle, and the id-less recover (design 53) ---
+
+test("summarizeBacklog lists a task with a state snapshot as interrupted — a VERIFY/REVIEW crash leaves a finished BUILD pair", () => {
+  const byStatus = empty()
+  byStatus["in-progress"] = [
+    // BUILD ran and finished; the run died at VERIFY. The body alone says "not interrupted".
+    task("died-at-verify", 0, `${PLAN_HEADING}\n\n1. Go.\n\n> CLAIMED — loop starting [2026-01-01T00:00:00.000Z]\n> BUILD started (iteration 1)\n> BUILD finished (iteration 1)`),
+    task("died-at-build", 0, `${PLAN_HEADING}\n\n1. Go.\n\n> BUILD started (iteration 1)`),
+    // Never started: a snapshot beside it is a stale leftover, not an interruption.
+    task("ready", 0, `${PLAN_HEADING}\n\n1. Go.`),
+  ]
+  const without = summarizeBacklog(byStatus)
+  assert.deepEqual(without.interrupted, ["died-at-build"])
+  const withSnapshots = summarizeBacklog(byStatus, [], ["died-at-verify", "ready", "unknown"])
+  assert.deepEqual(withSnapshots.interrupted, ["died-at-verify", "died-at-build"])
+  assert.deepEqual(withSnapshots.claimable, ["ready"])
+  assert.ok(nextActions(withSnapshots, "/aw").some((l) => l === "interrupted: died-at-verify, died-at-build — /aw recover <id>"))
+})
+
+test("soleInterrupted names the one interrupted task, and nothing when there are none or several", () => {
+  const byStatus = empty()
+  byStatus["in-progress"] = [task("a", 0, `${PLAN_HEADING}\n\n1. Go.\n\n> BUILD started (iteration 1)`)]
+  assert.equal(soleInterrupted(summarizeBacklog(byStatus)), "a")
+  assert.equal(soleInterrupted(summarizeBacklog(empty())), null)
+  byStatus["in-progress"] = [...byStatus["in-progress"], task("b", 0, `${PLAN_HEADING}\n\n1. Go.\n\n> BUILD started (iteration 1)`)]
+  assert.equal(soleInterrupted(summarizeBacklog(byStatus)), null)
 })
 
 test("summarizeBacklog counts every status and empty flag lists", () => {
