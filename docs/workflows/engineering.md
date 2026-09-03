@@ -196,6 +196,16 @@ non-zero is run once more before it is believed (never an `error`, never a
 run's output, carried to the ship gate as a non-blocking suggestion, and floors
 nothing, while a fail-then-fail floors the stage as before. See designs 49–50.
 
+Two more facts now travel between stages instead of being rediscovered. A
+**stopped run tells the replan's PLAN pass what it left**: a `> Prior work`
+audit note records the branch, base and diffstat, and — with the discovered
+check commands admission refused — reaches the next plan as a section that
+asks it to decide whether to build on or discard that work and to name
+admissible checks instead of the refused ones. A **VERIFY PASS tells REVIEW
+what it established**: criteria met with per-criterion `evidence` refs, the
+checks the loop ran, the evidence cited, and the axes it could not assess,
+through the same seam a FAIL already used. See designs 51–52.
+
 ### Slice sets (`new` on a heavy idea)
 
 `new <idea>` can split a large idea into sibling child drafts plus a

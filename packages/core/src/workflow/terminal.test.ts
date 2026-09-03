@@ -710,6 +710,29 @@ test("a non-transient stop with attempts records the digest note; a retryable on
   assert.ok(!log2.some((c) => c.includes("Run stopped — attempts:")), "no digest on a retryable stop")
 })
 
+test("a non-transient stop on an isolated run records where its work lives, ahead of the attempts note (design 51)", async () => {
+  const state: WorkflowState = {
+    goal: "Do it",
+    stage: "verify",
+    iteration: 1,
+    artifacts: {},
+    task: taskRef("t", "in-progress"),
+    git: { base: "main", branch: "feature/t", worktree: "/repo/.wt/t" },
+    isolated: true,
+    attempts: [{ stage: "verify", iteration: 0, verdict: "FAIL", reason: "red" }],
+  }
+  const { ctx, log } = makeCtx({ "in-progress/t.md": body(true) }, state, { diffstat: "2 files changed, 4 insertions(+)" })
+  await runTerminal(ctx, stop)
+  const work = log.findIndex((c) => c.includes("Prior work — on branch feature/t, base main; diff: 2 files changed, 4 insertions(+)"))
+  const digest = log.findIndex((c) => c.includes("Run stopped — attempts:"))
+  assert.ok(work !== -1, `the prior-work note is written: ${log.filter((c) => c.includes("Prior work")).join(" | ")}`)
+  assert.ok(digest !== -1 && work < digest, "the attempts note stays the LAST `> Run stopped` line extractStopContext reads")
+  // A retryable stop leaves nothing worth planning around.
+  const { ctx: ctx2, log: log2 } = makeCtx({ "in-progress/t.md": body(true) }, state, { diffstat: "1 file changed" })
+  await runTerminal(ctx2, { kind: "stop", message: "Loop stopped at verify.", retryable: true })
+  assert.ok(!log2.some((c) => c.includes("Prior work — on branch")))
+})
+
 test("stop from a build/check stage releases the in-progress claim marker", async () => {
   // The wedge: a cap-tripped stop (verify/review FAILed maxIterations times)
   // kept the marker held, and every escape the cap message offers — replan,

@@ -44,6 +44,9 @@ const StageToolUsageSchema = z.object({
 const SampleCriterionSchema = z.object({
   criterion: z.string(),
   pass: z.boolean(),
+  // Per-criterion evidence refs (design 52): declared or the next run's
+  // read-modify-write strips them from every prior entry.
+  evidence: z.array(z.string()).readonly().optional(),
 })
 
 const SampleFindingSchema = z.object({

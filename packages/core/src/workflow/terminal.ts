@@ -1,7 +1,7 @@
 import type { Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { resolveValidateHook } from "../manifest/registry.js"
-import { appendNote, auditNote, contractRejectedNote, extractPlan, findByIdIn, moveTask, planHeadingCount, releaseClaim, RUN_DIFF_PREFIX, stopContextNote, unaddressedRejectionCount } from "../task/store.js"
+import { appendNote, auditNote, contractRejectedNote, extractPlan, findByIdIn, moveTask, planHeadingCount, priorWorkNote, releaseClaim, RUN_DIFF_PREFIX, stopContextNote, unaddressedRejectionCount } from "../task/store.js"
 import { redact } from "../task/redact.js"
 import { clampedChecksDetail, previewDiscoveredChecks } from "./discovered-checks.js"
 import { depsSummaryLine, previewDeclaredDeps } from "./declared-deps.js"
@@ -530,6 +530,17 @@ const runStop = async (ctx: TerminalCtx, action: Extract<Action, { kind: "stop" 
       // cap message recommends reads only the task file. Gated on
       // `!retryable`: a flaky-environment stop's ledger is noise the next run
       // does not need. See `stopContextNote`/`extractStopContext` in store.ts.
+      // Where the stopped run's commits LIVE (design 51) — the branch survives
+      // `closeIsolation`, but nothing on the task said so, and the replan's
+      // PLAN pass planned as if the tree were clean while the next BUILD was
+      // cut from that very branch. Written BEFORE the attempts note so that
+      // note stays the last `> Run stopped` line `extractStopContext` reads.
+      // Same gate as the ledger: a transient stop leaves nothing worth planning
+      // around. Best-effort, like every terminal note.
+      if (!action.retryable && state.git && status === "in-progress") {
+        const diffstat = await diffShortstat($, directory, state.git.base, state.git.branch)
+        await appendNote($, cur, auditNote(priorWorkNote(state.git.branch, state.git.base, diffstat), new Date(), actor), log)
+      }
       if (!action.retryable && state.attempts?.length) {
         await appendNote($, cur, auditNote(stopContextNote(attemptsDigest(state.attempts)), new Date(), actor), log)
       }
