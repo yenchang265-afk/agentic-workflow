@@ -473,6 +473,97 @@ export const replanFor = (task: Task): { readonly reason: string } | undefined =
  * audit note. `stopContextNote` is the one formatter and `extractStopContext`
  * its parser, paired here so writer and reader cannot drift.
  */
+/**
+ * The anchors past which a stopped run's context is ADDRESSED: a new plan was
+ * written, or the task was reshaped. Shared by every "what did the last run
+ * leave behind" parser so they retire together (design 51).
+ */
+const priorRunAddressedIndex = (body: string): number =>
+  Math.max(lastMarkerIndex(body, PLAN_HEADING), lastMarkerIndex(body, PLAN_WRITTEN_MARKER), lastMarkerIndex(body, TASK_RESHAPED_MARKER))
+
+/** The last `marker` audit line after the addressed anchor, or undefined. Pure. */
+const lastUnaddressedNote = (body: string, marker: string): string | undefined => {
+  const idx = lastMarkerIndex(body, marker)
+  if (idx === -1 || idx < priorRunAddressedIndex(body)) return undefined
+  const end = body.indexOf("\n", idx)
+  const line = body.slice(idx, end === -1 ? body.length : end)
+  return AUDIT_NOTE_LINE_RE.test(line) ? line.replace(/\s*\[[^\]\n]+\]\s*$/, "") : undefined
+}
+
+export const PRIOR_WORK_MARKER = "> Prior work"
+const PRIOR_WORK_BRANCH_PREFIX = "— on branch "
+const PRIOR_WORK_BASE_PREFIX = ", base "
+
+/**
+ * The note `runStop` writes so a replan's PLAN pass knows a branch with the
+ * stopped run's commits EXISTS (design 51). Same field shapes as the done note
+ * — branch, then base, then the diffstat clause last — so one validator serves
+ * both. Pure.
+ */
+export const priorWorkNote = (branch: string, base: string, diffstat: string | null): string =>
+  `Prior work ${PRIOR_WORK_BRANCH_PREFIX}${branch}${PRIOR_WORK_BASE_PREFIX}${base}${diffstat ? `${RUN_DIFF_PREFIX}${diffstat}` : ""}`
+
+const REF_RE = /^[A-Za-z0-9][A-Za-z0-9._\-/]*$/
+const DIFFSTAT_RE = /^\d+ files? changed(, \d+ insertions?\(\+\))?(, \d+ deletions?\(-\))?$/
+
+/** What a previous, stopped run left on the task — for the next PLAN pass. */
+export interface PriorRun {
+  /** The branch carrying the stopped run's commits. */
+  readonly branch?: string
+  /** The ref it was cut from — `git diff <base>...<branch>` is the work. */
+  readonly base?: string
+  readonly diffstat?: string
+  /** `discovered check "<name>" refused: <reason>` entries from the last checks-provenance note. */
+  readonly refusedChecks?: readonly string[]
+}
+
+/**
+ * The last `Prior work` note not yet addressed by a new plan, parsed. Every
+ * field is validated to the shape it will be interpolated as (a ref, a
+ * shortstat) — the line is model-adjacent prose. Pure.
+ */
+export const extractPriorWork = (task: Task): Pick<PriorRun, "branch" | "base" | "diffstat"> | undefined => {
+  const line = lastUnaddressedNote(task.body, PRIOR_WORK_MARKER)
+  if (!line) return undefined
+  const b = line.indexOf(PRIOR_WORK_BRANCH_PREFIX)
+  if (b === -1) return undefined
+  const rest = line.slice(b + PRIOR_WORK_BRANCH_PREFIX.length)
+  const branch = rest.split(",")[0]?.split(";")[0]?.trim()
+  if (!branch || !REF_RE.test(branch)) return undefined
+  const bi = rest.indexOf(PRIOR_WORK_BASE_PREFIX)
+  const base = bi === -1 ? undefined : rest.slice(bi + PRIOR_WORK_BASE_PREFIX.length).split(";")[0]?.trim()
+  const di = rest.lastIndexOf(RUN_DIFF_PREFIX)
+  const diffstat = di === -1 ? undefined : rest.slice(di + RUN_DIFF_PREFIX.length).trim()
+  return {
+    branch,
+    ...(base && REF_RE.test(base) ? { base } : {}),
+    ...(diffstat && DIFFSTAT_RE.test(diffstat) ? { diffstat } : {}),
+  }
+}
+
+export const CHECKS_PROVENANCE_MARKER = "> Discovered checks at"
+const REFUSED_CHECK_RE = /discovered check "[^"\n]{1,80}" refused: [^;\]\n]{1,200}/g
+
+/**
+ * The refused-check entries of the last checks-provenance note not yet
+ * addressed by a new plan (design 51). Best-effort: the note's detail is
+ * clamped at write, so a long list may end mid-entry — what survives is still
+ * what the next planner must not write again. Pure.
+ */
+export const extractRefusedChecks = (task: Task): string[] => {
+  const line = lastUnaddressedNote(task.body, CHECKS_PROVENANCE_MARKER)
+  if (!line) return []
+  return [...new Set(line.match(REFUSED_CHECK_RE) ?? [])].map((s) => s.trim())
+}
+
+/** Everything the last stopped run left for the next PLAN pass, or undefined when nothing did. Pure. */
+export const priorRunFor = (task: Task): PriorRun | undefined => {
+  const work = extractPriorWork(task)
+  const refusedChecks = extractRefusedChecks(task)
+  if (!work && !refusedChecks.length) return undefined
+  return { ...(work ?? {}), ...(refusedChecks.length ? { refusedChecks } : {}) }
+}
+
 export const RUN_STOPPED_MARKER = "> Run stopped"
 const STOP_ATTEMPTS_PREFIX = "— attempts: "
 

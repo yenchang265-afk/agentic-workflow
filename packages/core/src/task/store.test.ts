@@ -21,6 +21,10 @@ import {
   nextActions,
   extractReplanReason,
   extractStopContext,
+  extractPriorWork,
+  extractRefusedChecks,
+  priorRunFor,
+  priorWorkNote,
   NO_REASON_FALLBACK,
   pendingPlanRejection,
   TASK_RESHAPED_MARKER,
@@ -379,6 +383,58 @@ test("a re-shape does NOT retire a rejection recorded after it", () => {
 // (see `stopContextNote`) — the digest `replanTask` fuses into the rejection
 // reason so a cap-tripped replan does not re-plan blind.
 const stopNote = (digest: string, stamp = "2026-01-02T00:00:00.000Z by dev"): string => `\n> Run stopped — attempts: ${digest} [${stamp}]\n`
+
+// --- what a stopped run left behind (design 51) ---
+
+const STAMP = "2026-01-02T00:00:00.000Z by dev"
+
+test("priorWorkNote round-trips through extractPriorWork, each field validated to its shape", () => {
+  const note = priorWorkNote("feature/a1b2-thing", "main", "3 files changed, 10 insertions(+), 2 deletions(-)")
+  assert.equal(note, "Prior work — on branch feature/a1b2-thing, base main; diff: 3 files changed, 10 insertions(+), 2 deletions(-)")
+  const body = `${PLAN_HEADING}\n\nApproach.\n\n> ${note} [${STAMP}]\n`
+  assert.deepEqual(extractPriorWork(task("a", 0, body)), {
+    branch: "feature/a1b2-thing",
+    base: "main",
+    diffstat: "3 files changed, 10 insertions(+), 2 deletions(-)",
+  })
+  // No diffstat (the shortstat failed at stop) — branch and base still land.
+  const bare = `> ${priorWorkNote("feature/x", "0123abcd", null)} [${STAMP}]\n`
+  assert.deepEqual(extractPriorWork(task("a", 0, bare)), { branch: "feature/x", base: "0123abcd" })
+  // A branch that is not a ref shape is refused whole — it reaches a git command.
+  assert.equal(extractPriorWork(task("a", 0, `> Prior work — on branch ; rm -rf /, base main [${STAMP}]\n`)), undefined)
+  assert.equal(extractPriorWork(task("a", 0, "nothing")), undefined)
+})
+
+test("extractPriorWork retires once a newer plan or a reshape addressed it — same anchors as the stop context", () => {
+  const note = `> ${priorWorkNote("feature/x", "main", null)} [${STAMP}]\n`
+  assert.equal(extractPriorWork(task("a", 0, `${note}\n${PLAN_HEADING}\n\nNew approach.\n`)), undefined)
+  assert.equal(extractPriorWork(task("a", 0, `${note}\n> Plan written — parked for plan review [${STAMP}]\n`)), undefined)
+  assert.deepEqual(extractPriorWork(task("a", 0, `${PLAN_HEADING}\n\nOld.\n\n${note}`)), { branch: "feature/x", base: "main" })
+})
+
+test("extractRefusedChecks reads the refused entries off the last checks-provenance note, de-duplicated", () => {
+  const prov =
+    `> Discovered checks at VERIFY: 1 ran; discovered check "e2e" refused: not on the allowlist (npx playwright test); ` +
+    `discovered check "e2e" refused: not on the allowlist (npx playwright test); discovered check "lint" skipped: eslint not installed [${STAMP}]\n`
+  assert.deepEqual(extractRefusedChecks(task("a", 0, `${PLAN_HEADING}\n\nP.\n\n${prov}`)), [
+    'discovered check "e2e" refused: not on the allowlist (npx playwright test)',
+  ])
+  assert.deepEqual(extractRefusedChecks(task("a", 0, `${prov}\n${PLAN_HEADING}\n\nNew.\n`)), [], "a newer plan retires it")
+  assert.deepEqual(extractRefusedChecks(task("a", 0, `> Discovered checks at VERIFY: 2 ran (source: discovered) [${STAMP}]\n`)), [])
+})
+
+test("priorRunFor fuses the two, and is undefined when neither is pending", () => {
+  const prov = `> Discovered checks at VERIFY: 0 ran; discovered check "e2e" refused: nope [${STAMP}]\n`
+  const work = `> ${priorWorkNote("feature/x", "main", "1 file changed, 1 insertion(+)")} [${STAMP}]\n`
+  assert.deepEqual(priorRunFor(task("a", 0, `${PLAN_HEADING}\n\nP.\n\n${prov}${work}`)), {
+    branch: "feature/x",
+    base: "main",
+    diffstat: "1 file changed, 1 insertion(+)",
+    refusedChecks: ['discovered check "e2e" refused: nope'],
+  })
+  assert.deepEqual(priorRunFor(task("a", 0, `${PLAN_HEADING}\n\nP.\n\n${prov}`)), { refusedChecks: ['discovered check "e2e" refused: nope'] })
+  assert.equal(priorRunFor(task("a", 0, "fresh")), undefined)
+})
 
 test("extractStopContext reads the last stopped run's attempts digest", () => {
   const digest = "iteration 1 VERIFY FAIL: 2 criteria unmet; iteration 2 REVIEW FAIL: unhandled error path"

@@ -39,6 +39,13 @@ export type Verdict = "PASS" | "FAIL" | "ERROR"
 export interface CriterionResult {
   readonly criterion: string
   readonly pass: boolean
+  /**
+   * What this criterion was judged BY — command lines or `path:line`s, as
+   * short refs (design 52). Optional and never gated: the record-level
+   * `evidence` is what `evidenceIssue` cross-checks, and this is the per-
+   * criterion reading REVIEW gets so "criterion 3 met" comes with how.
+   */
+  readonly evidence?: readonly string[]
 }
 
 /**
@@ -640,6 +647,47 @@ export const noAdmissibleVerdictReason = (opts: {
  * prevent. Suggestions are dropped; only what blocks reaches the next BUILD.
  * Pure.
  */
+/**
+ * The structured facts a check stage's PASS established — for the NEXT stage
+ * (REVIEW reads VERIFY's), where `verdictFeedbackBlock` renders only failures
+ * and a clean PASS used to reach it as nothing at all (design 52): criteria
+ * met with their per-criterion evidence, the checks the loop ran (pre-rendered
+ * by the caller — `checks.ts` imports this module, so the summary cannot be
+ * built here), the evidence the pass cited, and the axes it could not assess.
+ * The reason line comes first, in `verdictFeedbackBlock`'s exact form — a
+ * reason-only PASS rendered that line before this block existed, and REVIEW's
+ * prompt is pinned on it. Suggestion findings are deliberately NOT here: the
+ * seam must not carry them (the done action is their only route to the
+ * human), and a stage's advice to its successor would read as findings to
+ * re-litigate. Empty for a record that establishes nothing beyond the
+ * verdict, so a bare PASS keeps clearing the seam exactly as before. Pure.
+ */
+export const verdictPassBlock = (stage: string, record: VerdictRecord | null, checksLine?: string): string => {
+  if (!record || record.verdict !== "PASS") return ""
+  const lines: string[] = []
+  if (record.reason) lines.push(`Verdict reason: ${record.reason}`)
+  const criteria = record.criteria ?? []
+  if (criteria.length) {
+    const met = criteria.filter((c) => c.pass).length
+    lines.push(`${stage.toUpperCase()} PASS (from workflow_verdict): ${met}/${criteria.length} acceptance criteria met`)
+    for (const c of criteria) {
+      const how = c.evidence?.length ? ` — judged by: ${c.evidence.join("; ")}` : ""
+      lines.push(`- ${c.criterion} ${c.pass ? "✓" : "✗ NOT MET"}${how}`)
+    }
+  }
+  if (checksLine) lines.push(`Checks the loop ran: ${checksLine}`)
+  if (record.evidence?.length) {
+    lines.push("Evidence the pass cited:")
+    for (const e of record.evidence) lines.push(`- ${e.kind} ${e.ref}${e.result ? ` → ${e.result}` : ""}`)
+  }
+  const unassessed = (record.axes ?? []).filter(axisUnassessed)
+  if (unassessed.length) {
+    lines.push("Unassessed axes (could not be assessed — non-blocking):")
+    for (const a of unassessed) lines.push(`- ${a.axis}`)
+  }
+  return lines.join("\n")
+}
+
 export const verdictFeedbackBlock = (record: VerdictRecord | null): string => {
   const failed = record?.criteria?.filter((c) => !c.pass) ?? []
   const lines: string[] = []
@@ -762,7 +810,8 @@ export const verdictContractBlock = (
     ...(criteriaCount
       ? [
           `ACCEPTANCE CRITERIA: this stage was given ${criteriaCount} acceptance ${criteriaCount === 1 ? "criterion" : "criteria"} (listed in this prompt).`,
-          "The same call MUST carry a `criteria` array with one { criterion, pass } entry per criterion, in the order given.",
+          "The same call MUST carry a `criteria` array with one { criterion, pass } entry per criterion, in the order given;",
+          "each entry may add `evidence: [\"<command or path:line you judged it by>\"]` — REVIEW reads it as how the criterion was established.",
           "A PASS whose criteria are missing or incomplete, or that marks any criterion not met, is REJECTED —",
           "record FAIL when a criterion is not met.",
         ]

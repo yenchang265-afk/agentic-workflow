@@ -10,6 +10,7 @@ import {
   checkCommands,
   checksBlock,
   checksBudgetMs,
+  checksSummaryLine,
   classifyExit,
   finalizeCheckRecord,
   runChecks,
@@ -203,6 +204,17 @@ test("a check's own timeoutMinutes wins over the stage-wide cap", async () => {
     60_000,
   )
   assert.deepEqual(asked, [60_000, 25 * 60_000])
+})
+
+test("checksSummaryLine is one line naming every check and its outcome (design 52)", () => {
+  assert.equal(
+    checksSummaryLine([
+      { name: "tests", command: "npm test", exitCode: 0, outcome: "pass", output: "" },
+      { name: "lint", command: "npm run lint", exitCode: 1, outcome: "fail", output: "x" },
+    ]),
+    "tests (npm test) → PASS; lint (npm run lint) → FAIL",
+  )
+  assert.equal(checksSummaryLine([]), "")
 })
 
 test("checksBudgetMs sums each check's own cap, defaulting the cap-less ones", () => {

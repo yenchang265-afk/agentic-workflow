@@ -11,6 +11,7 @@ import {
   isRecoverable,
   isReleasableClaim,
   listByStatus,
+  priorRunFor,
   releaseClaim,
   replanFor,
   selectOrder,
@@ -156,6 +157,10 @@ const entryState = (loaded: LoadedManifest, pool: Pool, task: Task): WorkflowSta
   // nothing, and gating would hardcode engineering's shape into a generic
   // work source.
   const replan = replanFor(task)
+  // Same footing as `replan`: what the stopped run left (branch, diffstat,
+  // refused checks) is a PLAN-prompt section, rendered by plan.md and inert
+  // on any stage without the section.
+  const priorRun = priorRunFor(task)
   return {
     kind: loaded.manifest.kind,
     goal: taskGoal(task),
@@ -163,6 +168,7 @@ const entryState = (loaded: LoadedManifest, pool: Pool, task: Task): WorkflowSta
     iteration: 0,
     artifacts: plan ? { plan } : {},
     ...(replan ? { replan } : {}),
+    ...(priorRun ? { priorRun } : {}),
     task: { id: task.id, path: task.path, acceptance: task.acceptance },
   }
 }

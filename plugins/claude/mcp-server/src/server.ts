@@ -1532,7 +1532,17 @@ server.registerTool(
             "names the problem — a FAIL that names nothing to fix is REJECTED.",
         ),
       criteria: z
-        .array(z.object({ criterion: z.string(), pass: z.boolean() }))
+        .array(
+          z.object({
+            criterion: z.string(),
+            pass: z.boolean(),
+            evidence: z
+              .array(z.string().max(200))
+              .max(5)
+              .optional()
+              .describe("Short refs — the command or path:line you judged THIS criterion by. REVIEW reads it as how the criterion was established."),
+          }),
+        )
         .optional()
         .describe(
           "Per-acceptance-criterion results, mirroring the criteria threaded into your stage prompt. REQUIRED for a " +

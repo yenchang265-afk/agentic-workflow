@@ -36,6 +36,7 @@ export interface StageToolUsage {
 export interface SampleCriterion {
   readonly criterion: string
   readonly pass: boolean
+  readonly evidence?: readonly string[]
 }
 
 export interface SampleFinding {

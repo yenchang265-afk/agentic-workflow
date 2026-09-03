@@ -1226,6 +1226,11 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
               tool.schema.object({
                 criterion: tool.schema.string().describe("The acceptance criterion text, as given to you."),
                 pass: tool.schema.boolean().describe("Whether this criterion is met, on observed evidence."),
+                evidence: tool.schema
+                  .array(tool.schema.string().max(200))
+                  .max(5)
+                  .optional()
+                  .describe("Short refs — the command or path:line you judged THIS criterion by. REVIEW reads it as how the criterion was established."),
               }),
             )
             .optional()

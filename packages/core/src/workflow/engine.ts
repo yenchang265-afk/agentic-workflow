@@ -5,7 +5,7 @@ import { resolveComposeHook } from "../manifest/registry.js"
 import type { Action, AttemptRecord, Config, WorkflowState } from "./state.js"
 import { stripPlanAndAuditTail } from "../task/plan-section.js"
 import { clampWithStats } from "./budget.js"
-import { anyFailed, checksBlock, type CheckResult } from "./checks.js"
+import { anyFailed, checksBlock, checksSummaryLine, type CheckResult } from "./checks.js"
 import { contextFor, planVisualizationFor, prBaseFor, stagePasses } from "../config.js"
 import { checkDiscoveryBlock, discoveringStage, discoveryAllowlist, noMachineChecksBlock } from "./discovered-checks.js"
 import { dependencyContractBlock } from "./declared-deps.js"
@@ -16,6 +16,7 @@ import {
   suggestionFindings,
   verdictContractBlock,
   verdictFeedbackBlock,
+  verdictPassBlock,
   workScopeBlock,
   type StagePass,
   type Verdict,
@@ -239,6 +240,16 @@ export const promptContextWithStats = (
     // (`extractReplanReason`). Undefined when no rejection is pending, so the
     // section drops and a first-plan prompt is unchanged.
     replan: state.replan ? { reason: state.replan.reason } : undefined,
+    // What the last stopped run left (design 51). Pre-rendered like `attempts`;
+    // undefined when nothing was left, so a first-plan prompt is unchanged.
+    priorRun: state.priorRun
+      ? {
+          ...(state.priorRun.branch ? { branch: state.priorRun.branch } : {}),
+          ...(state.priorRun.branch && state.priorRun.base ? { diffCmd: `git diff ${state.priorRun.base}...${state.priorRun.branch}` } : {}),
+          ...(state.priorRun.diffstat ? { diffstat: state.priorRun.diffstat } : {}),
+          ...(state.priorRun.refusedChecks?.length ? { refused: state.priorRun.refusedChecks.map((r) => `- ${r}`).join("\n") } : {}),
+        }
+      : undefined,
     acceptance: accept.length ? { bullets: accept.map((c) => `- ${c}`).join("\n") } : undefined,
     artifacts: budgeted.artifacts,
     verdicts,
@@ -497,7 +508,16 @@ export const advance = (
   // Fuse the machine-recorded failure reasons ahead of the stage's prose so the
   // next iteration leads with what actually failed. Owned here, not by each host,
   // so the seam between the two is recorded and the budget can spare the block.
-  const s = withArtifact(state, state.stage, output, verdictFeedbackBlock(record))
+  // A check stage's PASS fuses what it ESTABLISHED (design 52) where a FAIL
+  // fuses what failed: same seam, same budget exemption, so review.md's "What
+  // VERIFY established" section renders on the common path too. A work stage
+  // and a FAIL are byte-identical to before.
+  const passed = verdict === "PASS" && stageDef(manifest, state.stage).kind === "check"
+  const ran = state.checks?.[state.stage]
+  const block = passed
+    ? verdictPassBlock(state.stage, record, ran?.length ? checksSummaryLine(ran) : undefined)
+    : verdictFeedbackBlock(record)
+  const s = withArtifact(state, state.stage, output, block)
   const def = stageDef(manifest, s.stage)
   const t = manifest.transitions[s.stage]
   const effect =

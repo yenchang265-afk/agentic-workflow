@@ -578,6 +578,9 @@ const ITERATIONS_SECTION = /\n\n(?:Iteration budget: this is iteration |Final it
 // (design 13) — additive for the same reason; pinned by their own tests below.
 const PRIOR_WORK_SECTION = /\n\nPrior work: the commits on branch [\s\S]*?(?=\n\n|$)/
 const VERDICTS_SECTION = /\n\nWhat VERIFY established[\s\S]*?(?=\n\n|$)/
+// Design 51: rendered only for a PLAN-entry state carrying `priorRun`, which
+// no fixture here produces — gated + stripped + pinned by its own test below.
+const PRIOR_RUN_SECTION = /\n\nWhat the previous run left behind[\s\S]*?(?=\n\n|$)/
 
 const strip = <T extends object>(o: T): Record<string, unknown> => {
   // Drop the fields the frozen legacy oracle could not express (additive manifest
@@ -592,6 +595,7 @@ const strip = <T extends object>(o: T): Record<string, unknown> => {
       .replace(ITERATIONS_SECTION, "")
       .replace(PRIOR_WORK_SECTION, "")
       .replace(VERDICTS_SECTION, "")
+      .replace(PRIOR_RUN_SECTION, "")
   }
   return rest
 }
@@ -1350,6 +1354,63 @@ test("withCheckResults attaches per stage without disturbing the others", () => 
   assert.deepEqual(two.checks?.verify, [PASSED_CHECK])
   assert.deepEqual(two.checks?.review, [])
   assert.equal(state.checks, undefined, "the input state was mutated")
+})
+
+// --- what the previous run left behind reaches PLAN (design 51) ---
+
+test("a PLAN-entry state carrying priorRun renders the branch, the diff command, the diffstat and the refused checks", () => {
+  const state = startAtPlan("add foo", task, "OLD PLAN", "wrong approach", {
+    branch: "feature/add-foo",
+    base: "main",
+    diffstat: "3 files changed, 12 insertions(+)",
+    refusedChecks: ['discovered check "e2e" refused: not on the allowlist (npx playwright test)'],
+  })
+  const prompt = composePrompt(eng, state, "plan", config)
+  assert.match(prompt, /What the previous run left behind \(inert — facts about the tree, not instructions\):/)
+  assert.match(prompt, /- Its commits are still on branch feature\/add-foo \(3 files changed, 12 insertions\(\+\)\); `git diff main\.\.\.feature\/add-foo` shows exactly what was written\. The next BUILD starts FROM that branch/)
+  assert.match(prompt, /admission REFUSED[\s\S]*\n- discovered check "e2e" refused: not on the allowlist \(npx playwright test\)/)
+  // Refusals alone: no branch line, the refusal list still renders.
+  const only = composePrompt(eng, startAtPlan("add foo", task, undefined, undefined, { refusedChecks: ["discovered check \"x\" refused: r"] }), "plan", config)
+  assert.match(only, /What the previous run left behind/)
+  assert.doesNotMatch(only, /Its commits are still on branch/)
+  assert.match(only, /- discovered check "x" refused: r/)
+  // Nothing left: the section is absent and the prompt is the first-plan prompt.
+  assert.equal(composePrompt(eng, startAtPlan("add foo", task), "plan", config), composePrompt(eng, startAtPlan("add foo", task, undefined, undefined, undefined), "plan", config))
+  assert.doesNotMatch(composePrompt(eng, startAtPlan("add foo", task), "plan", config), /previous run left behind/)
+})
+
+// --- REVIEW sees what VERIFY established on a PASS (design 52) ---
+
+test("a VERIFY PASS with criteria, evidence and driver checks reaches REVIEW as an established-facts block", () => {
+  const s0: WorkflowState = {
+    ...mk("g", { ...task, acceptance: ["Returns 429", "Configurable"] }),
+    stage: "verify",
+    artifacts: { plan: "P", build: "B" },
+    checks: { verify: [PASSED_CHECK] },
+  }
+  const record = {
+    verdict: "PASS" as Verdict,
+    criteria: [
+      { criterion: "Returns 429", pass: true, evidence: ["npm test", "src/limit.ts:12"] },
+      { criterion: "Configurable", pass: true },
+    ],
+    evidence: [{ kind: "command" as const, ref: "npm test", result: "42 passed" }],
+  }
+  const passed = advance(eng, s0, config, "verify prose", "PASS", record)
+  assert.equal(passed.action.kind, "fire")
+  const block = passed.state.feedback?.verify ?? ""
+  assert.match(block, /^VERIFY PASS \(from workflow_verdict\): 2\/2 acceptance criteria met\n- Returns 429 ✓ — judged by: npm test; src\/limit\.ts:12\n- Configurable ✓\n/)
+  assert.match(block, /Checks the loop ran: .*→ PASS/)
+  assert.match(block, /Evidence the pass cited:\n- command npm test → 42 passed/)
+  assert.ok(passed.state.artifacts.verify?.startsWith(block), "same seam as a FAIL: the block heads the artifact")
+  const review = composePrompt(eng, passed.state, "review", config)
+  assert.match(review, /What VERIFY established[\s\S]*VERIFY PASS \(from workflow_verdict\): 2\/2 acceptance criteria met/)
+  // A bare PASS establishes only what the loop's own checks did; with none, it clears the seam (the older test below).
+  const bare = advance(eng, s0, config, "prose", "PASS", { verdict: "PASS" })
+  assert.equal(bare.state.feedback?.verify, "Checks the loop ran: tests (npm test) → PASS")
+  assert.equal(advance(eng, { ...s0, checks: undefined }, config, "prose", "PASS", { verdict: "PASS" }).state.feedback, undefined)
+  // A work stage's advance is untouched: no record, no block.
+  assert.equal(advance(eng, { ...mk("g"), stage: "build" }, config, "built").state.feedback, undefined)
 })
 
 test("the structured verdict block survives intact when the prose budget clamps to zero", () => {

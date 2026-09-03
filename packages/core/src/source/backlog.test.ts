@@ -156,6 +156,27 @@ const source = (
     isDriving: () => false,
   })
 
+test("a queued task carrying a prior-work note enters PLAN with priorRun on its state (design 51)", async () => {
+  const stopped: FakeFile = {
+    name: "again.md",
+    content:
+      `---\ntitle: again\npriority: 1\n---\n\nBody.\n\n${PLAN_HEADING}\n\n1. Old.\n\n` +
+      `> Discovered checks at VERIFY: 0 ran; discovered check "e2e" refused: not on the allowlist [2026-01-01T00:00:00.000Z by dev]\n` +
+      `> Prior work — on branch feature/again, base main; diff: 2 files changed, 3 insertions(+) [2026-01-01T00:00:01.000Z by dev]\n` +
+      `> Run stopped — attempts: iteration 1 VERIFY FAIL: red [2026-01-01T00:00:02.000Z by dev]\n`,
+  }
+  const { item } = await source({ "in-progress": [], queued: [stopped] }).claimNext()
+  assert.equal(item?.entryStage, "plan")
+  assert.deepEqual(item?.state.priorRun, {
+    branch: "feature/again",
+    base: "main",
+    diffstat: "2 files changed, 3 insertions(+)",
+    refusedChecks: ['discovered check "e2e" refused: not on the allowlist'],
+  })
+  const { item: fresh } = await source({ "in-progress": [], queued: [file("plan-me")] }).claimNext()
+  assert.equal("priorRun" in (fresh?.state ?? {}), false)
+})
+
 test("claims build-ready in-progress work before queued plan work", async () => {
   const src = source({
     "in-progress": [file("build-me", { plan: true })],

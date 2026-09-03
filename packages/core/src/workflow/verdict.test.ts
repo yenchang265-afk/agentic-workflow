@@ -28,6 +28,7 @@ import {
   verdictContractBlock,
   suggestionFindings,
   verdictFeedbackBlock,
+  verdictPassBlock,
   withCoverageGap,
   withUnassessedGuard,
   workScopeBlock,
@@ -445,6 +446,56 @@ test("suggestionFindings caps the list", () => {
   const findings = Array.from({ length: 15 }, (_, i) => ({ severity: "suggestion" as const, detail: `s${i}` }))
   const record = { verdict: "PASS" as const, axes: [{ axis: "readability", verdict: "PASS" as const, findings }] }
   assert.equal(suggestionFindings(record).length, 10)
+})
+
+// --- verdictPassBlock (what a PASS established, for the next stage — design 52) ---
+
+test("verdictPassBlock renders the reason, criteria with their evidence, the checks line, cited evidence and unassessed axes — never suggestions", () => {
+  const block = verdictPassBlock(
+    "verify",
+    {
+      verdict: "PASS",
+      reason: "all criteria hold",
+      criteria: [
+        { criterion: "Returns 429", pass: true, evidence: ["npm test", "src/limit.ts:12"] },
+        { criterion: "Documented", pass: true },
+      ],
+      evidence: [
+        { kind: "command", ref: "npm test", result: "42 passed" },
+        { kind: "file", ref: "src/limit.ts:12" },
+      ],
+      axes: [
+        { axis: "checks", verdict: "PASS", findings: [{ severity: "suggestion", detail: "tests (npm test) is FLAKY" }] },
+        { axis: "performance", verdict: "ERROR" },
+      ],
+    },
+    "tests (npm test) → PASS",
+  )
+  assert.equal(
+    block,
+    [
+      "Verdict reason: all criteria hold",
+      "VERIFY PASS (from workflow_verdict): 2/2 acceptance criteria met",
+      "- Returns 429 ✓ — judged by: npm test; src/limit.ts:12",
+      "- Documented ✓",
+      "Checks the loop ran: tests (npm test) → PASS",
+      "Evidence the pass cited:",
+      "- command npm test → 42 passed",
+      "- file src/limit.ts:12",
+      "Unassessed axes (could not be assessed — non-blocking):",
+      "- performance",
+    ].join("\n"),
+  )
+  // A reason-only PASS renders exactly what the feedback block rendered for it before.
+  assert.equal(verdictPassBlock("verify", { verdict: "PASS", reason: "tests green" }), "Verdict reason: tests green")
+})
+
+test("verdictPassBlock is empty for null, a FAIL, or a PASS that establishes nothing — the seam clears as before", () => {
+  assert.equal(verdictPassBlock("verify", null), "")
+  assert.equal(verdictPassBlock("verify", { verdict: "FAIL", reason: "red", criteria: [{ criterion: "c", pass: false }] }), "")
+  assert.equal(verdictPassBlock("verify", { verdict: "PASS" }), "")
+  // Suggestions alone establish nothing for the next stage — they ride the done action.
+  assert.equal(verdictPassBlock("verify", { verdict: "PASS", axes: [{ axis: "readability", verdict: "PASS", findings: [{ severity: "suggestion", detail: "x" }] }] }), "")
 })
 
 // --- verdictFeedbackBlock (threading structured reasons into the next iteration) ---

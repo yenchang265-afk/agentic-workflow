@@ -198,6 +198,14 @@ export const checksBlock = (results: readonly CheckResult[]): string => {
 }
 
 /**
+ * One line naming every check and its outcome — the summary a PASS block
+ * carries to the next stage (design 52), where the full `checksBlock` with
+ * outputs would be the previous stage's transcript. Pure.
+ */
+export const checksSummaryLine = (results: readonly CheckResult[]): string =>
+  results.map((r) => `${r.name} (${r.command}) → ${r.outcome.toUpperCase()}`).join("; ")
+
+/**
  * The commands a stage's checks ran, for seeding `ObservedEvidence`.
  *
  * Load-bearing, not a convenience: `evidenceIssue` rejects a PASS the host

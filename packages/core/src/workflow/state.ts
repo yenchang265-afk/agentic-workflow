@@ -133,6 +133,19 @@ export interface WorkflowState {
    */
   readonly replan?: { readonly reason: string }
   /**
+   * What the last STOPPED run left behind — its branch, base and diffstat,
+   * and the discovered checks admission refused — read from the task file at
+   * a PLAN claim (`priorRunFor`, design 51). Never persisted, like `replan`:
+   * only a PLAN-entry state carries it, and plan.md renders it so the new plan
+   * decides about that work instead of discovering the branch at BUILD.
+   */
+  readonly priorRun?: {
+    readonly branch?: string
+    readonly base?: string
+    readonly diffstat?: string
+    readonly refusedChecks?: readonly string[]
+  }
+  /**
    * Per-stage results of the check commands the DRIVER ran before firing that
    * stage (`workflow/checks.ts`). Absent ⇒ no checks are configured, which is
    * byte-identical to the behavior before they existed: no prompt section, no
@@ -459,12 +472,19 @@ export const resumeAtBuild = (goal: string, task: TaskRef, plan: string): Workfl
  *  task. `priorPlan` carries a rejected/capped plan on a replan so the new
  *  plan addresses why the old one failed instead of repeating it; `replanReason`
  *  carries the human's rejection reason alongside it (see `extractReplanReason`). */
-export const startAtPlan = (goal: string, task: TaskRef, priorPlan?: string, replanReason?: string): WorkflowState => ({
+export const startAtPlan = (
+  goal: string,
+  task: TaskRef,
+  priorPlan?: string,
+  replanReason?: string,
+  priorRun?: WorkflowState["priorRun"],
+): WorkflowState => ({
   goal,
   stage: "plan",
   iteration: 0,
   artifacts: priorPlan ? { plan: priorPlan } : {},
   ...(replanReason ? { replan: { reason: replanReason } } : {}),
+  ...(priorRun ? { priorRun } : {}),
   task,
 })
 
