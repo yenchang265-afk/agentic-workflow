@@ -11,6 +11,8 @@ import { checkDiscoveryBlock, discoveringStage, discoveryAllowlist, noMachineChe
 import { dependencyContractBlock } from "./declared-deps.js"
 import { shellQuote } from "./worktree-guard.js"
 import {
+  blockingFindingIds,
+  failureFingerprint,
   planContractBlock,
   planVisualizationBlock,
   suggestionFindings,
@@ -130,8 +132,47 @@ const attemptReason = (reason: string | undefined): string | undefined => {
 /** Append one counted iteration's outcome, keeping the last `ATTEMPTS_KEPT`. Pure. */
 const withAttempt = (state: WorkflowState, stage: string, verdict: Verdict, record: VerdictRecord | null): WorkflowState => {
   const reason = attemptReason(record?.reason)
-  const entry: AttemptRecord = { stage, iteration: state.iteration, verdict, ...(reason ? { reason } : {}) }
+  const fingerprint = failureFingerprint(record)
+  const findings = blockingFindingIds(record)
+  const entry: AttemptRecord = {
+    stage,
+    iteration: state.iteration,
+    verdict,
+    ...(reason ? { reason } : {}),
+    ...(fingerprint ? { fingerprint } : {}),
+    ...(findings.length ? { findings } : {}),
+  }
   return { ...state, attempts: [...(state.attempts ?? []), entry].slice(-ATTEMPTS_KEPT) }
+}
+
+/**
+ * Blocking finding id → the 1-based iteration it was LAST raised in, on this
+ * stage, from the ledger — what `verdictFeedbackBlock` marks repeats with. Pure.
+ */
+const priorFindings = (state: WorkflowState, stage: string): ReadonlyMap<string, number> => {
+  const out = new Map<string, number>()
+  for (const a of state.attempts ?? []) {
+    if (a.stage !== stage) continue
+    for (const id of a.findings ?? []) out.set(id, a.iteration + 1)
+  }
+  return out
+}
+
+/**
+ * How many of the ledger's TRAILING attempts on `stage` carry `fingerprint` —
+ * other stages' attempts are skipped (VERIFY, REVIEW, VERIFY is still VERIFY
+ * failing twice running), and the count ends at the first attempt on this stage
+ * that failed differently. Pure.
+ */
+const trailingSameFailures = (attempts: readonly AttemptRecord[] | undefined, stage: string, fingerprint: string): number => {
+  let n = 0
+  for (let i = (attempts?.length ?? 0) - 1; i >= 0; i--) {
+    const a = attempts![i]!
+    if (a.stage !== stage) continue
+    if (a.fingerprint !== fingerprint) break
+    n++
+  }
+  return n
 }
 
 /**
@@ -497,11 +538,17 @@ export const advance = (
   // Fuse the machine-recorded failure reasons ahead of the stage's prose so the
   // next iteration leads with what actually failed. Owned here, not by each host,
   // so the seam between the two is recorded and the budget can spare the block.
-  const s = withArtifact(state, state.stage, output, verdictFeedbackBlock(record))
+  const s = withArtifact(state, state.stage, output, verdictFeedbackBlock(record, priorFindings(state, state.stage)))
   const def = stageDef(manifest, s.stage)
   const t = manifest.transitions[s.stage]
-  const effect =
-    def.kind === "work"
+  // A check stage that judged the PLAN defective (not the build) takes the
+  // manifest's `onPlanDefect` arm when one is declared. `admitVerdict` already
+  // pinned the flag to a FAIL with a reason, so no re-validation here; a kind
+  // without the arm routes the FAIL exactly as before.
+  const planDefect = def.kind === "check" && verdict === "FAIL" && record?.planDefect === true && t?.onPlanDefect !== undefined
+  const effect = planDefect
+    ? t!.onPlanDefect
+    : def.kind === "work"
       ? // A work stage normally has exactly one exit: it did the work, fire the
         // next stage. The one exception is a stage that reports it CANNOT do the
         // work at all — an approved plan that turns out to be impossible. Without
@@ -536,6 +583,21 @@ export const advance = (
           // ledger of a capped run reports N−1 failures, and state.ts promises
           // it reports what all N tried.
           return { state: withAttempt(s, s.stage, verdict ?? "FAIL", record), action: { kind: "stop", message } }
+        }
+        // The stall rule: this failure plus the trailing identical ones on this
+        // stage reach `stallAfter`, so the next BUILD would be asked to fix the
+        // same things again. Judged on the structural fingerprint only — a
+        // reason-only FAIL has none and never stalls (a false stall ends a run
+        // that might have converged; a missed one costs what the cap costs today).
+        const fingerprint = failureFingerprint(record)
+        if (effect.stallAfter !== undefined && fingerprint !== undefined) {
+          const alike = trailingSameFailures(s.attempts, s.stage, fingerprint) + 1
+          if (alike >= effect.stallAfter) {
+            const message = (effect.stallMessage ?? effect.capMessage ?? `✗ Loop stopped — {stallAfter} identical failures.`)
+              .replaceAll("{stallAfter}", String(effect.stallAfter))
+              .replaceAll("{maxIterations}", String(cap))
+            return { state: withAttempt(s, s.stage, verdict ?? "FAIL", record), action: { kind: "stop", message } }
+          }
         }
         // Recorded here, on the counted re-fire, not on every check completion:
         // a verdict-channel retry must not inflate the ledger.
@@ -575,8 +637,12 @@ export const advance = (
       // retryable would hand the task straight back to the watcher, which would re-claim
       // it and re-derive the same refusal forever. It needs a human (replan), so it stays
       // unmarked and is recorded as a failed attempt.
+      //
+      // A plan-defect stop is a failed attempt the LEDGER must carry too: the
+      // stop context note (`runStop`) is how its reason reaches the replan's
+      // PLAN pass, and that note is written from `state.attempts`.
       return {
-        state: s,
+        state: planDefect ? withAttempt(s, s.stage, "FAIL", record) : s,
         action: {
           kind: "stop",
           message: effect.message,

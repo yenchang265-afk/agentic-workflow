@@ -28,6 +28,9 @@ import {
   verdictContractBlock,
   suggestionFindings,
   verdictFeedbackBlock,
+  findingId,
+  blockingFindingIds,
+  failureFingerprint,
   withCoverageGap,
   withUnassessedGuard,
   workScopeBlock,
@@ -670,6 +673,81 @@ test("blockingFindingsIssue: a FAIL whose every axis is a finding-less ERROR is 
 })
 
 // --- admitVerdict (the single seam both hosts record through) ---
+
+// --- findingId / failureFingerprint (design 46) ---
+
+test("findingId is stable across rewording and location spelling, distinct across axis, severity and line", () => {
+  const a = findingId("security", { severity: "critical", detail: "unvalidated id in SQL", location: "src/db/query.ts:41" })
+  assert.match(a, /^[0-9a-f]{8}$/)
+  assert.equal(findingId("Security", { severity: "critical", detail: "SQL takes the raw id", location: " ./src\\db\\query.ts:41 " }), a)
+  assert.notEqual(findingId("correctness", { severity: "critical", detail: "x", location: "src/db/query.ts:41" }), a)
+  assert.notEqual(findingId("security", { severity: "important", detail: "x", location: "src/db/query.ts:41" }), a)
+  // The line stays in the id: two findings in one file are two findings.
+  assert.notEqual(findingId("security", { severity: "critical", detail: "x", location: "src/db/query.ts:47" }), a)
+  // Location-less findings fall back to their detail text.
+  const d = findingId("security", { severity: "critical", detail: "No rate limit" })
+  assert.equal(findingId("security", { severity: "critical", detail: " no rate limit " }), d)
+  assert.notEqual(findingId("security", { severity: "critical", detail: "no auth" }), d)
+})
+
+test("failureFingerprint is structural: failed criteria + blocking finding ids, never the reason, undefined when there is neither", () => {
+  const base = {
+    verdict: "FAIL" as const,
+    criteria: [
+      { criterion: "Returns 429", pass: false },
+      { criterion: "Configurable", pass: true },
+    ],
+    axes: [
+      { axis: "security", verdict: "FAIL" as const, findings: [{ severity: "critical" as const, detail: "a", location: "x.ts:1" }, { severity: "suggestion" as const, detail: "s" }] },
+    ],
+  }
+  const fp = failureFingerprint({ ...base, reason: "first wording" })
+  assert.ok(fp)
+  assert.equal(failureFingerprint({ ...base, reason: "a completely different wording" }), fp)
+  assert.equal(failureFingerprint({ ...base, criteria: [...base.criteria].reverse() }), fp, "order-insensitive")
+  // Suggestions are not part of the failure.
+  assert.equal(failureFingerprint({ ...base, axes: [{ ...base.axes[0]!, findings: [base.axes[0]!.findings![0]!] }] }), fp)
+  assert.notEqual(failureFingerprint({ ...base, criteria: [{ criterion: "Returns 429", pass: true }] }), fp)
+  assert.notEqual(failureFingerprint({ ...base, axes: [{ ...base.axes[0]!, findings: [{ severity: "critical", detail: "a", location: "x.ts:2" }] }] }), fp)
+  assert.equal(failureFingerprint({ verdict: "FAIL", reason: "prose only" }), undefined)
+  assert.equal(failureFingerprint({ verdict: "FAIL", criteria: [{ criterion: "c", pass: true }], axes: [{ axis: "a", verdict: "PASS" }] }), undefined)
+  assert.equal(failureFingerprint(null), undefined)
+  assert.deepEqual(blockingFindingIds(base), [findingId("security", base.axes[0]!.findings![0]!)])
+})
+
+test("verdictFeedbackBlock tags every blocking finding with its id and marks a repeat with the iteration it was last raised in", () => {
+  const f = { severity: "critical" as const, detail: "unvalidated id", location: "src/db/query.ts:41" }
+  const record = { verdict: "FAIL" as const, axes: [{ axis: "security", verdict: "FAIL" as const, findings: [f, { severity: "important" as const, detail: "no timeout", location: "src/net.ts:9" }] }] }
+  const id = findingId("security", f)
+  const fresh = verdictFeedbackBlock(record)
+  assert.match(fresh, new RegExp(`\\[critical\\] unvalidated id — src/db/query\\.ts:41 \\(finding ${id}\\)$`, "m"))
+  assert.doesNotMatch(fresh, /REPEAT/)
+  const again = verdictFeedbackBlock(record, new Map([[id, 1]]))
+  assert.match(again, new RegExp(`\\(finding ${id} — REPEAT, also raised in iteration 1: the previous fix did not resolve it\\)`))
+  // Only the finding that came back is a repeat.
+  assert.equal((again.match(/REPEAT/g) ?? []).length, 1)
+})
+
+// --- planDefect (design 48) ---
+
+test("admitVerdict pins planDefect to a FAIL with a reason, and a merge keeps the flag once any pass raised it", () => {
+  const pass = admitVerdict({ verdict: "PASS", planDefect: true }, undefined, null)
+  assert.equal(pass.ok, false)
+  assert.match((pass as { message: string }).message, /planDefect: true may only accompany verdict "FAIL"/)
+  const bare = admitVerdict({ verdict: "FAIL", planDefect: true, criteria: [{ criterion: "c", pass: false }] }, undefined, null)
+  assert.equal(bare.ok, false)
+  assert.match((bare as { message: string }).message, /needs a `reason` naming the defective plan step/)
+  const good = admitVerdict({ verdict: "FAIL", reason: "step 3 names an API the SDK does not have", planDefect: true }, undefined, null)
+  assert.equal(good.ok, true)
+  assert.equal((good as { record: { planDefect?: boolean } }).record.planDefect, true)
+  // Unflagged records carry no key at all — byte-identical to before.
+  const plain = admitVerdict({ verdict: "FAIL", reason: "red" }, undefined, null)
+  assert.equal("planDefect" in (plain as { record: object }).record, false)
+  const merged = admitVerdict({ verdict: "FAIL", reason: "other" }, undefined, good.ok ? good.record : null)
+  assert.equal((merged as { record: { planDefect?: boolean } }).record.planDefect, true)
+  const mergedPlain = admitVerdict({ verdict: "FAIL", reason: "b" }, undefined, { verdict: "FAIL", reason: "a" })
+  assert.equal("planDefect" in (mergedPlain as { record: object }).record, false)
+})
 
 test("admitVerdict rejects an incomplete payload and yields NO record to store", () => {
   const res = admitVerdict({ verdict: "PASS", axes: [{ axis: "correctness", verdict: "PASS" }] }, AXES, null)

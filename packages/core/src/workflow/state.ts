@@ -87,6 +87,16 @@ export interface AttemptRecord {
   readonly verdict: Verdict
   /** The verdict's one-line reason, flattened and truncated by `advance`. */
   readonly reason?: string
+  /**
+   * `failureFingerprint` of the verdict that counted this attempt — the
+   * structural shape of what failed (criteria + blocking finding ids), never
+   * the prose. Two consecutive attempts on one stage with equal fingerprints
+   * are the stall the manifest's `stallAfter` ends early. Absent when the
+   * verdict carried nothing structural.
+   */
+  readonly fingerprint?: string
+  /** Ids (`findingId`) of the blocking findings raised, so a later verdict can render a repeat as one. */
+  readonly findings?: readonly string[]
 }
 
 export interface WorkflowState {

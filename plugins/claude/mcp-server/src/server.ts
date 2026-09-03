@@ -81,7 +81,7 @@ import type { EvidenceContext, EvidenceItem, ObservedEvidence } from "@agentic-w
 import { renderRunSummary, type Outcome, type StageSample, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
 import { hostStageEvidencePath, hostStageMarkerPath, hostVerdictNagPath, taskDrivenByStageMarker, liveStageMarkers, taskNamedByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
-import { CHECKPOINT_LOCKFILE_EXCLUDES, commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
+import { CHECKPOINT_LOCKFILE_EXCLUDES, commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees, screenedWarning } from "@agentic-workflow/core/workflow/git"
 import { ensureIsolation, releaseWorktree, rivalHoldsCurrentBranchLock, workflowId } from "@agentic-workflow/core/workflow/isolate"
 import {
   approveAny as coreApproveAny,
@@ -1040,8 +1040,11 @@ const terminalCtx = (state: WorkflowState, actor: string | null): TerminalCtx =>
   commitBacklog: async (message) => void (await coreCommitBacklog(sh, directory, config, message)),
   // Worktree checkpoints exclude the backlog dir — the frozen `<tasksDir>` copy
   // must never ride feature/<id> (task-file lifecycle lives on the main tree).
-  checkpoint: async (message) =>
-    void (await commitAll(sh, workflowWorkTree(directory, state), message, state.git?.worktree ? [config.tasksDir, ...CHECKPOINT_LOCKFILE_EXCLUDES] : [...CHECKPOINT_LOCKFILE_EXCLUDES])),
+  checkpoint: async (message) => {
+    const result = await commitAll(sh, workflowWorkTree(directory, state), message, state.git?.worktree ? [config.tasksDir, ...CHECKPOINT_LOCKFILE_EXCLUDES] : [...CHECKPOINT_LOCKFILE_EXCLUDES])
+    const warning = screenedWarning(result.screened)
+    if (warning) await log("warn", `loop: ${warning}`)
+  },
   writeMetrics: async (outcome, detail, retryable) => {
     const stamp = new Date().toISOString()
     const summary = renderRunSummary(samples, outcome, detail, config.maxIterations, stamp, state.kind ?? "engineering")
@@ -1573,9 +1576,15 @@ server.registerTool(
         .describe(
           "Proof of work. REQUIRED for a PASS on a stage that declares requireEvidence (engineering verify/review): this session's real commands and file reads are recorded independently, and a PASS citing nothing — or nothing matching what actually ran — is REJECTED. At least one citation must be work YOU did this pass: check commands the loop pre-ran are established fact, not your proof. FAIL/ERROR need none.",
         ),
+      planDefect: z
+        .boolean()
+        .optional()
+        .describe(
+          "Set true ONLY when what fails is the APPROVED PLAN itself — a step that cannot be implemented as written, a criterion no implementation of this plan can satisfy. Must ride a FAIL with a `reason` naming the defective step (anything else is REJECTED). The loop then stops for a replan instead of rebuilding. Never for a defect the build can fix, and never to escape a hard task.",
+        ),
     },
   },
-  async ({ stage, verdict, reason, criteria, axes, evidence }) => {
+  async ({ stage, verdict, reason, criteria, axes, evidence, planDefect }) => {
     if (!active) return fail("No active loop — verdict ignored.")
     if (active.stage !== stage) {
       // The rejection alone reaches only the calling agent. Audit it on the task
@@ -1599,6 +1608,7 @@ server.registerTool(
       ...(criteria ? { criteria: criteria as CriterionResult[] } : {}),
       ...(axes ? { axes: axes as AxisResult[] } : {}),
       ...(evidence ? { evidence: evidence as EvidenceItem[] } : {}),
+      ...(planDefect !== undefined ? { planDefect } : {}),
     }
     // What the guard saw this attempt do, resolved per call rather than cached:
     // the ledger grows while the stage works, so a verdict recorded late in the
@@ -2144,12 +2154,16 @@ server.registerTool(
       if (await rivalHoldsCurrentBranchLock(sh, directory, config, active)) {
         await log("warn", "loop: this tree's current-branch lock is held by another run now — skipping the build checkpoint")
       } else {
-        await commitAll(
+        const result = await commitAll(
           sh,
           workTree(),
           `loop(${workflowId(active)}): build checkpoint (iteration ${active.iteration + 1})`,
           active.git?.worktree ? [config.tasksDir, ...CHECKPOINT_LOCKFILE_EXCLUDES] : [...CHECKPOINT_LOCKFILE_EXCLUDES],
         )
+        // Secret-shaped or oversized paths the sweep refused (design 47) —
+        // warned, never failed: the checkpoint lands without them.
+        const warning = screenedWarning(result.screened)
+        if (warning) await log("warn", `loop: ${warning}`)
       }
     }
     if (stageDef(activeManifest().manifest, stage).kind === "check" && active.task) {
@@ -2479,7 +2493,8 @@ server.registerTool(
       return ok({ committed: false, note: "the current-branch lock is held by another run — checkpoint skipped" })
     }
     const done = await commitAll(sh, workTree(), message, active.git.worktree ? [config.tasksDir, ...CHECKPOINT_LOCKFILE_EXCLUDES] : [...CHECKPOINT_LOCKFILE_EXCLUDES])
-    return ok({ committed: done })
+    const warning = screenedWarning(done.screened)
+    return ok({ committed: done.committed, ...(warning ? { note: warning } : {}) })
   },
 )
 

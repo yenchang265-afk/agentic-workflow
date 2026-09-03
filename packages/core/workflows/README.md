@@ -93,7 +93,15 @@ Transition **effects**:
 - `fire` — run another stage. `countIteration: true` spends one unit of the
   shared `maxIterations` budget and requires a `capMessage`
   (`{maxIterations}` interpolates); `dropArtifacts` removes stale feedback
-  that judged an older attempt.
+  that judged an older attempt. A counted fire may also set `stallAfter: N`
+  (min 2) with an optional `stallMessage` (`{stallAfter}` and
+  `{maxIterations}` interpolate; falls back to `capMessage`): once N
+  consecutive counted attempts on that stage failed with an identical
+  structural fingerprint — the same criteria not met and the same blocking
+  findings, never the reason prose — the run stops there instead of spending
+  the rest of the budget on a rebuild that will be asked to fix the same
+  things again. A reason-only FAIL has no fingerprint and never stalls.
+  Engineering sets `stallAfter: 2` on both check stages.
 - `park` — exit the loop at a human gate; `toStatus` names the work-source
   status the item parks into (engineering's PLAN → `plan-review`).
 - `done` — terminal success, with a message and an optional `toStatus` (the
@@ -103,6 +111,15 @@ Transition **effects**:
 Every stage needs a transitions entry; `work` stages need `onDone`, `check`
 stages need all of `onPass`/`onFail`/`onError`. A missing verdict on a check
 stage resolves as FAIL — never as a stall, never parsed from prose.
+
+A check stage may additionally declare `onPlanDefect`: the arm taken on a FAIL
+whose `workflow_verdict` record carries `planDefect: true` — the stage judged
+the APPROVED PLAN unimplementable (a step that cannot be built as written, a
+criterion no implementation of the plan can satisfy), not the build wrong.
+Admission pins the flag to a FAIL with a `reason`, and a kind that declares no
+arm routes such a FAIL through `onFail` exactly as before. Engineering points
+it at a `stop` naming `replan <id>`: the stopped attempt lands on the ledger,
+so the reason reaches the replan's PLAN pass through the stop context note.
 
 A check stage may also declare `requiredAxes`. The stage prompt then carries the
 per-axis payload contract, and `workflow_verdict` **rejects** a verdict whose `axes`

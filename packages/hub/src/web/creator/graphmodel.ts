@@ -10,7 +10,7 @@ import type { Effect, WorkflowManifest, StageDef, Transition } from "@agentic-wo
  * messages).
  */
 
-export type TransitionSlot = "onDone" | "onPass" | "onFail" | "onError"
+export type TransitionSlot = "onDone" | "onPass" | "onFail" | "onError" | "onPlanDefect"
 
 export interface StageNode {
   readonly id: string
@@ -53,7 +53,7 @@ export interface WorkflowGraph {
   readonly meta: GraphMeta
 }
 
-export const SLOTS: readonly TransitionSlot[] = ["onDone", "onPass", "onFail", "onError"]
+export const SLOTS: readonly TransitionSlot[] = ["onDone", "onPass", "onFail", "onError", "onPlanDefect"]
 
 /** Terminal node id for a non-fire effect. Pure. */
 export const terminalId = (effect: Effect): string =>

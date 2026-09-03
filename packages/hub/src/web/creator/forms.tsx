@@ -240,6 +240,9 @@ export interface EdgeFormValue {
   readonly message?: string
   readonly countIteration?: boolean
   readonly capMessage?: string
+  /** Stop early after this many consecutive identical failures on the stage (design 46); needs countIteration. */
+  readonly stallAfter?: number
+  readonly stallMessage?: string
   readonly dropArtifacts?: readonly string[]
 }
 
@@ -276,6 +279,25 @@ export const EdgeForm = ({
         {value.countIteration && (
           <Field label="cap message (required; {maxIterations} interpolates)">
             <textarea rows={2} value={value.capMessage ?? ""} onChange={(e) => onChange({ ...value, capMessage: e.target.value })} />
+          </Field>
+        )}
+        {value.countIteration && (
+          <Field label="stall after (optional, min 2: stop once this many consecutive attempts failed identically)">
+            <input
+              type="number"
+              min={2}
+              value={value.stallAfter ?? ""}
+              onChange={(e) => {
+                const { stallAfter: _drop, ...rest } = value
+                const n = Number.parseInt(e.target.value, 10)
+                onChange(Number.isInteger(n) && n >= 2 ? { ...rest, stallAfter: n } : rest)
+              }}
+            />
+          </Field>
+        )}
+        {value.countIteration && value.stallAfter !== undefined && (
+          <Field label="stall message (optional; {stallAfter} and {maxIterations} interpolate; falls back to the cap message)">
+            <textarea rows={2} value={value.stallMessage ?? ""} onChange={(e) => onChange({ ...value, stallMessage: e.target.value })} />
           </Field>
         )}
         <Field label="drop artifacts (stale feedback to remove, comma-separated)">

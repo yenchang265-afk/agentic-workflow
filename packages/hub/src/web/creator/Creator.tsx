@@ -93,6 +93,8 @@ const toFlow = (manifest: WorkflowManifest): { nodes: Node[]; edges: Edge[]; met
       ...("message" in e.effect ? { message: e.effect.message } : {}),
       ...(e.effect.kind === "fire" && e.effect.countIteration ? { countIteration: true } : {}),
       ...(e.effect.kind === "fire" && e.effect.capMessage ? { capMessage: e.effect.capMessage } : {}),
+      ...(e.effect.kind === "fire" && e.effect.stallAfter !== undefined ? { stallAfter: e.effect.stallAfter } : {}),
+      ...(e.effect.kind === "fire" && e.effect.stallMessage ? { stallMessage: e.effect.stallMessage } : {}),
       ...(e.effect.kind === "fire" && e.effect.dropArtifacts ? { dropArtifacts: e.effect.dropArtifacts } : {}),
     }
     return {
@@ -131,6 +133,8 @@ const fromFlow = (nodes: readonly Node[], edges: readonly Edge[], meta: GraphMet
         countIteration: data.countIteration ?? false,
         dropArtifacts: [...(data.dropArtifacts ?? [])],
         ...(data.capMessage ? { capMessage: data.capMessage } : {}),
+        ...(data.stallAfter !== undefined ? { stallAfter: data.stallAfter } : {}),
+        ...(data.stallMessage ? { stallMessage: data.stallMessage } : {}),
       }
     } else if (terminal) {
       effect =

@@ -21,6 +21,17 @@ export const EffectSchema = z.discriminatedUnion("kind", [
     countIteration: z.boolean().default(false),
     /** Stop message when `countIteration` exhausts the budget. `{maxIterations}` interpolates. */
     capMessage: z.string().optional(),
+    /**
+     * End the run early once this many CONSECUTIVE counted attempts on the same
+     * stage failed with an identical structural fingerprint (same failed
+     * criteria, same blocking findings — `failureFingerprint`). Opt-in per
+     * arm; requires `countIteration`. A run that fails the same way twice is
+     * not converging, and the third identical pass costs a full BUILD+check
+     * only to reach the cap message this one reaches now.
+     */
+    stallAfter: z.number().int().min(2).optional(),
+    /** Stop message for the stall; `{stallAfter}` and `{maxIterations}` interpolate. Falls back to `capMessage`. */
+    stallMessage: z.string().optional(),
   }),
   z.object({
     kind: z.literal("park"),
@@ -266,6 +277,14 @@ const TransitionSchema = z.object({
   onFail: EffectSchema.optional(),
   /** Taken on a `check` stage's ERROR verdict (the check itself couldn't run). */
   onError: EffectSchema.optional(),
+  /**
+   * Taken on a `check` stage's FAIL whose record carries `planDefect: true` —
+   * the stage judged the APPROVED PLAN unimplementable, not the build wrong.
+   * Opt-in: a kind that declares none routes such a FAIL through `onFail` as
+   * before. Engineering points it at a stop naming `replan`, because a rebuild
+   * against a plan that cannot pass only burns the iteration budget.
+   */
+  onPlanDefect: EffectSchema.optional(),
 })
 export type Transition = z.infer<typeof TransitionSchema>
 
@@ -504,12 +523,15 @@ export const WorkflowManifestSchema = z
             "(each axis is a full subagent pass)",
         })
       }
-      for (const effect of [t.onDone, t.onPass, t.onFail, t.onError]) {
+      for (const effect of [t.onDone, t.onPass, t.onFail, t.onError, t.onPlanDefect]) {
         if (effect?.kind === "fire" && !names.has(effect.stage)) {
           ctx.addIssue({ code: "custom", message: `transition fires unknown stage "${effect.stage}"` })
         }
         if (effect?.kind === "fire" && effect.countIteration && !effect.capMessage) {
           ctx.addIssue({ code: "custom", message: `counted fire to "${effect.stage}" needs a capMessage` })
+        }
+        if (effect?.kind === "fire" && effect.stallAfter !== undefined && !effect.countIteration) {
+          ctx.addIssue({ code: "custom", message: `stallAfter on the fire to "${effect.stage}" needs countIteration — a stall is counted attempts failing alike` })
         }
       }
     }

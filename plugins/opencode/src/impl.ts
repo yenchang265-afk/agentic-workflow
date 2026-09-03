@@ -1284,6 +1284,15 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
                 "must be work YOU did this pass: check commands the loop pre-ran are established fact, not your proof. " +
                 "FAIL/ERROR need none.",
             ),
+          planDefect: tool.schema
+            .boolean()
+            .optional()
+            .describe(
+              "Set true ONLY when what fails is the APPROVED PLAN itself — a step that cannot be implemented as written, a " +
+                "criterion no implementation of this plan can satisfy. Must ride a FAIL with a `reason` naming the defective " +
+                "step (anything else is REJECTED). The loop then stops for a replan instead of rebuilding. Never for a defect " +
+                "the build can fix, and never to escape a hard task.",
+            ),
         },
         execute: async (args, ctx) => {
           // Check stages run as subtasks: the call carries the CHILD session's
@@ -1310,6 +1319,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
               ...(args.criteria !== undefined ? { criteria: args.criteria } : {}),
               ...(args.axes !== undefined ? { axes: args.axes } : {}),
               ...(args.evidence !== undefined ? { evidence: args.evidence } : {}),
+              ...(args.planDefect !== undefined ? { planDefect: args.planDefect } : {}),
             },
             // deps only so an out-of-stage verdict can be audited on the task file
             deps,

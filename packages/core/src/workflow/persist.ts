@@ -79,6 +79,10 @@ const WorkflowStateSchema = z.object({
         iteration: z.number().int().min(0),
         verdict: z.enum(["PASS", "FAIL", "ERROR"]),
         reason: z.string().optional(),
+        // Declared or stripped (zod): a resumed run that lost these would
+        // never see a stall or a repeat finding again — silently.
+        fingerprint: z.string().optional(),
+        findings: z.array(z.string()).optional(),
       }),
     )
     .optional(),

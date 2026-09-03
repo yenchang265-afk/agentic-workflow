@@ -108,6 +108,16 @@ export interface VerdictRecord {
   readonly criteria?: readonly CriterionResult[]
   readonly axes?: readonly AxisResult[]
   readonly evidence?: readonly EvidenceItem[]
+  /**
+   * The failure is in the APPROVED PLAN, not in the build: a step that cannot
+   * be implemented as written, a criterion no implementation of this plan can
+   * satisfy. Admissible only beside a FAIL with a reason (`planDefectIssue`),
+   * and only routed when the manifest declares an `onPlanDefect` arm — the
+   * check-stage twin of a work stage's `workflow_blocked`, which check stages
+   * are (rightly) refused. Without it a wrong plan burns every iteration to
+   * the cap before the human learns what the first VERIFY already knew.
+   */
+  readonly planDefect?: boolean
 }
 
 /**
@@ -508,7 +518,8 @@ export const admitVerdict = (
   const gate =
     axisCoverageIssue(incoming, requiredAxes) ??
     blockingFindingsIssue(incoming, requiredAxes) ??
-    failFeedbackIssue(incoming)
+    failFeedbackIssue(incoming) ??
+    planDefectIssue(incoming)
   if (gate) return { ok: false, message: gate }
   // The PASS-side gates are COLLECTED, not short-circuited: the retry budget is
   // one, so a PASS missing both its criteria and its evidence must learn both
@@ -523,6 +534,9 @@ export const admitVerdict = (
   const criteria = [...(pending.criteria ?? []), ...(incoming.criteria ?? [])]
   const axes = mergeAxes(pending.axes, incoming.axes)
   const cited = mergeEvidence(pending.evidence, incoming.evidence)
+  // A plan defect declared by ANY pass is a plan defect: the merged verdict is
+  // worst-wins, and this is the one flag that only ever worsens it.
+  const planDefect = pending.planDefect === true || incoming.planDefect === true
   return {
     ok: true,
     record: {
@@ -531,8 +545,33 @@ export const admitVerdict = (
       ...(criteria.length ? { criteria } : {}),
       ...(axes.length ? { axes } : {}),
       ...(cited.length ? { evidence: cited } : {}),
+      ...(planDefect ? { planDefect } : {}),
     },
   }
+}
+
+/**
+ * `planDefect` is a routing flag with real cost — it ends the run — so its shape
+ * is gated like a FAIL's: it must ride a FAIL (a PASS whose plan is defective is
+ * a contradiction, and an ERROR is the environment's fault, not the plan's), and
+ * it must carry a reason, because the reason is what the replan's PLAN pass
+ * reads — a bare flag would stop the run and tell the next planner nothing.
+ */
+const planDefectIssue = (record: VerdictRecord): string | null => {
+  if (record.planDefect !== true) return null
+  if (record.verdict !== "FAIL") {
+    return (
+      `Verdict NOT recorded — planDefect: true may only accompany verdict "FAIL" (yours is ${record.verdict}). ` +
+      "A plan defect IS a failure of this stage: record FAIL with the defect as its reason, or drop the flag."
+    )
+  }
+  if (!record.reason?.trim()) {
+    return (
+      "Verdict NOT recorded — planDefect: true needs a `reason` naming the defective plan step: that reason is " +
+      "what the replan reads. Call again with the reason."
+    )
+  }
+  return null
 }
 
 /**
@@ -640,7 +679,75 @@ export const noAdmissibleVerdictReason = (opts: {
  * prevent. Suggestions are dropped; only what blocks reaches the next BUILD.
  * Pure.
  */
-export const verdictFeedbackBlock = (record: VerdictRecord | null): string => {
+/**
+ * FNV-1a 32-bit, hex. A content id needs no cryptographic strength — it is a
+ * handle, not a signature — and verdict.ts is inlined into the Claude hooks
+ * bundle, so a `node:crypto` import here would be paid by every hook. Pure.
+ */
+const fnv1a = (s: string): string => {
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return h.toString(16).padStart(8, "0")
+}
+
+/** `./src\\x.ts:41 ` and `src/x.ts:41` are one location. Pure. */
+const normalizeLocation = (location: string): string =>
+  location.trim().replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase()
+
+/**
+ * A finding's stable id: axis + severity + its anchor. The anchor is the
+ * normalized `location` when the finding has one, else its detail text — a
+ * located finding keeps its id across rewordings, which is the whole point
+ * (the model rephrases; the file:line does not). The line number stays IN the
+ * id on purpose: dropping it would fold two different critical findings in one
+ * file into one id, and a false "repeat" is the reading that ends a run early
+ * (`failureFingerprint`), so the id errs toward "new". Pure.
+ */
+export const findingId = (axis: string, f: AxisFinding): string =>
+  fnv1a(
+    [
+      axis.trim().toLowerCase(),
+      f.severity,
+      f.location?.trim() ? `loc:${normalizeLocation(f.location)}` : `detail:${f.detail.trim().toLowerCase()}`,
+    ].join("\u0000"),
+  )
+
+/** Ids of every blocking finding on the record — sorted, de-duplicated. Pure. */
+export const blockingFindingIds = (record: VerdictRecord | null): readonly string[] => {
+  const ids = new Set<string>()
+  for (const axis of record?.axes ?? []) {
+    for (const f of (axis.findings ?? []).filter(isBlocking)) ids.add(findingId(axis.axis, f))
+  }
+  return [...ids].sort()
+}
+
+/**
+ * The STRUCTURAL shape of a failure: which criteria failed and which blocking
+ * findings were raised — never the reason prose, which the model rewords every
+ * time. Two attempts with equal fingerprints failed on the same things, which
+ * is what the stall rule (`stallAfter`, engine.ts) reads. `undefined` when the
+ * record carries nothing structural — a reason-only FAIL — so a stage that
+ * reports in prose alone can never trip the rule: a false stall ends a run that
+ * might have converged, so absence of proof reads as "different". Pure.
+ */
+export const failureFingerprint = (record: VerdictRecord | null): string | undefined => {
+  const criteria = [...new Set((record?.criteria ?? []).filter((c) => !c.pass).map((c) => c.criterion.trim().toLowerCase()))].sort()
+  const findings = blockingFindingIds(record)
+  if (!criteria.length && !findings.length) return undefined
+  return fnv1a(`${criteria.join("\u0001")}\u0002${findings.join("\u0001")}`)
+}
+
+/**
+ * `prior` maps a blocking finding's id to the 1-based iteration it was last
+ * raised in (built by the engine from the attempts ledger), so a finding that
+ * comes back is rendered AS a repeat — the rebuild's cue that its last fix did
+ * not land — instead of re-emitted verbatim as if it were news. Omitted, the
+ * block renders every finding as fresh, which is exactly what it always did.
+ */
+export const verdictFeedbackBlock = (record: VerdictRecord | null, prior?: ReadonlyMap<string, number>): string => {
   const failed = record?.criteria?.filter((c) => !c.pass) ?? []
   const lines: string[] = []
   if (record?.reason) lines.push(`Verdict reason: ${record.reason}`)
@@ -654,7 +761,10 @@ export const verdictFeedbackBlock = (record: VerdictRecord | null): string => {
     for (const axis of failing) {
       lines.push(`- ${axis.axis} (${axisVerdict(axis)})`)
       for (const f of (axis.findings ?? []).filter(isBlocking)) {
-        lines.push(`  - [${f.severity}] ${f.detail}${f.location ? ` — ${f.location}` : ""}`)
+        const id = findingId(axis.axis, f)
+        const seen = prior?.get(id)
+        const tag = seen === undefined ? `(finding ${id})` : `(finding ${id} — REPEAT, also raised in iteration ${seen}: the previous fix did not resolve it)`
+        lines.push(`  - [${f.severity}] ${f.detail}${f.location ? ` — ${f.location}` : ""} ${tag}`)
       }
     }
   }
@@ -758,6 +868,10 @@ export const verdictContractBlock = (
     `exactly once, with stage: "${stage}", verdict: "PASS" | "FAIL" | "ERROR", and a one-line reason on FAIL/ERROR.`,
     "A verdict written only in prose is IGNORED and the loop records this stage as a failure.",
     "A FAIL that names nothing to fix — no reason, no criterion marked not met, no blocking finding — is REJECTED and you must call again.",
+    "PLAN DEFECT: when what fails is the APPROVED PLAN itself — a step that cannot be implemented as written, a criterion",
+    "no implementation of this plan can satisfy — record FAIL with `planDefect: true` and a reason naming the defective step:",
+    "the loop then stops for a replan instead of rebuilding against a plan that cannot pass. Never for a defect the build",
+    "can fix, never with PASS, and never to escape a hard task — a wrong flag costs the human a replan they did not need.",
     "If the workflow_verdict tool is not in your tool list, state that explicitly in your final message and finish.",
     ...(criteriaCount
       ? [

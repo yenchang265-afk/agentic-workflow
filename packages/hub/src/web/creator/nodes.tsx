@@ -20,6 +20,7 @@ const CHECK_SLOTS = [
   { id: "onPass", label: "pass" },
   { id: "onFail", label: "fail" },
   { id: "onError", label: "error" },
+  { id: "onPlanDefect", label: "plan-defect" },
 ] as const
 
 export const StageFlowNode = ({ data, selected }: NodeProps) => {
@@ -41,7 +42,7 @@ export const StageFlowNode = ({ data, selected }: NodeProps) => {
             id={slot.id}
             type="source"
             position={Position.Right}
-            style={{ top: `${25 + i * 25}%` }}
+            style={{ top: `${20 + i * 20}%` }}
             className={`handle-${slot.label}`}
             title={slot.label}
           />

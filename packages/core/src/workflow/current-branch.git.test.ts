@@ -111,7 +111,7 @@ test("the loop builds on the checked-out branch: no ref is cut, no worktree, and
     // The whole reason `base` is a sha: with a branch-name base this diff would
     // be empty and REVIEW would grade nothing.
     fs.writeFileSync(path.join(repo, "built.txt"), "the loop's work\n")
-    assert.equal(await commitAll(sh, repo, "loop(t1): checkpoint"), true)
+    assert.equal((await commitAll(sh, repo, "loop(t1): checkpoint")).committed, true)
     const diff = await git(repo, "diff", "--name-only", `${isolated.git!.base}...work`)
     assert.equal(diff, "built.txt")
 
