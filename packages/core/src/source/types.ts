@@ -29,6 +29,17 @@ export interface WorkItem {
   readonly claimMessage: string
   /** Source-private handle (e.g. the backlog `Task`). */
   readonly ref?: unknown
+  /**
+   * How many MORE items this source would have claimed on the same walk
+   * (design 65) — the candidates behind this one that also need attention,
+   * counted without claiming or fetching them. Lets a host say "N more
+   * <kind> items are waiting" at the item's terminal instead of going quiet
+   * until the next tick. Absent when the source cannot tell (the backlog
+   * has `status` for that; a single-head source has nothing behind it). A
+   * source whose judgement costs a network call per candidate bounds the
+   * probe, so the value may be a LOWER bound there (ado-pr: `REMAINING_PROBE_MAX`).
+   */
+  readonly remaining?: number
 }
 
 /**

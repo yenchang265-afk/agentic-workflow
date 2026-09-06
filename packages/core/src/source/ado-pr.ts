@@ -46,6 +46,8 @@ import { withClaimMarker, type ClaimSkipReason, type TerminalOutcome, type WorkS
  * runaway guard, not a policy: hitting it is warned about, never passed off as
  * the complete set.
  */
+/** Eligible tail PRs judged for `WorkItem.remaining` (design 65) — each costs the snapshot's API calls. */
+export const REMAINING_PROBE_MAX = 5
 const PR_PAGE_SIZE = 100
 const PR_MAX_PAGES = 10
 
@@ -311,7 +313,36 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
         )
       }
       const heldIds: string[] = []
-      for (const pr of prs.sort((a, b) => a.pullRequestId - b.pullRequestId)) {
+      const ordered = prs.sort((a, b) => a.pullRequestId - b.pullRequestId)
+      // The identity + attention judgement of the walk below, without claiming
+      // or fetching — re-run over the tail after a claim to count what is left
+      // (`remaining`, design 65).
+      const eligible = (pr: (typeof ordered)[number]): boolean => {
+        if (pr.isDraft || pr.forkSource != null) return false
+        if (role === "reviewer") {
+          if (sameLogin(pr.createdBy.uniqueName, login)) return false
+          const mine = pr.reviewers.find((r) => sameLogin(r.uniqueName, login))
+          if (!mine || mine.vote !== 0) return false
+        } else if (!sameLogin(pr.createdBy.uniqueName, login)) return false
+        return !!pr.lastMergeSourceCommit?.commitId
+      }
+      // Unlike GitHub's, this judgement costs API calls per PR (threads and
+      // pipelines ride the snapshot), so the tail probe is BOUNDED: at most
+      // `REMAINING_PROBE_MAX` eligible PRs are judged, and the count is a lower
+      // bound past that — a hint that stays cheap, never a lease.
+      const remainingAfter = async (index: number): Promise<number> => {
+        let n = 0
+        let probed = 0
+        for (const pr of ordered.slice(index + 1)) {
+          if (!eligible(pr)) continue
+          if (probed++ >= REMAINING_PROBE_MAX) break
+          const ledger = await loadLedger(client, directory, tasksDir, kind, pr.pullRequestId, now())
+          const snapshot = await buildSnapshot(pr, ledger.lastCommentAtHandled ?? "")
+          if (attentionTriggers(snapshot, ledger, binding.triggers).length > 0) n++
+        }
+        return n
+      }
+      for (const [index, pr] of ordered.entries()) {
         if (pr.isDraft) continue
         // Fork PRs are skipped for every role: an author-role kind can't push the
         // head branch, and a reviewer-role kind would execute untrusted fork code
@@ -348,10 +379,13 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
           continue
         }
         return {
-          item: withClaimMarker(
-            prWorkItem(loaded, "ado", snapshot, triggers, { ...(deps.maxDiffLines != null ? { maxDiffLines: deps.maxDiffLines } : {}) }, coords),
-            markers.markerDir(number),
-          ),
+          item: {
+            ...withClaimMarker(
+              prWorkItem(loaded, "ado", snapshot, triggers, { ...(deps.maxDiffLines != null ? { maxDiffLines: deps.maxDiffLines } : {}) }, coords),
+              markers.markerDir(number),
+            ),
+            remaining: await remainingAfter(index),
+          },
           skip: null,
         }
       }

@@ -22,13 +22,13 @@ REVIEW，作用於 docs/tasks 待辦（backlog）。
 **OpenCode**
 
 ```
-/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | approve --all | replan [id] [reason] | abandon <id> [reason] | restore <id> [reason] | remove <id> --force | show <id> | priority <id> <n> | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | init | doctor [fix|config] | stop | status
+/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | approve --all | replan [id] [reason] | abandon <id> [reason] | restore <id> [reason] | remove <id> --force | show <id> | priority <id> <n> | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | init | doctor [fix|config] | metrics [7d|30d|all] [kind] | stop | status
 ```
 
 **Claude Code (MCP)**
 
 ```
-/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | approve --all | replan [id] [reason] | abandon <id> [reason] | restore <id> [reason] | remove <id> --force | show <id> | priority <id> <n> | plan <id> | claim [id] | recover <id> | kinds | init | doctor [fix|config] | stop | status
+/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | approve --all | replan [id] [reason] | abandon <id> [reason] | restore <id> [reason] | remove <id> --force | show <id> | priority <id> <n> | plan <id> | claim [id] | recover <id> | kinds | init | doctor [fix|config] | metrics [7d|30d|all] [kind] | stop | status
 ```
 
 （Claude Code 沒有常駐的 watcher；`claim` 就是一次性的拉取動詞。）

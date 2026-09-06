@@ -171,7 +171,7 @@ const routes: Route[] = [
   { method: "GET", pattern: "/api/runs/:id", handler: scoped(getRunDetail) },
   { method: "GET", pattern: "/api/active", handler: scoped((deps) => getActive(deps)) },
   { method: "GET", pattern: "/api/scheduler", handler: scoped((deps) => getSchedulerEvents(deps)) },
-  { method: "GET", pattern: "/api/metrics", handler: scoped((deps) => getMetrics(deps)) },
+  { method: "GET", pattern: "/api/metrics", handler: scoped(getMetrics) },
   { method: "GET", pattern: "/api/tokens", handler: scoped((deps) => getTokensSummary(deps)) },
   { method: "GET", pattern: "/api/tokens/:id", handler: scoped(getRunTokens) },
   { method: "GET", pattern: "/api/assets", handler: scoped((deps) => getAssets(deps)) },

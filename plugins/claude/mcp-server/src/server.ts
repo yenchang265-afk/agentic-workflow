@@ -103,6 +103,7 @@ import {
   type GateResult,
 } from "@agentic-workflow/core/workflow/gate"
 import { auditOrphans, formatOrphans, removeOrphanWorktrees } from "@agentic-workflow/core/workflow/orphans"
+import { formatMetricsHeadline, metricsHeadline, parseWindow, readRunInputs } from "@agentic-workflow/core/workflow/metrics-aggregate"
 import { notifyLoopEvent, runTerminal as coreRunTerminal, type TerminalCtx, type TerminalReport } from "@agentic-workflow/core/workflow/terminal"
 import { listSnapshotIds, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
 import { type Task } from "@agentic-workflow/core/task/schema"
@@ -2449,7 +2450,7 @@ server.registerTool(
  * the human's main tree). This host owns only the presentation: clear the stage
  * marker, fire the work source's `onTerminal`, and null the in-memory loop.
  */
-const runTerminal = async (action: Action): Promise<TerminalReport | null> => {
+const runTerminal = async (action: Action): Promise<(TerminalReport & { readonly remaining?: number; readonly next?: string }) | null> => {
   if (!active || (action.kind !== "done" && action.kind !== "stop")) return null
   const actor = await gitActor(sh, directory)
   const task = active.task
@@ -2482,6 +2483,11 @@ const runTerminal = async (action: Action): Promise<TerminalReport | null> => {
     throw err
   }
   writeStageMarker(null)
+  // The claim-next offer (design 65): the items the source counted behind this
+  // one at claim time, named at its terminal instead of waiting in silence for
+  // the next workflow_claim. Read before the claim is cleared below.
+  const remaining = activeClaim?.item.remaining
+  const remainingKind = activeClaim?.item.workflowKind
   if (activeClaim) {
     const detail = report.kind === "done" ? "review passed" : report.message
     const outcome = {
@@ -2502,6 +2508,13 @@ const runTerminal = async (action: Action): Promise<TerminalReport | null> => {
   }
   active = null
   resetLoopScratch() // a loop stopped mid-fan-out must not leave fanoutStage armed for the next loop
+  if (remaining !== undefined && remaining > 0 && remainingKind) {
+    return {
+      ...report,
+      remaining,
+      next: `${String(remaining)} more ${remainingKind} item${remaining === 1 ? "" : "s"} need${remaining === 1 ? "s" : ""} attention — workflow_claim({kind: "${remainingKind}"}) takes the next one.`,
+    }
+  }
   return report
 }
 
@@ -2619,6 +2632,27 @@ server.registerTool(
     await loadCfg()
     const r = await initRepo(sh, directory, config, log)
     return ok(r)
+  },
+)
+
+server.registerTool(
+  "workflow_metrics",
+  {
+    description:
+      "Read-only /agentic-workflow:engineering metrics [7d|30d|all] [kind] — cross-run loop health from docs/tasks/runs/: passes and runs in the window, outcome tallies, cap-trip and first-pass-yield rates, the slowest stages, and the same numbers per ISO week. `window` is a day count or `all` (default); `kind` narrows to one workflow kind's passes (logs that recorded no kind count as engineering). The same reader and arithmetic as the hub's Metrics tab.",
+    inputSchema: {
+      window: z.string().optional().describe("7d, 30d, 90d, a bare day count, or all (default)."),
+      kind: z.string().optional().describe("Only this workflow kind's passes."),
+    },
+  },
+  async ({ window: windowText, kind }) => {
+    await loadCfg()
+    const window = parseWindow(windowText)
+    if (!window) return fail(`window must be a day count like 30d, or all — got "${windowText ?? ""}".`)
+    const { inputs, skipped } = await readRunInputs(fsClient, directory, config.tasksDir)
+    const headline = metricsHeadline(inputs, { ...window, ...(kind ? { kind } : {}) })
+    const label = `${!windowText || windowText === "all" ? "all time" : `last ${windowText}`}${kind ? ` · ${kind}` : ""}`
+    return ok({ ...headline, window: { window: windowText ?? "all", kind: kind ?? null }, report: formatMetricsHeadline(headline, label), ...(skipped.length ? { skippedRuns: skipped } : {}) })
   },
 )
 

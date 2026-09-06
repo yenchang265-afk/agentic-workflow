@@ -248,7 +248,23 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
       }
       const login = await viewer()
       const heldIds: string[] = []
-      for (const pr of prs.sort((a, b) => a.number - b.number)) {
+      const ordered = prs.sort((a, b) => a.number - b.number)
+      // Whether a PR needs attention — the same judgement the claim walk makes,
+      // without claiming or fetching. Used once more after a claim to COUNT the
+      // candidates behind it (`remaining`, design 65), so the host can say how
+      // many are waiting instead of going quiet until the next tick.
+      const wantsAttention = async (pr: (typeof ordered)[number]): Promise<boolean> => {
+        if (pr.isDraft || pr.isCrossRepository) return false
+        const ledger = await loadLedger(client, directory, tasksDir, kind, pr.number, now())
+        const snapshot = buildSnapshot(pr, login, ledger.lastCommentAtHandled ?? "")
+        return attentionTriggers(snapshot, ledger, binding.triggers).length > 0
+      }
+      const remainingAfter = async (index: number): Promise<number> => {
+        let n = 0
+        for (const pr of ordered.slice(index + 1)) if (await wantsAttention(pr)) n++
+        return n
+      }
+      for (const [index, pr] of ordered.entries()) {
         if (pr.isDraft) continue
         // Fork PRs are skipped for every role: an author-role kind can't push the
         // head branch, and a reviewer-role kind would execute untrusted fork code
@@ -268,10 +284,13 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
           continue
         }
         return {
-          item: withClaimMarker(
-            prWorkItem(loaded, "github", snapshot, triggers, { ...(deps.maxDiffLines != null ? { maxDiffLines: deps.maxDiffLines } : {}) }),
-            markers.markerDir(pr.number),
-          ),
+          item: {
+            ...withClaimMarker(
+              prWorkItem(loaded, "github", snapshot, triggers, { ...(deps.maxDiffLines != null ? { maxDiffLines: deps.maxDiffLines } : {}) }),
+              markers.markerDir(pr.number),
+            ),
+            remaining: await remainingAfter(index),
+          },
           skip: null,
         }
       }

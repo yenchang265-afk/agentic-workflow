@@ -1,4 +1,5 @@
-import type { MetricsResponse } from "../../shared/api.js"
+import { useState } from "react"
+import type { MetricsResponse, WeekPoint } from "../../shared/api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
 import { Chip } from "../ui/Chip.js"
@@ -25,22 +26,90 @@ import { TokensSummaryPanel } from "./TokensSummaryPanel.js"
  * events that can change `/api/metrics`, since its only inputs are `runs/*.md`
  * and `runs/*.metrics.json`. No new SSE event type is needed for that reason.
  */
+const WINDOWS = ["7d", "30d", "90d", "all"] as const
+
+/** The headline numbers per ISO week (design 64) — the trend the whole-history roll-up hides. */
+const TrendTable = ({ trend }: { trend: readonly WeekPoint[] }) => {
+  if (trend.length < 2) return <div className="muted">Fewer than two weeks of passes in this window — no trend to show.</div>
+  return (
+    <table className="metrics-table">
+      <thead>
+        <tr>
+          <th>week of</th>
+          <th>passes</th>
+          <th>done</th>
+          <th title="passes that ended at their cap">cap-trip</th>
+          <th title="passes whose checks all passed on iteration 1">first-pass</th>
+        </tr>
+      </thead>
+      <tbody>
+        {trend.map((w) => (
+          <tr key={w.weekStart}>
+            <td>{w.weekStart}</td>
+            <td>{w.passes}</td>
+            <td>{w.done}</td>
+            <td>{pct(w.capTripRate)}</td>
+            <td>{pct(w.firstPassRate)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
 export const MetricsTab = () => {
   const { repoId } = useRepo()
   const { versions } = useEvents()
-  const { data, error } = useResource<MetricsResponse>(repoPath("/api/metrics", repoId), [
+  // The window and kind are query params on the same route (design 64): the
+  // server narrows the population before counting, so every number on the
+  // page measures the slice the chips name.
+  const [windowKey, setWindowKey] = useState<(typeof WINDOWS)[number]>("all")
+  const [kind, setKind] = useState<string>("")
+  const query = `?window=${windowKey}${kind ? `&kind=${encodeURIComponent(kind)}` : ""}`
+  const { data, error } = useResource<MetricsResponse>(repoPath(`/api/metrics${query}`, repoId), [
     repoId,
     versions.run,
     versions.tokens,
+    windowKey,
+    kind,
   ])
 
   if (error) return <div className="error-banner">{error}</div>
   if (!data) return <div className="placeholder">Loading metrics…</div>
-  if (data.runsTotal === 0) return <div className="placeholder">No runs recorded yet.</div>
+  const filters = (
+    <div className="summary-chips metrics-filters">
+      {WINDOWS.map((w) => (
+        <button key={w} type="button" className={`chip-button${w === windowKey ? " chip-button--on" : ""}`} onClick={() => setWindowKey(w)}>
+          <Chip gate={w === windowKey}>{w === "all" ? "all time" : `last ${w}`}</Chip>
+        </button>
+      ))}
+      {data.kinds.length > 1 && (
+        <>
+          <span className="muted">·</span>
+          <button type="button" className={`chip-button${kind === "" ? " chip-button--on" : ""}`} onClick={() => setKind("")}>
+            <Chip gate={kind === ""}>every kind</Chip>
+          </button>
+          {data.kinds.map((k) => (
+            <button key={k} type="button" className={`chip-button${k === kind ? " chip-button--on" : ""}`} onClick={() => setKind(k)}>
+              <Chip gate={k === kind}>{k}</Chip>
+            </button>
+          ))}
+        </>
+      )}
+    </div>
+  )
+  if (data.runsTotal === 0)
+    return (
+      <div className="metrics-tab">
+        {filters}
+        <div className="placeholder">{windowKey === "all" && !kind ? "No runs recorded yet." : "No passes in this window."}</div>
+      </div>
+    )
 
   const { burn, firstPass, cache } = data
   return (
     <div className="metrics-tab">
+      {filters}
       <div className="summary-chips">
         <Chip>
           runs <strong>{data.runsTotal}</strong>
@@ -138,6 +207,9 @@ export const MetricsTab = () => {
           )}
         </div>
       )}
+
+      <h2 className="section-title">Trend by week</h2>
+      <TrendTable trend={data.trend} />
 
       <h2 className="section-title">Iteration burn</h2>
       <BurnHistogram burn={burn} />

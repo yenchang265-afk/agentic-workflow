@@ -610,7 +610,7 @@ test("every verb whose move is deterministic moves BEFORE the reconcile sweep", 
   // are report-and-stop: the plugin's own outcome REPLACES the rendered body, so
   // there is no arm on which the model reads the backlog itself and can be misled
   // by a late move — which is what earns a verb the reordering.
-  for (const verb of ["new", "claim", "watch", "status", "doctor", "plan", "recover", "abandon", "restore", "priority", "show", "remove", "stop"]) {
+  for (const verb of ["new", "claim", "watch", "status", "doctor", "metrics", "plan", "recover", "abandon", "restore", "priority", "show", "remove", "stop"]) {
     assert.equal(gateMovesFirst("engineering", verb), false, `${verb} reconciles first`)
   }
   // Sitter kinds have no folder gates at all.
