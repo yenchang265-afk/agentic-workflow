@@ -38,6 +38,7 @@ import {
   worstOf,
   type VerdictRecord,
   joinClauses,
+  suggestionsElided,
 } from "./verdict.js"
 
 const AXES = ["correctness", "readability", "architecture", "security", "performance"]
@@ -1329,4 +1330,13 @@ test("the VERIFY contract renders its sub-contracts as separate paragraphs, word
   assert.deepEqual(paragraphs.map((p) => p.split(":")[0]), ["MANDATORY VERDICT", "PLAN DEFECT", "ACCEPTANCE CRITERIA", "PROOF OF WORK"])
   assert.equal(block.replace(/\n\n/g, " "), verdictContractBlock("verify", undefined, "single", true, 2).replace(/\n\n/g, " "))
   assert.ok(!block.includes("\n\n\n"))
+})
+
+test("suggestionsElided counts what suggestionFindings dropped past the cap (design 71)", () => {
+  const findings = Array.from({ length: 13 }, (_, i) => ({ severity: "suggestion" as const, detail: `s${String(i)}` }))
+  const record = { verdict: "PASS" as const, axes: [{ axis: "readability", verdict: "PASS" as const, findings }] }
+  assert.equal(suggestionFindings(record).length, 10)
+  assert.equal(suggestionsElided(record), 3)
+  assert.equal(suggestionsElided({ verdict: "PASS", axes: [{ axis: "a", verdict: "PASS", findings: findings.slice(0, 4) }] }), 0)
+  assert.equal(suggestionsElided(null), 0)
 })

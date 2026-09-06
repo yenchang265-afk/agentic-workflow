@@ -2,12 +2,12 @@
 
 # Agentic loop —— 工程（engineering）工作流程改進計畫
 
-**本頁每一份計畫（01–69）都已實作並測試完成**，存放於共用的
+**本頁每一份計畫（01–74）都已實作並測試完成**，存放於共用的
 `@agentic-workflow/core` 套件（`packages/core/`）中，供 OpenCode 外掛和 Claude
 MCP 伺服器共同使用。這些文件保留作為這些功能的設計紀錄，而非待辦的
 backlog。計畫 10–13 已於 2026-08-02 落地；計畫 14 於 2026-08-03；計畫 15 於
 2026-08-07；計畫 16–18 於 2026-08-08；計畫 24–27 於 2026-08-11；計畫 32 於
-2026-08-17；計畫 33–40 於 2026-08-23；計畫 41–45 於 2026-08-26；計畫 46–48 於 2026-09-02；計畫 49–69 於 2026-09-06。
+2026-08-17；計畫 33–40 於 2026-08-23；計畫 41–45 於 2026-08-26；計畫 46–48 於 2026-09-02；計畫 49–74 於 2026-09-06。
 
 來源：目前的程式碼（所有引用的路徑與函式名稱均已對照撰寫當下的原始碼驗證
 過）、[`../threat-model.md`](../threat-model.md) 中列出的殘餘風險，以及
@@ -90,6 +90,11 @@ backlog。計畫 10–13 已於 2026-08-02 落地；計畫 14 於 2026-08-03；�
 | 67 | [契約區塊讀起來是段落](./67-contract-block-paragraphs.zh-TW.md) | 每個契約區塊一句一條撰寫卻以空格接合，VERIFY 提示的尾端是約 900 字的一段，`PLAN DEFECT:`、`ACCEPTANCE CRITERIA:` 與 `PROOF OF WORK:` 在句中相撞。`joinClauses` 在全大寫標籤處另起段落、其餘維持空格接合，套用於全部八個建構器；措辭不變，引擎的區塊間接合與組合 oracle 未動 | `workflow/verdict.ts` 的 `joinClauses` 與五個建構器、`discovered-checks.ts` 的 `checkDiscoveryBlock`/`noMachineChecksBlock`、`declared-deps.ts` 的 `dependencyContractBlock`；`verdict.test.ts` |
 | 68 | [「先寫失敗測試」的規則限縮到行為](./68-build-test-rule-scope.zh-TW.md) | BUILD 無條件要求每個審查發現一個失敗測試，可讀性／架構／文件／命名發現或無可利用路徑的強化只能寫恆真測試（VERIFY 打回）或無聲不遵守。第 2 步現在只對驗收條件與修法改變行為的發現（`correctness`/`performance`、任何可重現缺陷）要求測試，其餘禁止製造測試並要求 Test status 指名既有守護；以已渲染的軸名為鍵，不改 schema，是人設不是模板所以不改 oracle | `prompts/agents/workflow-build/body.md` 第 2 步（重新產生到每個 host 的 `workflow-build.md`） |
 | 69 | [文件裡每個 sitter 區段都帶 `enabled`，由測試保證](./69-sitter-docs-opt-in.zh-TW.md) | sitter 需選擇加入而文件兩度偏離；一個 `prBase` 範例仍設定了永遠不跑的 `dep-sitter`，Qwen 頁面從未說 sitter 需選擇加入。範例加上 `"enabled": true`，Qwen 表把四個都標為（實驗性、需選擇加入）並陳述規則一次；`scripts/docs-sitter-enabled.test.mjs` 解析整組文件的 json 圍欄區塊，對沒有 `enabled` 的 `workflows.<選擇加入類型>` 區段失敗，`EXPERIMENTAL_KINDS` 讀自 core 的 dist | `docs/configuration.md`（+ zh-TW）的 `prBase` 範例、`docs/qwen.md`（+ zh-TW）；`scripts/docs-sitter-enabled.test.mjs` |
+| 70 | [寫入後盾的拒絕以它本來的身分記錄](./70-backstop-deny-entries.zh-TW.md) | 拒絕紀錄只記允許清單的拒絕，doctor 為每筆塑造 glob；寫入後盾（受保護分支推送、PR 變更、會改動的 `find`、ADO 寫入）在兩種 host 上拒絕卻不記錄——guard 摺進去的 `find` 規則還被記成允許清單拒絕，doctor 因此開出永遠無效的 `find` glob。`DenyEntry` 的 `source: "backstop"` 計為 `fromBackstop`，得到 `NOT_THE_ALLOWLIST` 而非 glob、報告寫 `(a write backstop)`；Claude/Qwen guard 的 `noteDeny` 多了 source，每個後盾 block 都記錄（hook 的 allowlist 匯出 `chainedFindMutation` 以歸因摺疊規則）；OpenCode 的 `noteBackstop` 在每個 throw 前附加；doctor 文字不再說「允許清單拒絕紀錄」 | `workflow/deny-log.ts` 的 `source`/`fromBackstop`；`plugins/claude/hooks/src/deny.mjs` 的 `noteDeny`、`check-stage-guard.entry.mjs` 的各處與 `allowlist.mjs` 的 `chainedFindMutation`；`plugins/opencode/src/impl.ts` 的 `noteBackstop`；`deny-log.test.ts`、`deny.test.mjs` |
+| 71 | [建議上限會說它砍掉了什麼](./71-suggestion-cap-marker.zh-TW.md) | `suggestionFindings` 截在十筆並直接提前回傳，done 註記的 `(N)` 是截斷後的數字、在每個介面都像真相。`suggestionsElided` 計算餘數；done 動作與 `TerminalReport` 帶 `suggestionsElided`；註記在自由文字那半附上 ` (+K more not shown)`，`extractRunSuggestions` 的 `(N)` 與正規表示式不變；OpenCode toast 與 Claude 出貨描述指名 `+K more past the cap` | `workflow/verdict.ts` 的 `suggestionsElided`；`engine.ts`、`state.ts`、`terminal.ts` 的 done 分支；`plugins/opencode/src/workflow/driver.ts` 的 toast；`plugins/claude/mcp-server/src/server.ts` 的描述；`verdict.test.ts` |
+| 72 | [執行紀錄讀取器快取解析結果並平行讀取](./72-metrics-run-cache.zh-TW.md) | `readRunInputs` 每次呼叫逐一重讀重解析每次執行，Metrics 分頁又在每次 SSE 事件重抓——DrvFS 樹上就是整個分頁的延遲。`ReadRunInputsOptions`：選填的 `stat` 鉤子 + 呼叫端持有的 `cache`（兩個檔案的大小與 mtime 都不變時重用、消失的 id 逐出）與有界的 `concurrency`；管理面板傳 `fs.statSync` 與每 repo 的行程生命週期 map，core 預設仍不需 stat | `workflow/metrics-aggregate.ts` 的 `ReadRunInputsOptions` 與 worker pool；`packages/hub/src/server/metrics/runcache.ts` + `routes/metrics.ts`；`metrics-aggregate.test.ts` |
+| 73 | [使用者層級設定的每 repo 區段](./73-per-repo-user-config.zh-TW.md) | 使用者層對每個 checkout 一視同仁；兩個 repo 想要不同的 `stageModels` 或只有一個要 `notifyCommand`，只能把差異提交進 repo，而帶 shell 的鍵 repo 層設計上承載不了。使用者層的 `repos: { "<絕對路徑或 basename>": {…} }`——絕對路徑優先、疊在全域使用者鍵上、repo 檔之下——`loadConfigWith`、無 zod 的 `readRawConfigLayers`（模型綁定 hook 的讀取器）、管理面板的設定視圖與 Qwen 安裝程式的合併都遵守；宣告為 `RepoOverrideSchema`（基底的 partial，不能巢套）；repo 檔裡的 `repos` 被丟掉並指名；`effectiveConfigReport.matchedRepoSection` 與兩種 host 的 `doctor config` 說明套用了哪個區段 | `config-layers.ts` 的 `REPOS_KEY`/`userRepoOverrides`/`applyUserRepoOverrides`、`userOnly` 丟棄類別與 `matchedRepoSection`；`config.ts` 的 `RepoOverrideSchema` 與合併；`scripts/qwen-agents.mjs` 的 `applyUserRepoOverrides`；`packages/hub/src/server/routes/config.ts`；兩種 host 的 doctor config 註記；`config-layers.test.ts`、`config.test.ts`、`qwen-agents.test.mjs` |
+| 74 | [過期的 Qwen 模型烘焙在 session 開始時被指名](./74-qwen-bake-drift.zh-TW.md) | Qwen 把 `stageModels`/`agentModels` 烘焙進安裝好的代理檔，每句「重跑安裝程式」都只是散文；編輯後每個階段仍跑舊模型且什麼都不會失敗。安裝程式寫 `agents/.agentic-workflow-baked.json`（何時、綁定、設定的 `modelSubtrees`——只有決定模型的鍵）；Qwen 的 reconcile hook 以 `conveysSpawnModel: false` 限定 host，以同樣方式投影目前的原始設定、比較 canonical JSON 並指名安裝指令；沒有記錄或其他 host 都是沉默 | `scripts/qwen-agents.mjs` 的 `BAKE_RECORD_FILE`/`modelSubtrees` 與記錄寫入；`plugins/claude/hooks/src/reconcile.entry.mjs` 的 `qwenBakeDrift`；`qwen-agents.test.mjs`、`reconcile.test.mjs` |
 
 仍未解決的殘留事項：跨行程的 `index.lock` 競速與遮罩選項。（本清單原本列出的
 另外兩項已經完成——bash 工作樹釘選在 `packages/core/src/workflow/worktree-guard.ts`，

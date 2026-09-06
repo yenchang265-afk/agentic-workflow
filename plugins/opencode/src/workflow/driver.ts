@@ -2544,7 +2544,7 @@ const driveChain = async (
         const stat = report.diffstat ? ` (${report.diffstat})` : ""
         const cmd = report.diffCmd ? ` — ${report.diffCmd}` : ""
         const sugg = report.suggestions?.length
-          ? ` Review left ${report.suggestions.length} suggestion${report.suggestions.length === 1 ? "" : "s"} — noted on the task file.`
+          ? ` Review left ${report.suggestions.length} suggestion${report.suggestions.length === 1 ? "" : "s"}${report.suggestionsElided ? ` (+${String(report.suggestionsElided)} more past the cap)` : ""} — noted on the task file.`
           : ""
         const next = report.taskId
           ? ` Review the diff${where}${stat}${cmd}, then /agentic-workflow:engineering approve when it ships.${sugg}`
@@ -4586,6 +4586,9 @@ export const handleCommand = async (
       if (cfgReport.droppedRepoKeys.length) {
         await deps.log("warn", `repo-layer keys ignored at runtime (honored from the user-scope config only): ${cfgReport.droppedRepoKeys.join(", ")}`)
       }
+      if (cfgReport.matchedRepoSection) {
+        await deps.log("info", `user-scope repos["${cfgReport.matchedRepoSection}"] applied to this checkout (over the global user keys, under the repo file)`)
+      }
       // Keys nothing reads (design 60) — the typo that used to leave a setting
       // silently on its default, now named with the key it is one edit from.
       for (const u of cfgReport.unknownKeys) {
@@ -4643,7 +4646,7 @@ export const handleCommand = async (
       if (strayRequests.length) {
         await deps.log("info", `doctor: plan request(s) whose task left queued/: ${strayRequests.join(", ")}`)
       }
-      for (const line of formatDenyFindings(denyFindings)) await deps.log("warn", `doctor: allowlist: ${line}`)
+      for (const line of formatDenyFindings(denyFindings)) await deps.log("warn", `doctor: denied: ${line}`)
       const findings =
         formatAnomalies(anomalies, config.tasksDir).length +
         heldQueued.length +
@@ -4736,7 +4739,7 @@ export const handleCommand = async (
         removedDirs.length ? `removed ${removedDirs.length} stray folder(s)` : "",
         released.length ? `released ${released.length} stale claim marker(s)` : "",
         revokedRequests.length ? `dropped ${revokedRequests.length} stray plan request(s)` : "",
-        denyCleared ? `cleared the allowlist deny log (${denyFindings.length} distinct command(s) — see the log for suggestions)` : "",
+        denyCleared ? `cleared the deny log (${denyFindings.length} distinct command(s) — see the log for suggestions)` : "",
         removedWorktrees.length ? `removed ${removedWorktrees.length} orphan worktree(s)` : "",
         orphans.branches.length ? `${orphans.branches.length} orphan branch(es) left for you (see the log)` : "",
         anomalies.duplicates.length ? `${anomalies.duplicates.length} duplicate id(s) left for you` : "",

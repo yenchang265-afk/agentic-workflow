@@ -24,7 +24,7 @@ const markdownFiles = (rel) => {
   return fs.readdirSync(abs, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? markdownFiles(path.join(rel, e.name)) : e.name.endsWith(".md") ? [path.join(rel, e.name)] : []))
 }
 
-const jsonBlocks = (text) => [...text.matchAll(/```json\n([\s\S]*?)```/g)].map((m) => m[1])
+const jsonBlocks = (text) => [...text.matchAll(/```json[ \t]*\r?\n([\s\S]*?)```/g)].map((m) => m[1])
 
 test("every documented sitter section carries `enabled` — a knob-only section is inert", () => {
   const offenders = []

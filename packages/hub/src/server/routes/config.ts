@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { ConfigSchema, droppedRepoKeys, mergeConfigLayers, sanitizeRepoLayer } from "@agentic-workflow/core/config"
+import { applyUserRepoOverrides, ConfigSchema, droppedRepoKeys, mergeConfigLayers, sanitizeRepoLayer } from "@agentic-workflow/core/config"
 import { REDACTED, type ConfigEdit, type ConfigIssue, type ConfigLayer, type ConfigLayerResponse, type ConfigProvenance, type SaveConfigRequest, type SaveConfigResponse } from "../../shared/api.js"
 import { isGitIgnored, knownTopLevelKeys, layerPath, readRawLayer, redactSecrets, SECRET_PATHS, writeRawLayer } from "../configfile.js"
 import { deleteAt, isPlainObject, isSafeConfigPath, leafPaths, provenanceOf, setAt, valueAt } from "../configlayers.js"
@@ -66,7 +66,11 @@ export const getConfig = async (deps: HubDeps, req: ParsedRequest): Promise<Json
   // the runtime discards.
   const dropped = droppedRepoKeys(repo.raw ?? {}).map((d) => d.path)
   const repoSanitized = sanitizeRepoLayer(repo.raw ?? {})
-  const merged = mergeConfigLayers(user.raw ?? {}, repoSanitized)
+  // The user layer's `repos.<match>` section for THIS repo is folded in first
+  // (design 73), exactly as `loadConfigWith` merges — a per-repo override the
+  // loop honours must not read as absent here.
+  const userEffective = applyUserRepoOverrides(user.raw ?? {}, deps.directory)
+  const merged = mergeConfigLayers(userEffective, repoSanitized)
   const parsed = ConfigSchema.safeParse(merged)
   const { raw: redacted, redactedPaths } = self.raw ? redactSecrets(self.raw) : { raw: null, redactedPaths: [] }
 
@@ -76,7 +80,7 @@ export const getConfig = async (deps: HubDeps, req: ParsedRequest): Promise<Json
     raw: redacted,
     // Display only. Never written back — see the header comment.
     effective: parsed.success ? (redactSecrets(parsed.data as unknown as Record<string, unknown>).raw as Record<string, unknown>) : null,
-    provenance: provenanceMap(user.raw, repoSanitized),
+    provenance: provenanceMap(userEffective, repoSanitized),
     droppedRepoKeys: dropped,
     issues: issuesOf(merged),
     warnings: lintWorkflowKnobs(valueAt(merged, ["workflows"]), deps.boards),

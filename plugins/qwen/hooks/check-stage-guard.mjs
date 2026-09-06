@@ -647,6 +647,7 @@ var isGitPushViolation = (cmd, extra = []) => {
 };
 var chainedGithubPrMutation = (cmd, prefixes = []) => splitSegments2(cmd).some(eitherForm(isGithubPrMutation, prefixes));
 var chainedGitPushViolation = (cmd, prefixes = [], extra = []) => splitSegments2(cmd).some(eitherForm((seg) => isGitPushViolation(seg, extra), prefixes));
+var chainedFindMutation = (cmd, prefixes = []) => splitSegments2(cmd).some(eitherForm(isFindMutation, prefixes));
 
 // plugins/claude/hooks/src/emit.mjs
 var exitAfterWrite = (stream, payload, code) => {
@@ -780,7 +781,7 @@ import fs3 from "node:fs";
 import path5 from "node:path";
 var DENY_LOG_FILE = ".deny-log.jsonl";
 var DENY_LOG_MAX_BYTES = 1024 * 1024;
-var noteDeny = (runsDirPath, host, marker, command) => {
+var noteDeny = (runsDirPath, host, marker, command, source) => {
   try {
     const file = path5.join(runsDirPath, DENY_LOG_FILE);
     try {
@@ -792,7 +793,10 @@ var noteDeny = (runsDirPath, host, marker, command) => {
       host: String(host ?? ""),
       kind: typeof marker?.kind === "string" ? marker.kind : "",
       stage: typeof marker?.stage === "string" ? marker.stage : "",
-      command: String(command ?? "")
+      command: String(command ?? ""),
+      // Only the backstop writers pass a source (design 70); the allowlist
+      // denial keeps its byte-identical entry so older readers keep grouping it.
+      ...source === "backstop" || source === "check" ? { source } : {}
     };
     if (!entry.command.trim()) return;
     fs3.mkdirSync(runsDirPath, { recursive: true });
@@ -855,11 +859,13 @@ var main = async () => {
   if (marker.platform === "ado" && typeof tool === "string" && isAdoMcpTool(tool)) {
     const args = ti && typeof ti === "object" ? ti : {};
     if (isAdoMcpWriteViolation(tool, args)) {
+      noteDeny(runsDir(cwd), host, marker, tool, "backstop");
       return block2(
         `agentic-workflow: the loop must never mutate an existing pull request \u2014 this Azure DevOps MCP tool is blocked. Only reads, thread comments/replies, and creating a DRAFT pull request (isDraft: true) are permitted; completing, abandoning, approving, voting, reviewer changes, branch creation, and pipeline runs stay a human call.`
       );
     }
     if (isAdoMcpToolOutOfStageScope(tool, marker.adoTools)) {
+      noteDeny(runsDir(cwd), host, marker, tool, "backstop");
       return block2(
         `agentic-workflow: the ${marker.stage ?? "current"} stage may not call this Azure DevOps MCP tool \u2014 its manifest grants ${(marker.adoTools ?? []).length ? (marker.adoTools ?? []).join(", ") : "no ADO tools"}. Add it to platformTools in workflows/<kind>/workflow.json if the stage genuinely needs it.`
       );
@@ -868,11 +874,13 @@ var main = async () => {
   const markerPrefixes = Array.isArray(marker.bashPrefix) && marker.bashPrefix.every((p) => typeof p === "string") ? marker.bashPrefix : [];
   const markerProtected = Array.isArray(marker.protectedBranches) && marker.protectedBranches.every((b) => typeof b === "string") ? marker.protectedBranches : [];
   if (isBash && chainedGithubPrMutation(String(ti.command ?? ""), markerPrefixes)) {
+    noteDeny(runsDir(cwd), host, marker, String(ti.command ?? ""), "backstop");
     return block2(
       `agentic-workflow: the loop must never mutate a pull request \u2014 this GitHub command is blocked. Only reads and comment replies (gh pr comment, or gh api GET, or a POST to an issues/N/comments resource) are permitted; merging, closing, approving, requesting changes, reviewer changes, and edits stay a human call.`
     );
   }
   if (isBash && chainedGitPushViolation(String(ti.command ?? ""), markerPrefixes, markerProtected)) {
+    noteDeny(runsDir(cwd), host, marker, String(ti.command ?? ""), "backstop");
     return block2(
       `agentic-workflow: the loop must never push a branch other than its own head, force-push, or delete \u2014 this git push is blocked. Push only your own feature/* (or <kind>/*) branch fast-forward with no ':dst' refspec, no --force, no --delete; the watched and default branches stay a human call.`
     );
@@ -906,7 +914,7 @@ var main = async () => {
   if (isBash && (markerList || marker.stage === "verify" || marker.stage === "review")) {
     const list = markerList ?? (marker.stage === "verify" ? VERIFY_ALLOW : REVIEW_ALLOW);
     if (!commandAllowed(effectiveCommand, list, markerPrefixes)) {
-      noteDeny(runsDir(cwd), host, marker, rawCommand);
+      noteDeny(runsDir(cwd), host, marker, rawCommand, chainedFindMutation(effectiveCommand, markerPrefixes) ? "backstop" : void 0);
       return block2(
         `agentic-workflow: the ${marker.stage.toUpperCase()} stage is read-only \u2014 the command "${rawCommand}" is not on its allowlist. Only inspection/test commands are permitted; if a test runner is genuinely needed, record an ERROR verdict naming it.`
       );

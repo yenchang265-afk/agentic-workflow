@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { mergeConfigLayers } from "./qwen-agents.mjs"
+import { applyUserRepoOverrides, mergeConfigLayers, modelSubtrees } from "./qwen-agents.mjs"
 
 /**
  * The installer resolves models from a merge of the user-scope and
@@ -43,4 +43,18 @@ test("a non-object override replaces the base outright, matching core's mergeCon
   assert.equal(mergeConfigLayers({ a: 1 }, null), null)
   const base = { a: 1 }
   assert.equal(mergeConfigLayers(base, undefined), base, "undefined override returns base unchanged")
+})
+
+test("the installer folds the user layer's repos.<match> section in, absolute path before basename (design 73 twin)", () => {
+  const user = { agentModels: { "workflow-build": "sonnet" }, repos: { "/work/app": { agentModels: { "workflow-build": "opus" } }, app: { agentModels: { "workflow-build": "haiku" } } } }
+  assert.deepEqual(applyUserRepoOverrides(user, "/work/app"), { agentModels: { "workflow-build": "opus" } })
+  assert.deepEqual(applyUserRepoOverrides(user, "/other/app"), { agentModels: { "workflow-build": "haiku" } })
+  assert.deepEqual(applyUserRepoOverrides(user, "/other/none"), { agentModels: { "workflow-build": "sonnet" } })
+})
+
+test("modelSubtrees projects exactly the model-deciding keys, so an unrelated edit is not drift (design 74)", () => {
+  const config = { maxIterations: 3, agentModels: { "workflow-build": "opus" }, workflows: { engineering: { stageModels: { verify: "haiku" }, enabled: true }, "pr-sitter": { enabled: true } } }
+  assert.deepEqual(modelSubtrees(config), { agentModels: { "workflow-build": "opus" }, workflows: { engineering: { verify: "haiku" } } })
+  assert.deepEqual(modelSubtrees({ ...config, maxIterations: 9 }), modelSubtrees(config))
+  assert.deepEqual(modelSubtrees({}), { agentModels: {}, workflows: {} })
 })

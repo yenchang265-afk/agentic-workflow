@@ -427,3 +427,6 @@ export const isGitPushViolation = (cmd, extra = []) => {
 export const chainedGithubPrMutation = (cmd, prefixes = []) => splitSegments(cmd).some(eitherForm(isGithubPrMutation, prefixes))
 export const chainedGitPushViolation = (cmd, prefixes = [], extra = []) =>
   splitSegments(cmd).some(eitherForm((seg) => isGitPushViolation(seg, extra), prefixes))
+
+/** Any segment a mutating `find` (TWIN of core's `chainedFindMutation`) — the rule `commandAllowed` folds in; exported so a refusal can be attributed to it (design 70). */
+export const chainedFindMutation = (cmd, prefixes = []) => splitSegments(cmd).some(eitherForm(isFindMutation, prefixes))

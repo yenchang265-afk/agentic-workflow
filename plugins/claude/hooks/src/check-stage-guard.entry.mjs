@@ -51,7 +51,7 @@ import {
   writePathKeyOf,
   writePathOf,
 } from "./dialect.mjs"
-import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, chainedGithubPrMutation, chainedGitPushViolation, isAdoMcpTool, isAdoMcpToolOutOfStageScope, isAdoMcpWriteViolation } from "./allowlist.mjs"
+import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, chainedFindMutation, chainedGithubPrMutation, chainedGitPushViolation, isAdoMcpTool, isAdoMcpToolOutOfStageScope, isAdoMcpWriteViolation } from "./allowlist.mjs"
 import { allow, block, readStdin as read, rewriteInput } from "./pretooluse.mjs"
 import { backlogRoot, liveMarker, readMarker, readTasksDir, runsDir } from "./marker.mjs"
 import { evidenceEntry, noteEvidence } from "./evidence.mjs"
@@ -141,6 +141,8 @@ const main = async () => {
   if (marker.platform === "ado" && typeof tool === "string" && isAdoMcpTool(tool)) {
     const args = ti && typeof ti === "object" ? ti : {}
     if (isAdoMcpWriteViolation(tool, args)) {
+      // Backstop telemetry (design 70): the tool name stands in for the command.
+      noteDeny(runsDir(cwd), host, marker, tool, "backstop")
       return block(
         `agentic-workflow: the loop must never mutate an existing pull request — this Azure DevOps MCP tool is ` +
           `blocked. Only reads, thread comments/replies, and creating a DRAFT pull request (isDraft: true) are ` +
@@ -149,6 +151,7 @@ const main = async () => {
       )
     }
     if (isAdoMcpToolOutOfStageScope(tool, marker.adoTools)) {
+      noteDeny(runsDir(cwd), host, marker, tool, "backstop")
       return block(
         `agentic-workflow: the ${marker.stage ?? "current"} stage may not call this Azure DevOps MCP tool — its ` +
           `manifest grants ${(marker.adoTools ?? []).length ? (marker.adoTools ?? []).join(", ") : "no ADO tools"}. ` +
@@ -177,6 +180,7 @@ const main = async () => {
   // mutating REST route (`gh api -X PUT …/merge`), so this catches it. Gated on the
   // marker so a human's manual `gh pr merge` outside a loop is untouched.
   if (isBash && chainedGithubPrMutation(String(ti.command ?? ""), markerPrefixes)) {
+    noteDeny(runsDir(cwd), host, marker, String(ti.command ?? ""), "backstop")
     return block(
       `agentic-workflow: the loop must never mutate a pull request — this GitHub command is blocked. ` +
         `Only reads and comment replies (gh pr comment, or gh api GET, or a POST to an issues/N/comments resource) ` +
@@ -189,6 +193,7 @@ const main = async () => {
   // that the dotAll push allowlist glob can't exclude is blocked here. A human's
   // manual push outside a loop is untouched (gated on the marker, like 3b).
   if (isBash && chainedGitPushViolation(String(ti.command ?? ""), markerPrefixes, markerProtected)) {
+    noteDeny(runsDir(cwd), host, marker, String(ti.command ?? ""), "backstop")
     return block(
       `agentic-workflow: the loop must never push a branch other than its own head, force-push, or delete — this git push is blocked. ` +
         `Push only your own feature/* (or <kind>/*) branch fast-forward with no ':dst' refspec, no --force, no --delete; ` +
@@ -264,8 +269,10 @@ const main = async () => {
     if (!commandAllowed(effectiveCommand, list, markerPrefixes)) {
       // Telemetry for the backlog doctor, recorded with the RAW command (the
       // shape the agent asked for is the shape the operator must allow) before
-      // the block — best-effort, never changes the decision.
-      noteDeny(runsDir(cwd), host, marker, rawCommand)
+      // the block — best-effort, never changes the decision. A mutating `find`
+      // is refused by `commandAllowed`'s own rule, not by the globs: recorded
+      // as a backstop so the doctor never prescribes a `find` glob for it.
+      noteDeny(runsDir(cwd), host, marker, rawCommand, chainedFindMutation(effectiveCommand, markerPrefixes) ? "backstop" : undefined)
       return block(
         `agentic-workflow: the ${marker.stage.toUpperCase()} stage is read-only — the command "${rawCommand}" is not on its allowlist. ` +
           `Only inspection/test commands are permitted; if a test runner is genuinely needed, record an ERROR verdict naming it.`,

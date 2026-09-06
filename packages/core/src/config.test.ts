@@ -1697,3 +1697,12 @@ test("unknownConfigKeys walks projectManagement fully, and workflows.<kind> only
     { path: "workflows.engineering.stagemodels", suggestion: "stageModels" },
   ])
 })
+
+test("a `repos` section is declared: it parses, its keys are linted like the top level, and it cannot nest (design 73)", () => {
+  const ok = ConfigSchema.safeParse({ repos: { "/work/app": { maxIterations: 5, workflows: { engineering: { stageModels: { build: "opus" } } } } } })
+  assert.equal(ok.success, true)
+  assert.deepEqual(unknownConfigKeys({ repos: { app: { maxIteration: 3 } } }), [], "sections are validated by zod, not the top-level lint")
+  const nested = ConfigSchema.safeParse({ repos: { app: { repos: { deeper: {} } } } })
+  assert.equal(nested.success, true, "zod strips an unknown key inside a section rather than failing the parse")
+  assert.equal("repos" in ((nested.success ? nested.data.repos?.["app"] : {}) ?? {}), false)
+})

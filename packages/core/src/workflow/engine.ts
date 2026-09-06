@@ -23,6 +23,7 @@ import {
   type StagePass,
   type Verdict,
   type VerdictRecord,
+  suggestionsElided,
 } from "./verdict.js"
 
 /**
@@ -634,6 +635,7 @@ export const advance = (
       // out of the rebuild seam above on purpose, so this action is their only
       // route to the human who reviews the diff (see the Action arm's doc).
       const suggestions = def.kind === "check" ? suggestionFindings(record) : []
+      const elided = def.kind === "check" ? suggestionsElided(record) : 0
       return {
         state: s,
         action: {
@@ -641,6 +643,7 @@ export const advance = (
           message: effect.message,
           toStatus: effect.toStatus,
           ...(suggestions.length ? { suggestions } : {}),
+          ...(elided > 0 ? { suggestionsElided: elided } : {}),
         },
       }
     }

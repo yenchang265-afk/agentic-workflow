@@ -170,3 +170,20 @@ test("a check-sourced entry round-trips its source and is named in the report", 
   assert.equal(agentOnly[0]?.fromChecks, 0)
   assert.doesNotMatch(formatDenyFindings(agentOnly)[0] ?? "", /plan-discovered/)
 })
+
+test("a backstop denial is aggregated as by-design: no allowlist advice, its own via-clause, parse round-trip (design 70)", () => {
+  const backstop = { ...entry("git push --force origin main", "publish", "pr-sitter"), source: "backstop" as const }
+  const parsed = parseDenyLine(JSON.stringify(backstop))
+  assert.equal(parsed?.source, "backstop")
+  const findings = aggregateDenials([backstop, backstop], () => ["git push origin *"])
+  assert.equal(findings.length, 1)
+  assert.equal(findings[0]!.fromBackstop, 2)
+  assert.match(findings[0]!.suggestion ?? "", /^no allowlist change admits this/)
+  assert.doesNotMatch(findings[0]!.suggestion ?? "", /bashAllowlistExtra|bashAllowlistPrefix/)
+  assert.match(formatDenyFindings(findings)[0]!, /denied 2× \(a write backstop\): git push --force origin main — no allowlist change admits this/)
+  // Mixed: the same command refused by the allowlist and by a backstop keeps the glob advice and says how many were backstop.
+  const mixed = aggregateDenials([backstop, entry("git push --force origin main", "publish", "pr-sitter")], () => ["npm test*"])
+  assert.equal(mixed[0]!.fromBackstop, 1)
+  assert.match(formatDenyFindings(mixed)[0]!, /\(1 of these from a write backstop\)/)
+  assert.match(mixed[0]!.suggestion ?? "", /bashAllowlistExtra/)
+})

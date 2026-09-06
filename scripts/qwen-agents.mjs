@@ -133,6 +133,48 @@ export const resolveAgentModels = (config, manifests) => {
   return { models, conflicts }
 }
 
+/** The bake record's file name under `<configDir>/agents/` — read back by the Qwen reconcile hook (design 74). */
+export const BAKE_RECORD_FILE = ".agentic-workflow-baked.json"
+
+/**
+ * The parts of a raw merged config that decide a baked model: `agentModels`
+ * and every `workflows.<kind>.stageModels`. The reconcile hook compares this
+ * projection of the CURRENT config with the recorded one; equality means the
+ * bake is current whatever else changed. Pure.
+ */
+export const modelSubtrees = (config) => {
+  const workflows = {}
+  for (const [kind, section] of Object.entries(config?.workflows ?? {})) {
+    if (isPlainObject(section) && isPlainObject(section.stageModels)) workflows[kind] = section.stageModels
+  }
+  return { agentModels: isPlainObject(config?.agentModels) ? config.agentModels : {}, workflows }
+}
+
+/**
+ * The user layer with its `repos.<match>` section folded in (design 73) —
+ * duplicated from core's `applyUserRepoOverrides` for the same dependency-free
+ * reason as `mergeConfigLayers` above; `qwen-agents.test.mjs` pins the two.
+ * Exact absolute path beats basename.
+ */
+export const applyUserRepoOverrides = (userRaw, directory) => {
+  if (!isPlainObject(userRaw)) return userRaw
+  const { repos, ...global } = userRaw
+  if (!isPlainObject(repos)) return global
+  const abs = path.resolve(directory)
+  const base = path.basename(abs)
+  let byPath = null
+  let byBase = null
+  for (const key of Object.keys(repos)) {
+    if (!isPlainObject(repos[key])) continue
+    if (path.isAbsolute(key) || key.startsWith("~")) {
+      const resolved = key.startsWith("~") ? path.resolve(key.replace(/^~/, os.homedir())) : path.resolve(key)
+      if (resolved === abs && byPath === null) byPath = key
+    } else if (key === base && byBase === null) byBase = key
+  }
+  const matched = byPath ?? byBase
+  return matched ? mergeConfigLayers(global, repos[matched]) : global
+}
+
 /** Read every kind's stage list straight from the manifests. */
 const readManifests = () => {
   const dir = path.join(ROOT, "packages", "core", "workflows")
@@ -165,7 +207,7 @@ const main = () => {
   }
   const cwd = repoDir || process.cwd()
   const userPath = userConfigPath()
-  const config = mergeConfigLayers(userPath ? (readJson(userPath) ?? {}) : {}, readJson(path.join(cwd, ".agentic-workflow.json")) ?? {})
+  const config = mergeConfigLayers(applyUserRepoOverrides(userPath ? (readJson(userPath) ?? {}) : {}, cwd), readJson(path.join(cwd, ".agentic-workflow.json")) ?? {})
   const { models, conflicts } = resolveAgentModels(config, readManifests())
   for (const c of conflicts) {
     console.warn(`qwen-agents: WARNING conflicting stageModels for ${c} — leaving the model unset for that agent`)
@@ -184,6 +226,15 @@ const main = () => {
     wrote++
     if (model) baked++
   }
+  // The bake record (design 74): what the config's model keys looked like at
+  // install time, so the Qwen session-start hook can tell a later edit to
+  // `stageModels`/`agentModels` from the bytes it baked — without manifests,
+  // which a bundled hook cannot read. Only the model subtrees are recorded:
+  // an unrelated config edit must not read as drift.
+  fs.writeFileSync(
+    path.join(outDir, BAKE_RECORD_FILE),
+    `${JSON.stringify({ at: new Date().toISOString(), bindings: models, configModels: modelSubtrees(config) }, null, 2)}\n`,
+  )
   console.log(`qwen-agents: wrote ${wrote} agents to ${outDir} (${baked} with a configured model)`)
   if (baked) console.log("qwen-agents: re-run the installer after changing stageModels/agentModels — the binding is static")
 }
