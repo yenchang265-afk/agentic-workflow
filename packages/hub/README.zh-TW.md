@@ -210,7 +210,9 @@ localStorage 中），SSE 事件和把關點通知也都會標上儲存庫 id。
   彙整而來。內容包括迭代用量與觸頂率（迴圈是在收斂，還是在耗盡迭代
   次數？）、首趟通過率、各階段的裁定計數與 fail→pass／pass→fail／
   fail→fail 的翻轉次數、結果組成、各階段的實際耗時，以及提示詞快取
-  命中率。`GET /api/metrics`。
+  命中率——可依時間窗（`7d`/`30d`/`90d`/全部）與單一類型過濾，並附每個 ISO 週的
+  重點數字。`GET /api/metrics?window=30d&kind=engineering`。兩種 CLI host 的
+  `metrics` 動詞用同一個讀取器印出同樣的重點數字。
 
   有兩個約定讓這些數字值得信任，而且兩者在介面上都看得到：
 

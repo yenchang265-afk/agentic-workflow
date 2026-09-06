@@ -1,6 +1,6 @@
 import type { RunLogSummary, RunSummaryRow } from "@agentic-workflow/core/workflow/runlog"
 import type { StageVerdicts, VerdictFlips } from "../../shared/api.js"
-import { stageLabel } from "./stage-label.js"
+import { isCheckRow, stageLabel } from "@agentic-workflow/core/workflow/metrics-aggregate"
 
 /**
  * Verdict tallies and thrash detection over run-log summaries. Pure.
@@ -11,10 +11,8 @@ import { stageLabel } from "./stage-label.js"
  * Neither is evidence about whether a check passed, so neither may move a rate.
  */
 
-const JUDGED = new Set(["PASS", "FAIL", "ERROR"])
-
-/** True when the parser gave this row a real judgement (`PASS`/`FAIL`/`ERROR`). Pure. */
-export const isCheckRow = (row: RunSummaryRow): boolean => row.verdict !== undefined && JUDGED.has(row.verdict)
+/** Lives in core since design 64; re-exported so this module's callers keep one import. */
+export { isCheckRow }
 
 interface Tally {
   pass: number

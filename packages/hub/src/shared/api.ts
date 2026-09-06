@@ -840,39 +840,13 @@ export interface TokensSummaryResponse {
  */
 
 /** One bucket of the iteration-burn histogram over `iterationsUsed / cap`. */
-export interface BurnBucket {
-  /** Inclusive lower bound of the ratio band. */
-  readonly from: number
-  /** Exclusive upper bound; the top bucket is closed at 1 (a capped pass). */
-  readonly to: number
-  readonly passes: number
-}
-
-export interface IterationBurn {
-  /** Passes whose footer carried `iterations used: N/M` — the only valid denominator. */
-  readonly passesMeasured: number
-  /** Passes with a summary but no footer (older logs). Excluded, never counted as ratio 0. */
-  readonly passesUnmeasured: number
-  /** Mean `iterationsUsed / cap` over `passesMeasured`; null when that is 0. */
-  readonly meanRatio: number | null
-  readonly medianRatio: number | null
-  /** Passes that ended at or above their cap. */
-  readonly cappedPasses: number
-  /** `cappedPasses / passesMeasured`; null when nothing was measurable. */
-  readonly capTripRate: number | null
-  readonly buckets: readonly BurnBucket[]
-}
-
-export interface FirstPassYield {
-  /** Passes carrying at least one verdict-bearing check row — the denominator. */
-  readonly passesMeasured: number
-  /** Passes whose summary recorded no check row at all (a plan pass). Excluded. */
-  readonly passesWithoutChecks: number
-  /** Passes where every check row sits on the first iteration and every verdict is PASS. */
-  readonly cleanPasses: number
-  /** `cleanPasses / passesMeasured`; null when `passesMeasured` is 0. */
-  readonly rate: number | null
-}
+/**
+ * The pass-level metric shapes live in core since design 64 (the `metrics`
+ * verb and this tab read one arithmetic); re-exported so every existing import
+ * keeps working.
+ */
+export type { BurnBucket, FirstPassYield, IterationBurn, StageDuration, WeekPoint } from "@agentic-workflow/core/workflow/metrics-aggregate"
+import type { FirstPassYield, IterationBurn, StageDuration, WeekPoint } from "@agentic-workflow/core/workflow/metrics-aggregate"
 
 /** Verdict tallies for one stage name, lens variants merged. */
 export interface StageVerdicts {
@@ -897,15 +871,6 @@ export interface VerdictFlips {
 }
 
 /** Wall-clock roll-up for one stage, from the logs' parsed `wall-clock` cells. */
-export interface StageDuration {
-  readonly stage: string
-  /** Rows with a parseable duration; rows rendered `—`/empty are excluded, not zeroed. */
-  readonly rows: number
-  readonly meanSeconds: number
-  readonly medianSeconds: number
-  readonly maxSeconds: number
-}
-
 /** Cache-hit ratio for one stage: `cacheRead / (input + cacheRead)`. */
 export interface StageCache {
   readonly stage: string
@@ -1091,6 +1056,12 @@ export interface MetricsResponse {
   readonly discovery: DiscoveryStats
   /** Ids listed but unreadable — surfaced so a silent drop is visible in the UI. */
   readonly skippedRuns: readonly string[]
+  /** The same headline numbers per ISO week (UTC Monday), oldest first — design 64. */
+  readonly trend: readonly WeekPoint[]
+  /** The window this response was computed over, echoed so the UI cannot mislabel it. */
+  readonly window: { readonly days: number | null; readonly kind: string | null }
+  /** Every kind the UNWINDOWED population carries — the kind filter's choices. */
+  readonly kinds: readonly string[]
 }
 
 /**

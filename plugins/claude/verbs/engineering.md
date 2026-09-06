@@ -375,6 +375,17 @@
     IGNORES (they are honored from the user-scope config only; moving them
     there is the fix to name), and the effective config with secrets masked.
 <!-- /aw:verb doctor -->
+<!-- aw:verb metrics -->
+- **`metrics [7d|30d|all] [kind]`** — cross-run loop health from
+  `docs/tasks/runs/`, read-only: call
+  `mcp__agentic-workflow__workflow_metrics({window, kind})` and relay the
+  report as given — passes and runs in the window, outcome tallies, the
+  cap-trip and first-pass-yield rates, the slowest stages, and the same
+  numbers per ISO week. The window defaults to `all`; a kind narrows to one
+  workflow kind's passes (historical logs that recorded no kind count as
+  engineering). The hub's Metrics tab is the fuller view of the same
+  numbers.
+<!-- /aw:verb metrics -->
 <!-- aw:verb init -->
 - **`init`** — scaffold this repo for the loop: call
   `mcp__agentic-workflow__workflow_init` and relay its report as given. It

@@ -2,12 +2,12 @@
 
 # Agentic loop —— 工程（engineering）工作流程改進計畫
 
-**本頁每一份計畫（01–63）都已實作並測試完成**，存放於共用的
+**本頁每一份計畫（01–65）都已實作並測試完成**，存放於共用的
 `@agentic-workflow/core` 套件（`packages/core/`）中，供 OpenCode 外掛和 Claude
 MCP 伺服器共同使用。這些文件保留作為這些功能的設計紀錄，而非待辦的
 backlog。計畫 10–13 已於 2026-08-02 落地；計畫 14 於 2026-08-03；計畫 15 於
 2026-08-07；計畫 16–18 於 2026-08-08；計畫 24–27 於 2026-08-11；計畫 32 於
-2026-08-17；計畫 33–40 於 2026-08-23；計畫 41–45 於 2026-08-26；計畫 46–48 於 2026-09-02；計畫 49–63 於 2026-09-06。
+2026-08-17；計畫 33–40 於 2026-08-23；計畫 41–45 於 2026-08-26；計畫 46–48 於 2026-09-02；計畫 49–65 於 2026-09-06。
 
 來源：目前的程式碼（所有引用的路徑與函式名稱均已對照撰寫當下的原始碼驗證
 過）、[`../threat-model.md`](../threat-model.md) 中列出的殘餘風險，以及
@@ -84,6 +84,8 @@ backlog。計畫 10–13 已於 2026-08-02 落地；計畫 14 於 2026-08-03；�
 | 61 | [從解析器產生的 `.agentic-workflow.json` JSON Schema](./61-config-json-schema.zh-TW.md) | 設定的形狀只存在於 zod；編輯器無法補全鍵或標出型別，文件參考是唯一能對照的。`configJsonSchema()` 以 `io: "input"`/`unrepresentable: "any"` 渲染 `ConfigSchema`，中繼資料在前；`schema/agentic-workflow.schema.json` 由 `pnpm gen:schema` 簽入，`scripts/config-schema.test.mjs` 在漂移時失敗；`$schema` 是已宣告的選填鍵。refinement 只在執行期，`workflows.<kind>` 維持寬鬆——設計 60 的 lint 是互補 | `config-schema.ts`；`scripts/gen-schema.mjs`、`scripts/config-schema.test.mjs`；`schema/agentic-workflow.schema.json`；`config.ts` 的 `$schema` 鍵；`package.json` 的 `gen:schema`；`docs/configuration.md` |
 | 62 | [過期的建置在 session 開始時就被指名，兩種 host 都是](./62-dist-staleness.zh-TW.md) | 每個使用者都透過 gitignore 的 `packages/core/dist` 解析 core，只有 `pnpm install` 會重建，碰到 core 的 pull 就跑著舊碼直到把關點中途契約不符；reconciler 只檢查 `server.js` 存在，從不看 core。`distStaleness` 比較最新非測試 `src` mtime 與最新 `dist` 檔（缺一側＝無法判斷，絕不是過期；有預算，回報 `partial`）；Claude/Qwen reconciler 探測 `mcp-server` 與 `../../packages/core`，OpenCode 的 `reconcileOnce` 探測 core，都印 `staleDistWarning` 與重建指令 | `dist-staleness.ts`；`plugins/claude/hooks/src/reconcile.entry.mjs` 與 `plugins/opencode/src/impl.ts` 的探測；`dist-staleness.test.ts` |
 | 63 | [doctor 稽核迴圈的遺留物：worktree 與分支](./63-orphan-audit.zh-TW.md) | worktree 設計上會保留、只有已出貨任務的會釋放，所以每個被放棄／移除的任務永遠留下 `.workflow-worktrees/<id>` 與 `feature/<id>`；OpenCode 的 reconcile 只指名 in-progress/in-review 的 worktree，Claude 什麼都沒有，沒人列舉分支。`auditOrphans` 列出根目錄下的 worktree 與前綴下的分支中 id 不在任何非終結資料夾者（絕不是主樹、可修剪登錄或外部路徑），每條分支以 `merge-base --is-ancestor` 附 `merged`；`removeOrphanWorktrees` 是經 `releaseWorktreeAt` 的唯一修復（絕不 `--force`、絕不動分支）；三個 doctor 都回報並修復 | `workflow/orphans.ts`；`workflow/git.ts` 的 `listBranches`/`isAncestor`；`plugins/claude/mcp-server/src/server.ts`、`plugins/opencode/src/workflow/driver.ts`、`packages/hub/src/server/routes/doctor.ts` 與 `DoctorPanel.tsx` 的 doctor 本體；`orphans.test.ts` |
+| 64 | [指標可以按時間窗、按週，也可以從終端機看](./64-windowed-metrics.zh-TW.md) | Metrics 分頁把整個 `runs/` 摺成每個指標一個數字（這個月的退步像捨入誤差）、沒有趨勢、算術住在管理面板裡終端機問不到。pass 層級的一半（`iterationBurn`、`firstPassYield`、`stageDurations`、`outcomeTally`、`stageLabel`、`isCheckRow`）移入 core 的 `workflow/metrics-aggregate.ts`（管理面板重新匯出）；`MetricsWindow` + `windowInputs` 在計數**之前**縮小 pass 與 sidecar 項目，`parseWindow` 讀 `7d`/`30d`/`all`，`weeklyTrend` 給每個 UTC ISO 週的重點數字；管理面板路由接受 `?window=&kind=`（壞值 = 400），附晶片、趨勢表與回傳的 window；兩種 host 的 `metrics [7d|30d|all] [kind]`/`workflow_metrics` 透過共用的 `readRunInputs` + `formatMetricsHeadline` | `workflow/metrics-aggregate.ts`；`packages/hub/src/server/metrics/aggregate.ts` + `routes/metrics.ts` + `MetricsTab.tsx`；`plugins/opencode/src/workflow/driver.ts` 的 `metrics` 動詞與 `plugins/claude/mcp-server/src/server.ts` 的 `workflow_metrics`；`metrics-aggregate.test.ts` |
+| 65 | [sitter 的終端會說還有什麼在等](./65-sitter-claim-next.zh-TW.md) | `pollOnce` 回傳第一個認領，每個來源丟掉剛評估完的其餘集合，sitter 的終端對後面的東西隻字未提——一次性 `claim` 就此結束，watch session 沉默到下一個 tick。`WorkItem.remaining` 數來源接下來會認領的候選，**不**認領也不抓取地判斷（`github-pr`/`ado-pr` 對尾端重跑注意力測試，`dependency-scan` 數 ledger 仍開放的候選）；OpenCode 以該類型的 `claim` 動詞（或 watch tick）記錄／toast 數量，Claude/Qwen 的終端結果帶 `remaining` 與指名 `workflow_claim({kind})` 的 `next` | `source/types.ts` 的 `WorkItem.remaining`；`source/github-pr.ts`、`source/ado-pr.ts`、`source/dependency-scan.ts` 的計數；OpenCode driver `tryClaim` 的提示；`plugins/claude/mcp-server/src/server.ts` 的終端回傳；`github-pr.test.ts`、`dependency-scan.test.ts` |
 
 仍未解決的殘留事項：跨行程的 `index.lock` 競速與遮罩選項。（本清單原本列出的
 另外兩項已經完成——bash 工作樹釘選在 `packages/core/src/workflow/worktree-guard.ts`，

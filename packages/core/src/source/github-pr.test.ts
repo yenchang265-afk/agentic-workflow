@@ -533,3 +533,22 @@ test("a truncated PR page is reported, not silently dropped", async () => {
   assert.equal(skip?.actionable, false)
   assert.match(warnings.join("\n"), /truncat/i)
 })
+
+test("a claim carries `remaining`: the PRs behind it that also need attention, judged without claiming them", async () => {
+  const log: string[] = []
+  const failing = [{ name: "ci/test", conclusion: "FAILURE" }]
+  const { item } = await source(
+    [
+      pr({ number: 7, statusCheckRollup: failing }),
+      pr({ number: 8, headRefName: "feat/eight", statusCheckRollup: failing }),
+      pr({ number: 9, headRefName: "feat/nine", isDraft: true, statusCheckRollup: failing }),
+      pr({ number: 10, headRefName: "feat/ten", statusCheckRollup: [{ name: "ci/test", conclusion: "SUCCESS" }] }),
+    ],
+    { log },
+  ).claimNext()
+  assert.equal(item?.id, "pr-7")
+  assert.equal(item?.remaining, 1, "PR 8 waits; 9 is a draft, 10 needs nothing")
+  assert.ok(log.some((c) => c.includes(".claims/pr-7")))
+  assert.ok(!log.some((c) => c.includes(".claims/pr-8")), "only the claimed PR took a marker")
+  assert.ok(!log.some((c) => c.includes("fetch origin") && c.includes("feat/eight")), "the tail is counted, never fetched")
+})

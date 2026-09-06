@@ -98,6 +98,7 @@ import { clearState, listSnapshotIds, loadState, saveState } from "@agentic-work
 import { abandonTask, approveAny, approvePlan, planCaveats, rejectAny, removeTask, restoreTask, retaskTask, setTaskPriority, showTask, type GateCandidate, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
 import { notifyLoopEvent, runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
 import { auditOrphans, formatOrphans, removeOrphanWorktrees } from "@agentic-workflow/core/workflow/orphans"
+import { formatMetricsHeadline, metricsHeadline, parseWindow, readRunInputs } from "@agentic-workflow/core/workflow/metrics-aggregate"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
 import {
@@ -2642,6 +2643,17 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config, only?: st
     if (outcome?.kind === "park" && item.workflowKind === "engineering" && item.state.task) {
       await autoAdvanceParkedPlan(deps, sessionID, config, item.state.task.id, { chain: false })
     }
+    // The claim-next offer (design 65): a sitter's terminal used to be a bare
+    // message, and the items behind it waited for the next tick in silence. The
+    // source counted them at claim time; say so, naming the verb — or, for a
+    // watch session, that its next tick takes the next one.
+    if (outcome && outcome.kind !== "park" && item.remaining !== undefined && item.remaining > 0) {
+      const n = item.remaining
+      const more = `${String(n)} more ${item.workflowKind} item${n === 1 ? "" : "s"} need${n === 1 ? "s" : ""} attention`
+      const how = watching.has(sessionID) ? "this watch session takes the next one on its next tick" : `/agentic-workflow:${item.workflowKind} claim takes the next one`
+      await deps.log("info", `${more} — ${how}`)
+      void toast(deps.client, `${more} — ${how}.`, "info")
+    }
   } catch (err) {
     // Died before real work started (e.g. ensureIsolation threw, before
     // setWorkflow ran — onIdle's catch can't see the task): the claim is ours, so
@@ -4156,8 +4168,8 @@ export const autoAdvanceParkedPlan = async (
 const USAGE =
   `Usage: ${ECMD} new <idea> · retask <id> [note] · approve [id] [--base=<branch>] [--pr|--push|--local] · replan [id] [reason] · ` +
   "abandon <id> [reason] · restore <id> [reason] · remove <id> --force · show <id> · priority <id> <n> · plan <id> · " +
-  "claim [id] · watch [interval] · unwatch · recover [id] · kinds · doctor [fix|config] · init · stop · status"
-const kindUsage = (kind: string): string => `Usage: /agentic-workflow:${kind} claim · watch [interval] · unwatch · stop · status`
+  "claim [id] · watch [interval] · unwatch · recover [id] · kinds · doctor [fix|config] · metrics [7d|30d|all] [kind] · init · stop · status"
+const kindUsage = (kind: string): string => `Usage: /agentic-workflow:${kind} claim · watch [interval] · unwatch · stop · status · metrics [7d|30d|all]`
 
 /**
  * Parse a `claim <pr>` target into a positive PR number. Accepts a bare number
@@ -4210,7 +4222,7 @@ export const handleCommand = async (
   const engineering = kind === "engineering"
 
   // Engineering-only verbs on another kind's command → that kind's usage.
-  if (!engineering && !["claim", "watch", "unwatch", "stop", "abort", "status", ""].includes(verb)) {
+  if (!engineering && !["claim", "watch", "unwatch", "stop", "abort", "status", "metrics", ""].includes(verb)) {
     return report(client, `Unknown /agentic-workflow:${kind} mode "${arg}". ${kindUsage(kind)}.`, "warning")
   }
 
@@ -4732,6 +4744,25 @@ export const handleCommand = async (
       return report(client, summary.length ? `Backlog doctor: ${summary.join(" · ")}.` : "Backlog doctor: nothing to repair.", "success")
     } catch (err) {
       return report(client, `Backlog doctor failed: ${(err as Error).message}`, "error")
+    }
+  }
+
+  // Cross-run loop health from runs/ (design 64) — the terminal's view of the
+  // hub's Metrics tab, over the same reader and the same arithmetic.
+  if (verb === "metrics") {
+    const [windowText = "all", kindArg = "", ...extra] = rest.split(/\s+/).filter(Boolean)
+    const window = parseWindow(windowText)
+    if (!window || extra.length) return report(client, `Usage: ${ECMD} metrics [7d|30d|all] [kind].`, "warning")
+    try {
+      const { inputs, skipped } = await readRunInputs(client, deps.directory, config.tasksDir)
+      const headline = metricsHeadline(inputs, { ...window, ...(kindArg ? { kind: kindArg } : {}) })
+      const label = `${windowText === "all" ? "all time" : `last ${windowText}`}${kindArg ? ` · ${kindArg}` : ""}`
+      const lines = formatMetricsHeadline(headline, label)
+      if (skipped.length) lines.push(`  ${String(skipped.length)} run log(s) unreadable: ${skipped.join(", ")}`)
+      void toast(client, lines[0] ?? "Loop metrics", "info")
+      return lines.join("\n")
+    } catch (err) {
+      return report(client, `Metrics failed: ${(err as Error).message}`, "error")
     }
   }
 

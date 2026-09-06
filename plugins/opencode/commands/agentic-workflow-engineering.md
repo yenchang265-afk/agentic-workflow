@@ -1,7 +1,7 @@
 ---
 name: agentic-workflow:engineering
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] [--all] | replan [id] [reason] | abandon <id> [reason] | restore <id> [reason] | remove <id> --force | show <id> | priority <id> <n> | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover [id] | kinds | doctor [fix|config] | init | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] [--all] | replan [id] [reason] | abandon <id> [reason] | restore <id> [reason] | remove <id> --force | show <id> | priority <id> <n> | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover [id] | kinds | doctor [fix|config] | metrics [7d|30d|all] [kind] | init | stop | status
 ---
 
 The engineering agentic loop — one command for authoring, the human gates,
@@ -361,6 +361,15 @@ only after seeing the file in its target folder.
     from the user-scope config only; moving them there is the fix), and the
     effective config with secrets masked.
 <!-- /aw:verb doctor -->
+<!-- aw:verb metrics -->
+- **`metrics [7d|30d|all] [kind]`** — cross-run loop health from
+  `docs/tasks/runs/`, read-only: the plugin logs passes and runs in the
+  window, outcome tallies, the cap-trip and first-pass-yield rates, the
+  slowest stages, and the same numbers per ISO week; relay the report as
+  given. The window defaults to `all`; a kind narrows to one workflow kind's
+  passes (historical logs that recorded no kind count as engineering). The
+  hub's Metrics tab is the fuller view of the same numbers.
+<!-- /aw:verb metrics -->
 <!-- aw:verb init -->
 - **`init`** — scaffold this repo for the loop: the plugin creates the
   backlog's status folders, writes a safe-key `.agentic-workflow.json` when

@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { Client, Shell } from "../host.js"
 import { loadManifest } from "../manifest/load.js"
-import { makeAdoPrSource } from "./ado-pr.js"
+import { makeAdoPrSource, REMAINING_PROBE_MAX } from "./ado-pr.js"
 import type { AdoGateway, AdoResult } from "./ado-gateway.js"
 
 /**
@@ -532,4 +532,19 @@ test("targeted claim reports an actionable skip when the PR is not found", async
   assert.match(skip?.message ?? "", /PR #999 not found or not accessible/)
   assert.match(skip?.message ?? "", /TF401180/)
   assert.equal(skip?.actionable, true)
+})
+
+test("a claim carries `remaining`, judged over a BOUNDED tail — each probe costs the snapshot's API calls", async () => {
+  const calls: string[] = []
+  // 1 claimed + 8 eligible behind it (one draft, excluded) — more than the probe bound.
+  const prs = [pr({ pullRequestId: 1 }), ...Array.from({ length: 8 }, (_, i) => pr({ pullRequestId: i + 2, sourceRefName: `refs/heads/feat/${String(i + 2)}` })), pr({ pullRequestId: 20, isDraft: true })]
+  const { item } = await source(prs, { script: { mergeBuilds: failingBuilds }, calls }).claimNext()
+  assert.equal(item?.id, "pr-1")
+  assert.equal(item?.remaining, REMAINING_PROBE_MAX, "a lower bound: the probe stops at the cap")
+  const builds = calls.filter((c) => c.startsWith("listBuilds"))
+  assert.equal(builds.length, 1 + REMAINING_PROBE_MAX, "one snapshot for the claim, one per probed tail PR, none past the cap")
+  assert.ok(!calls.some((c) => c === "getBuildStatus" || c === "createPullRequest"))
+  // A short tail is counted exactly.
+  const two = await source([pr({ pullRequestId: 1 }), pr({ pullRequestId: 2, sourceRefName: "refs/heads/feat/2" }), pr({ pullRequestId: 3, sourceRefName: "refs/heads/feat/3" })], { script: { mergeBuilds: failingBuilds } }).claimNext()
+  assert.equal(two.item?.remaining, 2)
 })

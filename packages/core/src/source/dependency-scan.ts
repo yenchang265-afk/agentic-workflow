@@ -591,17 +591,23 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
         for (const s of adapterSkips) await log("warn", s.message)
       }
       const heldIds: string[] = []
-      for (const candidate of claimable) {
+      // A candidate the ledger has not retired — the walk's own test, re-run
+      // over the tail after a claim to count what is left (`remaining`, design 65).
+      const open = async (candidate: UpgradeCandidate): Promise<boolean> => {
         const ledger = await loadDepLedger(candidate.pkg)
-        if (ledger.versionHandled === candidate.target) continue
-        if (ledger.failedAttempts.some((f) => f.target === candidate.target)) continue
+        return ledger.versionHandled !== candidate.target && !ledger.failedAttempts.some((f) => f.target === candidate.target)
+      }
+      for (const [index, candidate] of claimable.entries()) {
+        if (!(await open(candidate))) continue
         // A stale marker is swept before we give up: without it a crashed run
         // wedged this dependency forever (see `claim-marker.ts`).
         if (!(await claimDep(candidate.pkg))) {
           heldIds.push(depKey(candidate.pkg))
           continue
         }
-        return { item: withClaimMarker(workItem(candidate), depMarker(candidate.pkg)), skip: null }
+        let remaining = 0
+        for (const later of claimable.slice(index + 1)) if (await open(later)) remaining++
+        return { item: { ...withClaimMarker(workItem(candidate), depMarker(candidate.pkg)), remaining }, skip: null }
       }
       if (heldIds.length) {
         return {

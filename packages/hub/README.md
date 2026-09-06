@@ -286,7 +286,10 @@ happened. It is in-memory and session-scoped; git remains the durable record.
   time. Iteration burn and cap-trip rate (is the loop converging, or running out
   of iterations?), first-pass yield, per-stage verdict tallies with the
   fail→pass / pass→fail / fail→fail flip counts, outcome mix, per-stage
-  wall-clock, and prompt-cache hit rate. `GET /api/metrics`.
+  wall-clock, and prompt-cache hit rate — over a window (`7d`/`30d`/`90d`/all
+  time) and optionally one kind, with the headline numbers per ISO week.
+  `GET /api/metrics?window=30d&kind=engineering`. The `metrics` verb on both
+  CLI hosts prints the same headline from the same reader.
 
   Two conventions make the numbers trustworthy, and both are visible in the UI:
 

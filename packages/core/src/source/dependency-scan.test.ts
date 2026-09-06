@@ -727,3 +727,10 @@ test("a gradle repo without a lockfile still hard-skips even with a custom scann
   assert.equal(item, null)
   assert.match(skip?.message ?? "", /dependency locking/)
 })
+
+test("a claim carries `remaining`: the open candidates behind it, ledger-retired ones excluded", async () => {
+  const two = audit({ lodash: vuln({}), minimist: vuln({ name: "minimist", severity: "high", fixAvailable: { name: "minimist", version: "1.2.8", isSemVerMajor: false } }) })
+  const { item } = await source({ auditJson: two, lsJson: installed({ lodash: "4.17.20", minimist: "1.2.5" }) }).claimNext()
+  assert.ok(item)
+  assert.equal(item.remaining, 1)
+})
