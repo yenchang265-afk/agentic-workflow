@@ -751,7 +751,7 @@ git checkout release/2.4
 ```json
 {
   "prBase": "release/2.4",
-  "workflows": { "dep-sitter": { "prBase": "main" } }
+  "workflows": { "dep-sitter": { "enabled": true, "prBase": "main" } }
 }
 ```
 

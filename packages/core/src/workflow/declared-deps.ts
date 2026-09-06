@@ -1,3 +1,4 @@
+import { joinClauses } from "./verdict.js"
 /**
  * Dependencies DECLARED by the PLAN stage, frozen in the plan document.
  *
@@ -187,7 +188,7 @@ const FENCE_RE = /^[ \t]*```[ \t]*agentic-deps[ \t]*\r?\n([\s\S]*?)^[ \t]*```[ \
  * and its parser cannot drift. Pure.
  */
 export const dependencyContractBlock = (planStage: string): string =>
-  [
+  joinClauses([
     `DEPENDENCY CONTRACT: when this task turns on any third-party dependency, the ${planStage} stage's plan MUST carry a`,
     "`### Dependencies` subsection. Work in this order, and say which tier you landed on and why the cheaper ones were rejected:",
     "(1) a dependency ALREADY in this repo's lockfile or package manifest; (2) the language's standard library;",
@@ -223,7 +224,7 @@ export const dependencyContractBlock = (planStage: string): string =>
     "The loop does not install anything from this block and does not refuse a plan over it; it is read by the human",
     "at the plan gate, who is the one who knows what this organisation's mirror carries.",
     "Omit the subsection and the block entirely when the task adds no dependency — say nothing rather than declaring an empty list.",
-  ].join(" ")
+  ])
 
 /** One declared dependency the loop refused, and why. */
 export interface RejectedDep {

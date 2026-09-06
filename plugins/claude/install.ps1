@@ -85,4 +85,5 @@ foreach ($file in Get-ChildItem -Path (Join-Path $RepoDir 'references') -Filter 
 
 Write-Host ""
 Write-Host "Done. Load with:  claude --plugin-dir `"$PluginDir`""
-Write-Host "Then run:  /agentic-workflow:engineering new <idea>   (draft -> approve <id> -> claim plans & parks it -> approve -> claim builds -> approve ships)"
+Write-Host "Then run:  /agentic-workflow:engineering init   (scaffolds docs/tasks/ + a safe config)"
+Write-Host "     and:  /agentic-workflow:engineering new <idea>   (draft -> approve <id> -> claim plans & parks it -> approve -> claim builds -> approve ships)"

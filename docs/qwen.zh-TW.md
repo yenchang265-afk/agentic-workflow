@@ -37,11 +37,15 @@ verdict、gate）呼叫內建的 `agentic-workflow` MCP 伺服器，並用 **`ag
 | 指令 | 作用 |
 |---|---|
 | `/agentic-workflow:engineering` | engineering 迴圈：`new`、`retask`、`approve`、`approve --all`、`replan`、`abandon`、`restore`、`remove`、`show`、`priority`、`plan`、`claim [id]`、`recover`、`kinds`、`init`、`doctor [fix\|config]`、`metrics`、`stop`、`status` |
-| `/agentic-workflow:pr-sitter` | PR sitter：`claim [<pr>]`、`status`、`stop` |
-| `/agentic-workflow:review-sitter` | review sitter |
-| `/agentic-workflow:dep-sitter` | 相依套件 sitter（實驗性） |
-| `/agentic-workflow:main-sitter` | 預設分支 CI sitter（實驗性） |
+| `/agentic-workflow:pr-sitter` | PR sitter（實驗性、需選擇加入）：`claim [<pr>]`、`status`、`stop`、`metrics` |
+| `/agentic-workflow:review-sitter` | review sitter（實驗性、需選擇加入） |
+| `/agentic-workflow:dep-sitter` | 相依套件 sitter（實驗性、需選擇加入） |
+| `/agentic-workflow:main-sitter` | 預設分支 CI sitter（實驗性、需選擇加入） |
 | `/agentic-workflow:plan` | 臨時、唯讀的規劃——不屬於迴圈 |
+
+每個 sitter 都需要選擇加入：只有在 `.agentic-workflow.json` 帶有
+`"workflows": { "<kind>": { "enabled": true } }` 時它的指令才存在——沒有 `enabled`
+的區段是無效的，載入時會警告。各 sitter 的旋鈕見 `docs/sitters.md`。
 
 和 Claude Code 一樣，被呼叫的 verb 的程序是由 `UserPromptSubmit` hook 注入這個回合的。
 如果你看到迴圈說 **「no VERB INSTRUCTIONS block reached you」**，代表 hooks 沒有在跑

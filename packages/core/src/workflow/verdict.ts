@@ -857,6 +857,25 @@ export const WORKFLOW_VERIFY_TAG = "WORKFLOW_VERIFY"
 export const WORKFLOW_REVIEW_TAG = "WORKFLOW_REVIEW"
 
 /**
+ * Join a contract block's clauses (design 67). The blocks are authored one
+ * clause per array element and used to be joined with a single space, so a
+ * VERIFY prompt's tail rendered as one ~900-word paragraph in which
+ * `PLAN DEFECT:`, `ACCEPTANCE CRITERIA:` and `PROOF OF WORK:` — three distinct
+ * sub-contracts — ran mid-sentence into each other. A clause that opens with
+ * an ALL-CAPS label now starts a paragraph; every other clause keeps the space
+ * join, so no wording changes. Pure.
+ */
+export const joinClauses = (clauses: readonly string[]): string => {
+  let out = ""
+  for (const clause of clauses) {
+    if (!out) out = clause
+    else out += (LABEL_RE.test(clause) ? "\n\n" : " ") + clause
+  }
+  return out
+}
+const LABEL_RE = /^[A-Z][A-Z -]+:/
+
+/**
  * The mandatory verdict-contract paragraph appended to every CHECK stage's
  * composed prompt (see engine.ts `composePrompt`). The contract normally
  * lives in the workflow-verify/workflow-review agent definitions, but a mis-resolved
@@ -910,7 +929,7 @@ export const verdictContractBlock = (
   requireEvidence = false,
   criteriaCount?: number,
 ): string =>
-  [
+  joinClauses([
     "MANDATORY VERDICT: before you finish, record your verdict by calling the `workflow_verdict` tool",
     "(on Claude Code it appears as `mcp__agentic-workflow__workflow_verdict` or, plugin-bundled,",
     "`mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict`)",
@@ -985,7 +1004,7 @@ export const verdictContractBlock = (
           "FAIL and ERROR need no evidence: if the check could not run, record ERROR with a reason naming what is missing.",
         ]
       : []),
-  ].join(" ")
+  ])
 
 /**
  * The per-pass instruction appended AFTER composition to a focused check pass's
@@ -1013,7 +1032,7 @@ export const passFocusBlock = (pass: StagePass, index: number, total: number): s
       `carrying per-axis results only for the axes your lens actually bears on.`
     )
   }
-  return [
+  return joinClauses([
     `REVIEW AXIS ${index + 1}/${total}: ${pass.focus}.`,
     `Review this change for ${pass.focus} ONLY.`,
     `The other ${total - 1} ${total === 2 ? "axis runs" : "axes run"} as separate, independent passes —`,
@@ -1021,7 +1040,7 @@ export const passFocusBlock = (pass: StagePass, index: number, total: number): s
     `Call workflow_verdict ONCE with axes: [{ axis: "${pass.focus}", verdict, findings }] —`,
     "exactly that one entry, and nothing for any other axis.",
     `Your pass merges worst-wins with the others: a Critical or Important ${pass.focus} finding fails the whole stage.`,
-  ].join(" ")
+  ])
 }
 
 /**
@@ -1038,7 +1057,7 @@ export const passFocusBlock = (pass: StagePass, index: number, total: number): s
  * hosts. Pure.
  */
 export const workScopeBlock = (stage: string): string =>
-  [
+  joinClauses([
     `STAGE SCOPE: you are running the ${stage} stage only.`,
     `Finish your turn as soon as ${stage}'s own work is done and summarize what you did —`,
     "what happens next is the loop's decision, taken after your turn ends: it fires the next stage, parks for a human, or finishes.",
@@ -1046,7 +1065,7 @@ export const workScopeBlock = (stage: string): string =>
     "it is redone anyway, and it runs while the loop is still recorded at this stage.",
     "Never call the `workflow_verdict` tool — it is rejected outside its own check stage and the rejection is audited as stage drift.",
     "Never state that the task moved, that a check passed, or that the loop finished — only the loop moves work.",
-  ].join(" ")
+  ])
 
 /**
  * The plan-structure contract appended to a work stage that sets
@@ -1075,7 +1094,7 @@ export const workScopeBlock = (stage: string): string =>
  * (see `workflow-verify`'s step 2) is the backstop, not the fix.
  */
 export const planContractBlock = (stage: string): string =>
-  [
+  joinClauses([
     `PLAN CONTRACT: the ${stage} stage's written plan (under \`## Implementation Plan\`) MUST contain:`,
     "(1) numbered, ordered steps, each naming the file path(s) it touches;",
     "(2) a `### Verification` subsection mapping each acceptance criterion to the exact command or observable check that proves it;",
@@ -1087,7 +1106,7 @@ export const planContractBlock = (stage: string): string =>
     "and stops the server itself, an assertion over the built artifact or config), or put it in `### Out of Scope` for the",
     "human to judge at the ship gate.",
     "The `### Verification` subsection is enforced: a plan without that heading is refused by the loop before it reaches the human gate, and the task stays queued.",
-  ].join(" ")
+  ])
 
 /**
  * The plan-visualization block appended after `planContractBlock` on a work
@@ -1100,7 +1119,7 @@ export const planContractBlock = (stage: string): string =>
  * the `hasVerificationSection` note above. Pure.
  */
 export const planVisualizationBlock = (stage: string): string =>
-  [
+  joinClauses([
     `PLAN VISUALIZATION: when the change's shape is what the plan reviewer has to judge, the ${stage} stage's plan SHOULD include`,
     "one or more ```mermaid fenced diagrams inside `## Implementation Plan`. Include a diagram when the change involves:",
     "(a) state or lifecycle transitions (a stateDiagram showing every arc, including release/cleanup paths);",
@@ -1109,7 +1128,7 @@ export const planVisualizationBlock = (stage: string): string =>
     "(d) data-shape changes (a before/after structure sketch).",
     "Skip the diagram for small or mechanical plans — it would only add review burden.",
     "No gate enforces this; it is your judgment. If a diagram and the numbered steps ever disagree, the steps are authoritative — fix or drop the diagram.",
-  ].join(" ")
+  ])
 
 /**
  * The `### Verification` clause of `planContractBlock`, as `runPark` enforces

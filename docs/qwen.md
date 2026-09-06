@@ -41,11 +41,16 @@ Identical to the Claude Code variant — Qwen's subdirectory namespacing renders
 | Command | What it does |
 |---|---|
 | `/agentic-workflow:engineering` | The engineering loop: `new`, `retask`, `approve`, `approve --all`, `replan`, `abandon`, `restore`, `remove`, `show`, `priority`, `plan`, `claim [id]`, `recover`, `kinds`, `init`, `doctor [fix\|config]`, `metrics`, `stop`, `status` |
-| `/agentic-workflow:pr-sitter` | The PR sitter: `claim [<pr>]`, `status`, `stop` |
-| `/agentic-workflow:review-sitter` | The review sitter |
-| `/agentic-workflow:dep-sitter` | The dependency sitter (experimental) |
-| `/agentic-workflow:main-sitter` | The default-branch CI sitter (experimental) |
+| `/agentic-workflow:pr-sitter` | The PR sitter (experimental, opt-in): `claim [<pr>]`, `status`, `stop`, `metrics` |
+| `/agentic-workflow:review-sitter` | The review sitter (experimental, opt-in) |
+| `/agentic-workflow:dep-sitter` | The dependency sitter (experimental, opt-in) |
+| `/agentic-workflow:main-sitter` | The default-branch CI sitter (experimental, opt-in) |
 | `/agentic-workflow:plan` | Ad-hoc, read-only planning — not part of the loop |
+
+Every sitter is opt-in: its command exists only once `.agentic-workflow.json`
+carries `"workflows": { "<kind>": { "enabled": true } }` — a section without
+`enabled` is inert and warned about at load. `docs/sitters.md` has each
+sitter's knobs.
 
 As on Claude Code, the invoked verb's procedure is injected into the turn by a
 `UserPromptSubmit` hook. If you ever see the loop say **"no VERB INSTRUCTIONS

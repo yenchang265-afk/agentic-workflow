@@ -214,6 +214,38 @@ install_opencode() {
   echo "OpenCode: /agentic-workflow:engineering and the bundled skills are available in every OpenCode session."
 }
 
+# The closing block (design 66): the LAST thing on screen names the first
+# command to type per host. The per-host installers say what they installed;
+# without this, the human's final screenful was the config-key catalogue, and
+# the only "then run" line anywhere named `new` — the second verb, not `init`,
+# which scaffolds the backlog the rest depend on.
+next_steps() {
+  echo
+  echo "== next: what to type first =="
+  case "$1" in
+    opencode|all)
+      echo "  OpenCode:    open the repo in opencode, then"
+      echo "               /agentic-workflow:engineering init        (scaffolds docs/tasks/ + a safe config)"
+      echo "               /agentic-workflow:engineering new <idea>  (interview -> draft; then approve <id>, claim, approve)"
+      ;;
+  esac
+  case "$1" in
+    claude|all)
+      echo "  Claude Code: claude --plugin-dir \"$REPO_DIR/plugins/claude\", then"
+      echo "               /agentic-workflow:engineering init"
+      echo "               /agentic-workflow:engineering new <idea>"
+      ;;
+  esac
+  case "$1" in
+    qwen|all)
+      echo "  Qwen Code:   restart the session, then"
+      echo "               /agentic-workflow:engineering init"
+      echo "               /agentic-workflow:engineering new <idea>"
+      ;;
+  esac
+  echo "  Hub:         pnpm hub --dir \"$(pwd)\"   (the review queue, board, doctor, metrics)"
+}
+
 install_claude() {
   echo "Installing agentic-workflow for Claude Code (plugins/claude/)"
   if [ "$MODE" = copy ]; then
@@ -283,9 +315,8 @@ install_qwen() {
     "$REPO_DIR/plugins/claude/mcp-server/dist/server.js"
 
   echo
-  echo "Qwen Code: restart the session, then run /agentic-workflow:engineering status"
-  echo "           (re-run this installer after changing stageModels/agentModels —"
-  echo "            Qwen binds a subagent's model statically, at install time)"
+  echo "Qwen Code: installed (re-run this installer after changing stageModels/agentModels —"
+  echo "           Qwen binds a subagent's model statically, at install time)."
 }
 
 # ---------------------------------------------------------------------------
@@ -819,3 +850,6 @@ esac
 
 maybe_configure
 ensure_user_defaults
+case "$TARGET" in
+  opencode|claude|qwen|all) next_steps "$TARGET" ;;
+esac
