@@ -21,13 +21,13 @@ No configuration needed — the engineering loop runs by default. To disable it:
 **OpenCode**
 
 ```
-/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | approve --all | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover [id] | kinds | init | doctor [fix|config] | stop | status
+/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | approve --all | replan [id] [reason] | abandon <id> [reason] | restore <id> [reason] | remove <id> --force | show <id> | priority <id> <n> | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover [id] | kinds | init | doctor [fix|config] | stop | status
 ```
 
 **Claude Code (MCP)**
 
 ```
-/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | approve --all | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | recover [id] | kinds | init | doctor [fix|config] | stop | status
+/agentic-workflow:engineering new <idea> | retask <id> [note] | approve [id] | approve --all | replan [id] [reason] | abandon <id> [reason] | restore <id> [reason] | remove <id> --force | show <id> | priority <id> <n> | plan <id> | claim [id] | recover [id] | kinds | init | doctor [fix|config] | stop | status
 ```
 
 (Claude Code has no standing watcher; `claim` is the one-shot pull verb.)

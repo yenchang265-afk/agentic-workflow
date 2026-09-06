@@ -92,6 +92,15 @@ OpenCode**——見 configuration.md 中
   任何非終結資料夾執行（已出貨的 `completed/` 任務會被拒絕）。檔案會
   保留，因此這個動作是可逆的——這是取消任務該用的動詞，也是每個子任務
   都出貨後、收尾一個追蹤用 epic 的方式
+- `/agentic-workflow:engineering restore <id> [reason]`——abandon 的反向動作：任務從
+  `abandoned/` 移回 `draft/`——永遠是 `draft/`，任務把關點由你用 `approve`
+  重新通過——計畫與稽核紀錄都保留
+- `/agentic-workflow:engineering show <id>`——唯讀列印一份任務：狀態資料夾、
+  frontmatter、是否有計畫、可建置／持有認領／已中斷、待處理的 replan 原因、
+  上次停止的執行留下了什麼、上次完成的執行的分支與 diffstat，以及稽核紀錄
+- `/agentic-workflow:engineering priority <id> <n>`——就地設定一份任務的優先序
+  （整數，越低越先跑），附稽核註記並提交待辦；可從任何非終結資料夾執行，
+  迴圈正在驅動或持有認領標記時會被拒絕
 - `/agentic-workflow:engineering remove <id> --force`——硬刪除一項任務：和其他
   動詞不同，檔案會被刪除而不是移動。單獨的 `remove <id>` 不會刪除任何
   東西，只會回報該 id 解析到哪一份任務；`--force` 才是確認——這很重要，

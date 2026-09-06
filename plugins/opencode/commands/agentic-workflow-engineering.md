@@ -1,7 +1,7 @@
 ---
 name: agentic-workflow:engineering
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] [--all] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover [id] | kinds | doctor [fix|config] | init | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] [--all] | replan [id] [reason] | abandon <id> [reason] | restore <id> [reason] | remove <id> --force | show <id> | priority <id> <n> | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover [id] | kinds | doctor [fix|config] | init | stop | status
 ---
 
 The engineering agentic loop — one command for authoring, the human gates,
@@ -203,6 +203,33 @@ Dispatch:
   required. This is also how an epic tracking draft is closed once every child
   has shipped.
 <!-- /aw:verb abandon -->
+<!-- aw:verb restore -->
+- **`restore <id> [reason]`** — abandon's reversal: the task moves from
+  `abandoned/` back to `draft/` — **always** `draft/`, never the folder it
+  left, so the task gate is the human's to re-take with `approve <id>`. Its
+  plan sections and audit trail are kept. The plugin refuses a task that is
+  not in `abandoned/` (naming where it is) and a duplicate id already sitting
+  in `draft/`. An id is required.
+<!-- /aw:verb restore -->
+<!-- aw:verb priority -->
+- **`priority <id> <n>`** — set one task's priority in place (an integer;
+  lower runs first — the loop's own claim order, not the tracker's named
+  priority). The plugin rewrites the frontmatter, appends an audit note and
+  commits the backlog. Works from any non-terminal folder; it refuses a
+  completed or abandoned task, one a live loop is driving or that holds a
+  claim marker, and a file carrying off-schema frontmatter a rewrite would
+  delete. The current value reports success with nothing to do.
+<!-- /aw:verb priority -->
+<!-- aw:verb show -->
+- **`show <id>`** — print one task, read-only: its status folder and
+  frontmatter, whether it carries a plan, whether it is build-ready /
+  claim-held / interrupted, the pending replan reason, what the last stopped
+  run left behind, the last completed run's branch and diffstat, and its
+  audit trail (newest last). The plugin renders the report as this turn's
+  outcome; relay it as given — every line is derived by the same parsers the
+  gate verbs act on. Short-hash handles resolve; an ambiguous one is refused
+  with the candidates.
+<!-- /aw:verb show -->
 <!-- aw:verb remove -->
 - **`remove <id> --force`** — hard-delete a task from the backlog entirely.
   Unlike replan/retask/abandon this does **not** move the task: the file is

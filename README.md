@@ -218,6 +218,14 @@ task files and `.agentic-workflow.json`) by hand.
   `abandoned/`, the terminal folder for work that won't be done. The file is
   kept, so it can be moved back; this is also how a tracking epic is closed once
   every child has shipped
+- `/agentic-workflow:engineering restore <id> [reason]` — abandon's reversal: the task
+  moves from `abandoned/` back to `draft/` (always `draft/` — approve it again
+  when it is ready), plan and audit trail intact
+- `/agentic-workflow:engineering show <id>` · `priority <id> <n>` — `show` prints one
+  task read-only (folder, frontmatter, plan, claim/interrupted flags, pending
+  replan reason, last run's branch and diffstat, audit trail); `priority`
+  rewrites one task's priority in place (integer, lower runs first) with an
+  audit note, from any non-terminal folder
 - `/agentic-workflow:engineering remove <id> --force` — hard-delete a task: the file is
   deleted, not moved. A bare `remove <id>` deletes nothing and reports which
   task the id resolved to — `--force` is the confirmation. Recoverable from git

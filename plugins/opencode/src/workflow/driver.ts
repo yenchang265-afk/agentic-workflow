@@ -95,7 +95,7 @@ import {
 import type { AdoGateway } from "@agentic-workflow/core/source/ado-gateway"
 import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
 import { clearState, listSnapshotIds, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
-import { abandonTask, approveAny, approvePlan, planCaveats, rejectAny, removeTask, retaskTask, type GateCandidate, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
+import { abandonTask, approveAny, approvePlan, planCaveats, rejectAny, removeTask, restoreTask, retaskTask, setTaskPriority, showTask, type GateCandidate, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
 import { notifyLoopEvent, runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
@@ -3879,6 +3879,63 @@ export const handleAbandon = async (deps: Deps, _sessionID: string, args: string
 }
 
 /**
+ * Handle `restore <id> [reason]` — abandon's reversal (design 56): the task
+ * moves from `abandoned/` back to `draft/`, plan and trail intact, for the
+ * human to re-approve. Report-and-stop like abandon; an id is required.
+ */
+export const handleRestore = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<string> => {
+  const { client } = deps
+  const [id = "", ...rest] = args.trim().split(/\s+/).filter(Boolean)
+  if (!id) return report(client, `Usage: ${ECMD} restore <id> [reason].`, "warning")
+  try {
+    const r = await restoreTask(gateCtx(deps, config), id, rest.join(" ") || undefined)
+    return report(client, r.message, gateVariant(r))
+  } catch (err) {
+    return report(client, `Restore failed for "${id}": ${(err as Error).message}`, "error")
+  }
+}
+
+/**
+ * Handle `priority <id> <n>` — re-order one task in place (design 57). The
+ * value is parsed here only as far as "is it an integer"; the bounds and every
+ * refusal (terminal folder, held claim, live loop, off-schema frontmatter) are
+ * core's, so the hub editor and this verb cannot disagree.
+ */
+export const handlePriority = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<string> => {
+  const { client } = deps
+  const [id = "", value = "", ...extra] = args.trim().split(/\s+/).filter(Boolean)
+  const n = /^-?\d+$/.test(value) ? Number(value) : Number.NaN
+  if (!id || !value || extra.length || Number.isNaN(n)) return report(client, `Usage: ${ECMD} priority <id> <integer> (lower runs first).`, "warning")
+  try {
+    const r = await setTaskPriority(gateCtx(deps, config), id, n)
+    return report(client, r.message, gateVariant(r))
+  } catch (err) {
+    return report(client, `Priority change failed for "${id}": ${(err as Error).message}`, "error")
+  }
+}
+
+/**
+ * Handle `show <id>` — print one task (design 55). Read-only: core projects
+ * the task (`describeTask`) and renders it (`formatTaskDescription`), so the
+ * lines here are the same ones the Claude host's tool returns. The one-line
+ * toast carries the head; the full report replaces the rendered markdown so
+ * the model relays it.
+ */
+export const handleShow = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<string> => {
+  const { client } = deps
+  const id = args.trim().split(/\s+/).filter(Boolean)[0] ?? ""
+  if (!id) return report(client, `Usage: ${ECMD} show <id>.`, "warning")
+  try {
+    const r = await showTask(gateCtx(deps, config), id)
+    if (!r.ok) return report(client, r.message, gateVariant(r))
+    void toast(client, r.message.split("\n")[0] ?? r.message, "info")
+    return r.message
+  } catch (err) {
+    return report(client, `Show failed for "${id}": ${(err as Error).message}`, "error")
+  }
+}
+
+/**
  * Plan one approved task now (`plan <id>`): claims a `queued/` task and runs
  * the PLAN stage (writes the plan, parks in `plan-review/`, exits). Building
  * is deliberately NOT reachable from here — `claim`/`watch` drive builds — so
@@ -4096,7 +4153,7 @@ export const autoAdvanceParkedPlan = async (
  *  kind gets the minimal watcher verb set. */
 const USAGE =
   `Usage: ${ECMD} new <idea> · retask <id> [note] · approve [id] [--base=<branch>] [--pr|--push|--local] · replan [id] [reason] · ` +
-  "abandon <id> [reason] · remove <id> --force · plan <id> · " +
+  "abandon <id> [reason] · restore <id> [reason] · remove <id> --force · show <id> · priority <id> <n> · plan <id> · " +
   "claim [id] · watch [interval] · unwatch · recover [id] · kinds · doctor [fix|config] · init · stop · status"
 const kindUsage = (kind: string): string => `Usage: /agentic-workflow:${kind} claim · watch [interval] · unwatch · stop · status`
 
@@ -4173,6 +4230,10 @@ export const handleCommand = async (
     if (verb === "replan") return handleReplan(deps, sessionID, rest, config)
     if (verb === "remove") return handleRemove(deps, sessionID, rest, config)
     if (verb === "abandon") return handleAbandon(deps, sessionID, rest, config)
+    if (verb === "restore") return handleRestore(deps, sessionID, rest, config)
+    if (verb === "priority") return handlePriority(deps, sessionID, rest, config)
+    // Read-only: prints one task. Report-and-stop so the model relays the report.
+    if (verb === "show") return handleShow(deps, sessionID, rest, config)
 
     // Plan one approved (queued/) task now. Building is claim/watch's job.
     if (verb === "plan") {

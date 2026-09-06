@@ -168,6 +168,20 @@ const ABANDON_MOVE: Move = {
 }
 
 /**
+ * The reversal `ABANDON_MOVE`'s copy promises. Lands in `draft/` — never the
+ * folder the task left — so the human re-takes the task gate; the plan and the
+ * audit trail survive the round trip.
+ */
+const RESTORE_MOVE: Move = {
+  action: "restore",
+  endpoint: "/api/gate/restore",
+  label: "Restore",
+  title: "Restore this task?",
+  detail: "Moves the task back to draft/ and commits the move. Its plan and audit trail are kept; approve it again when it is ready.",
+  withReason: true,
+}
+
+/**
  * Remove hard-deletes the task file rather than moving it, and commits the
  * delete. Danger copy names the irreversibility; core still refuses a
  * live-driven or claim-held task.
@@ -200,4 +214,4 @@ export const forwardMoves = (status: string, opts: { readonly planRequested?: bo
  * a completed or already-abandoned task, so no button should promise otherwise.
  */
 export const cancellationMoves = (status: string): readonly Move[] =>
-  status === "completed" || status === "abandoned" ? [REMOVE_MOVE] : [ABANDON_MOVE, REMOVE_MOVE]
+  status === "abandoned" ? [RESTORE_MOVE, REMOVE_MOVE] : status === "completed" ? [REMOVE_MOVE] : [ABANDON_MOVE, REMOVE_MOVE]

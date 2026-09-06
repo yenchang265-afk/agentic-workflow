@@ -11,7 +11,7 @@ import {
   splitTaskBody,
   STATUSES,
 } from "@agentic-workflow/core/task/store"
-import { taskToInput, unknownFrontmatterKeys, type Task } from "@agentic-workflow/core/task/schema"
+import { PRIORITY_MAX, PRIORITY_MIN, taskToInput, unknownFrontmatterKeys, type Task } from "@agentic-workflow/core/task/schema"
 import { redact } from "@agentic-workflow/core/task/redact"
 import { commitBacklog, oneLineReason, retaskTask } from "@agentic-workflow/core/workflow/gate"
 import { gitActor } from "@agentic-workflow/core/workflow/git"
@@ -57,7 +57,7 @@ const SaveTaskRequestSchema = z.object({
   baseHash: z.string().min(1).max(128),
   title: line(200),
   type: line(40).optional(),
-  priority: z.number().int().min(-1000).max(1000),
+  priority: z.number().int().min(PRIORITY_MIN).max(PRIORITY_MAX),
   labels: z.array(line(60)).max(20),
   acceptance: z.array(line(500)).max(30),
   // Comfortably under MAX_BODY_BYTES, and under the argv limit the shell write

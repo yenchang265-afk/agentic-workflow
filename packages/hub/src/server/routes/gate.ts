@@ -1,4 +1,4 @@
-import { abandonTask, approvePlan, approveTask, removeTask, replanTask, shipTask, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
+import { abandonTask, approvePlan, approveTask, removeTask, replanTask, restoreTask, shipTask, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
 import { ShipPublishSchema } from "@agentic-workflow/core/config"
 import { SHIP_PUBLISH_MODES } from "@agentic-workflow/core/workflow/state"
 import { findByIdIn, STATUSES } from "@agentic-workflow/core/task/store"
@@ -41,6 +41,10 @@ const ACTIONS: Readonly<Record<GateAction, { from: TaskStatus; run: (ctx: GateCt
   // remove its button lives on every non-terminal column, so `from` is nominal
   // and `allowedFrom` carries the real set.
   abandon: { from: "draft", run: (ctx, id, body) => abandonTask(ctx, id, body.reason?.trim() || undefined) },
+  // restore is abandon's reversal (design 56): abandoned/ → draft/, always
+  // draft — the task gate approval is the human's to re-make. Its button lives
+  // on the abandoned column only, which `from` states exactly.
+  restore: { from: "abandoned", run: (ctx, id, body) => restoreTask(ctx, id, body.reason?.trim() || undefined) },
   // remove hard-deletes the task; its button lives on every column, so it has
   // no single origin — `from` is nominal and every status is a valid origin
   // (see `allowedFrom`). Core refuses a live-driven or claim-held task.

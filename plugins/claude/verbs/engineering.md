@@ -242,6 +242,39 @@
   `mcp__agentic-workflow__workflow_abandon({id, reason})`.) This is also how a
   tracking epic draft is closed once every child has shipped.
 <!-- /aw:verb abandon -->
+<!-- aw:verb restore -->
+- **`restore <id> [reason]`** — abandon's reversal: the task moves from
+  `abandoned/` back to `draft/` — **always** `draft/`, never the folder it
+  left, so the task gate is the human's to re-take with `approve <id>`. Its
+  plan sections and audit trail are kept. **Handled by the same hook** as
+  approve/replan, so the move is already done before your turn; an id is
+  required. Core refuses a task that is not in `abandoned/` (naming where it
+  is) and a duplicate id already sitting in `draft/`. (Fallback:
+  `mcp__agentic-workflow__workflow_restore({id, reason})`.)
+<!-- /aw:verb restore -->
+<!-- aw:verb priority -->
+- **`priority <id> <n>`** — set one task's priority in place (an integer;
+  lower runs first — the loop's own claim order, not the tracker's named
+  priority). **Handled by the same hook** as approve/replan: the frontmatter
+  is rewritten, an audit note appended and the backlog committed before your
+  turn. Works from any non-terminal folder; core refuses a completed or
+  abandoned task, one a live loop is driving or that holds a claim marker,
+  and a file carrying off-schema frontmatter a rewrite would delete. The
+  current value reports success with nothing to do. (Fallback:
+  `mcp__agentic-workflow__workflow_priority({id, priority})`.)
+<!-- /aw:verb priority -->
+<!-- aw:verb show -->
+- **`show <id>`** — print one task, read-only: its status folder and
+  frontmatter, whether it carries a plan, whether it is build-ready /
+  claim-held / interrupted, the pending replan reason, what the last stopped
+  run left behind, the last completed run's branch and diffstat, and its
+  audit trail (newest last). **Handled by the same hook** as approve/replan —
+  the rendered report is the turn's outcome; relay it as given, every line is
+  derived by the same parsers the gate verbs act on. Short-hash handles
+  resolve; an ambiguous one is refused with the candidates. (Fallback:
+  `mcp__agentic-workflow__workflow_show({id})`, whose result is the same
+  projection as data.)
+<!-- /aw:verb show -->
 <!-- aw:verb remove -->
 - **`remove <id> --force`** — hard-delete a task from the backlog entirely.
   Unlike replan/retask/abandon this does **not** move the task to another

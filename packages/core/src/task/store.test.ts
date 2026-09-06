@@ -61,6 +61,7 @@ import {
   soleInterrupted,
   type TaskStatus,
   wasInterrupted,
+  extractAbandonOrigin,
 } from "./store.js"
 import { AUDIT_NOTE_LINE_RE } from "./plan-section.js"
 
@@ -470,6 +471,20 @@ test("extractStopContext ignores an unstamped or digestless stop line", () => {
   assert.equal(extractStopContext(task("a", 0, unstamped)), undefined)
   const digestless = `${PLAN_HEADING}\n\nOld.\n\n> Run stopped for another reason [2026-01-02T00:00:00.000Z by dev]\n`
   assert.equal(extractStopContext(task("a", 0, digestless)), undefined)
+})
+
+test("extractAbandonOrigin reads the folder off the last stamped abandon note and refuses anything else", () => {
+  assert.equal(extractAbandonOrigin(task("a", 0, "c\n\n> Abandoned from in-review — parked [2026-01-01T00:00:00.000Z by dev]")), "in-review")
+  assert.equal(extractAbandonOrigin(task("a", 0, "c\n\n> Abandoned from queued [2026-01-01T00:00:00.000Z by dev]")), "queued")
+  // Unstamped: a quotation, not a record.
+  assert.equal(extractAbandonOrigin(task("a", 0, "c\n\n> Abandoned from queued")), undefined)
+  // Not a folder, or a terminal one, or nothing at all.
+  assert.equal(extractAbandonOrigin(task("a", 0, "c\n\n> Abandoned from nowhere [2026-01-01T00:00:00.000Z by dev]")), undefined)
+  assert.equal(extractAbandonOrigin(task("a", 0, "c\n\n> Abandoned from completed [2026-01-01T00:00:00.000Z by dev]")), undefined)
+  assert.equal(extractAbandonOrigin(task("a", 0, "c")), undefined)
+  // The LAST note wins: abandon, restore, abandon again.
+  const twice = "c\n\n> Abandoned from queued [2026-01-01T00:00:00.000Z by dev]\n> Restored to draft from abandoned [2026-01-02T00:00:00.000Z by dev]\n> Abandoned from plan-review [2026-01-03T00:00:00.000Z by dev]"
+  assert.equal(extractAbandonOrigin(task("a", 0, twice)), "plan-review")
 })
 
 test("replanFor threads the reason, and falls back on a reasonless rejection", () => {

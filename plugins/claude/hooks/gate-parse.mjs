@@ -78,6 +78,17 @@ const REMOVE = new RegExp(`${AT_START}${CMD}\\s+remove\\b[ \\t]*(.*)`, "i")
 // cancellation. Deterministic like remove, so it blocks the turn, and it takes
 // the same explicit id for the same reason.
 const ABANDON = new RegExp(`${AT_START}${CMD}\\s+abandon\\b[ \\t]*(.*)`, "i")
+// restore is abandon's reversal (abandoned/ → draft/). Deterministic, blocks
+// the turn, explicit id — the same shape as the move it undoes.
+const RESTORE = new RegExp(`${AT_START}${CMD}\\s+restore\\b[ \\t]*(.*)`, "i")
+// priority rewrites one frontmatter field in place. Deterministic; the value
+// is parsed HERE as far as "an integer follows the id", because this hook
+// blocks the turn and no model could ask for the missing number.
+const PRIORITY = new RegExp(`${AT_START}${CMD}\\s+priority\\b[ \\t]*(.*)`, "i")
+// show is READ-ONLY and still dispatches through the CLI: the projection is
+// deterministic, and blocking the turn with the rendered report is exactly the
+// report the human asked for — no model turn improves on it.
+const SHOW = new RegExp(`${AT_START}${CMD}\\s+show\\b[ \\t]*(.*)`, "i")
 
 // Any engineering verb, for the per-verb instruction injection (verb-slice.mjs)
 // rather than for a gate move. Shares CMD and AT_START so the two never
@@ -184,6 +195,28 @@ export const gateArgsFor = (prompt) => {
     const id = unquote(words[0] || "")
     if (!id) return { usage: "Usage: /agentic-workflow:engineering abandon <id> [reason]." }
     return { argv: ["gate", "abandon", id, ...words.slice(1)] }
+  }
+  const restore = prompt.match(RESTORE)
+  if (restore) {
+    const words = (restore[1] || "").trim().split(/\s+/).filter(Boolean)
+    const id = unquote(words[0] || "")
+    if (!id) return { usage: "Usage: /agentic-workflow:engineering restore <id> [reason]." }
+    return { argv: ["gate", "restore", id, ...words.slice(1)] }
+  }
+  const priority = prompt.match(PRIORITY)
+  if (priority) {
+    const words = (priority[1] || "").trim().split(/\s+/).filter(Boolean)
+    const id = unquote(words[0] || "")
+    const value = words[1] || ""
+    if (!id || !/^-?\d+$/.test(value) || words.length > 2) return { usage: "Usage: /agentic-workflow:engineering priority <id> <integer> (lower runs first)." }
+    return { argv: ["gate", "priority", id, value] }
+  }
+  const show = prompt.match(SHOW)
+  if (show) {
+    const words = (show[1] || "").trim().split(/\s+/).filter(Boolean)
+    const id = unquote(words[0] || "")
+    if (!id) return { usage: "Usage: /agentic-workflow:engineering show <id>." }
+    return { argv: ["gate", "show", id] }
   }
   const remove = prompt.match(REMOVE)
   if (remove) {

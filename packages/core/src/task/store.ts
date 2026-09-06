@@ -626,6 +626,35 @@ export const extractStopContext = (task: Task): string | undefined => {
 }
 
 /**
+ * The note `abandonTask` writes — `> Abandoned from <folder>[ — reason]`. A
+ * constant rather than the literal it was, because `extractAbandonOrigin`
+ * parses it: an abandoned task's origin folder is the one fact `show` reports
+ * about it that nothing else records, and a reworded note would silently turn
+ * that into "unknown" (the parser fails toward undefined, never toward a guess).
+ */
+export const ABANDONED_MARKER = "> Abandoned from "
+
+/**
+ * The status folder the task was abandoned FROM, read off the LAST stamped
+ * `ABANDONED_MARKER` line, or `undefined`. Pure.
+ *
+ * Only a value naming a real non-terminal folder is returned: the note's prose
+ * is model-adjacent (an actor string rides on the same line, and a reason the
+ * human typed follows the folder), so anything else reads as "not recorded".
+ * Display data only — `restoreTask` deliberately does NOT send a task back
+ * here (see the gate), so a wrong value can never move a file.
+ */
+export const extractAbandonOrigin = (task: Task): TaskStatus | undefined => {
+  const idx = lastMarkerIndex(task.body, ABANDONED_MARKER)
+  if (idx === -1) return undefined
+  const end = task.body.indexOf("\n", idx)
+  const line = task.body.slice(idx, end === -1 ? task.body.length : end)
+  if (!AUDIT_NOTE_LINE_RE.test(line)) return undefined
+  const folder = line.slice(ABANDONED_MARKER.length).split(/\s/)[0] ?? ""
+  return STATUSES.includes(folder as TaskStatus) && folder !== "completed" && folder !== "abandoned" ? (folder as TaskStatus) : undefined
+}
+
+/**
  * How many line-anchored `PLAN_HEADING`s the body carries. Pure.
  *
  * More than one means a PLAN pass stacked a new plan below an older one instead
@@ -1707,6 +1736,53 @@ export const rewriteTask = async ($: Shell, task: FileRef, input: TaskInput, log
     throw new Error(`rewrite of ${task.id} did not land at ${dest}`)
   }
   log?.("info", `rewrote ${dest}`)
+  return dest
+}
+
+/**
+ * Move an `abandoned/` task back to `draft/` — the un-abandon (design 56).
+ *
+ * Deliberately bypasses `canTransition`, whose "terminal means terminal" rule
+ * stays intact for `moveTask` and every lifecycle move: like `rescueStray`
+ * this is a REPAIR into the human-review inbox, not a forward step. Always
+ * `draft/`, never the recorded origin — a restore to `queued/` would re-assert
+ * a task-gate approval nobody re-made (and `moveTask` revokes the plan request
+ * on abandon for the same reason). The task keeps its plan sections and its
+ * whole audit trail; the next `approve` is what re-admits it, and it retires
+ * the strike tally via `TASK_APPROVED_MARKER` exactly as for a fresh draft.
+ *
+ * Same guards as `moveTask`: refuses a duplicate destination, `mv -n` so two
+ * racing restores cannot clobber, and confirms the file landed. Throws on
+ * every failure — the caller wraps it in a `GateResult` and corrects its note.
+ */
+export const restoreAbandoned = async ($: Shell, task: FileRef): Promise<string> => {
+  if (!isSafeTaskId(task.id)) {
+    throw new Error(`cannot restore task: unsafe id ${JSON.stringify(task.id)}`)
+  }
+  const from = statusOf(task)
+  if (from !== "abandoned") {
+    throw new Error(`cannot restore ${task.id}: it is in ${from}/, not abandoned/`)
+  }
+  const root = path.dirname(path.dirname(task.path))
+  const destDir = path.join(root, "draft")
+  const dest = path.join(destDir, `${task.id}.md`)
+  const exists = await $`test -e ${dest}`.quiet().nothrow()
+  if (exists.exitCode === 0) {
+    throw new Error(`cannot restore ${task.id}: draft/${task.id}.md already exists — resolve the duplicate manually`)
+  }
+  await $`mkdir -p ${destDir}`.quiet().nothrow()
+  const out = await $`mv -n ${task.path} ${dest}`.quiet().nothrow()
+  if (out.exitCode !== 0) {
+    throw new Error(`could not restore ${task.id} → draft/: ${out.stderr.toString().trim()}`)
+  }
+  const check = await $`test -f ${dest}`.quiet().nothrow()
+  if (check.exitCode !== 0) {
+    throw new Error(`restore of ${task.id} → draft/ did not land at ${dest}`)
+  }
+  const src = await $`test -e ${task.path}`.quiet().nothrow()
+  if (src.exitCode === 0) {
+    throw new Error(`cannot restore ${task.id}: draft/${task.id}.md was created concurrently — resolve the duplicate manually`)
+  }
   return dest
 }
 

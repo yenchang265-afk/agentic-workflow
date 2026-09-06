@@ -28,7 +28,7 @@ docs/tasks/
   in-progress/  # plan approved: build-ready queue + build → verify → review  ← approve moves here
   in-review/    # review passed, human diff gate                              ← the driver moves here
   completed/    # shipped                                                     ← you (approve), once the PR merges
-  abandoned/    # won't do                                                    ← abandon, from any non-terminal status
+  abandoned/    # won't do                                                    ← abandon, from any non-terminal status; restore sends it back to draft/
 ```
 
 ## Task file schema
@@ -116,10 +116,16 @@ Written by the loop's PLAN stage, right before execution.
 | `in-review → completed` | **you** | you reviewed the diff and shipped it — `approve <id>`; the loop never makes this move |
 | stays `in-progress` + note | driver | the loop failed (iteration cap) or was stopped mid-build |
 | `→ abandoned` | **you** | **`abandon <id> [reason]`** — from any non-terminal status; the file is kept, so it is reversible |
+| `abandoned → draft` | **you** | **`restore <id> [reason]`** — the reversal; always `draft/` (re-take the task gate with `approve`), plan and trail kept |
 | task file deleted | **you** | **`remove <id> --force`** — the one destructive verb; a bare `remove` is a dry run. Usually permanent (`ignoreBacklog` defaults to true), so prefer `abandon` |
 
-How `approve` picks when several tasks are waiting, and what a `replan` threads
-into the next PLAN pass, are in `workflow-orchestration` → "The gates".
+Two verbs move nothing between folders: `show <id>` prints one task (folder,
+frontmatter, plan presence, claim/interrupted flags, the pending replan reason,
+the last run's branch and diffstat, the audit trail) and `priority <id> <n>`
+rewrites its priority in place with an audit note, from any non-terminal
+folder. How `approve` picks when several tasks are waiting, and what a
+`replan` threads into the next PLAN pass, are in `workflow-orchestration` →
+"The gates".
 
 The `## Implementation Plan` section is the durable on-disk record, surviving a
 `stop` or an opencode restart when in-memory loop state does not (snapshots
