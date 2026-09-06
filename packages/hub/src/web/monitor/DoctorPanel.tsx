@@ -17,7 +17,7 @@ import { useResource } from "../resource.js"
  */
 
 const nonEmpty = (r: DoctorReport): boolean =>
-  r.findings.length > 0 || r.heldClaims.length > 0 || r.strayRequests.length > 0 || (r.deniedCommands?.length ?? 0) > 0
+  r.findings.length > 0 || r.heldClaims.length > 0 || r.strayRequests.length > 0 || (r.deniedCommands?.length ?? 0) > 0 || (r.orphans?.length ?? 0) > 0
 
 export const DoctorPanel = () => {
   const { repoId } = useRepo()
@@ -42,7 +42,8 @@ export const DoctorPanel = () => {
     data.unknownDirs.length +
     data.heldClaims.length +
     data.strayRequests.length +
-    (data.deniedCommands?.length ?? 0)
+    (data.deniedCommands?.length ?? 0) +
+    (data.orphanWorktrees ?? 0)
 
   const runFix = async (): Promise<void> => {
     try {
@@ -100,6 +101,20 @@ export const DoctorPanel = () => {
         </>
       )}
 
+      {data.orphans && data.orphans.length > 0 && (
+        <>
+          <p className="doctor-note">
+            The loop’s leftovers — worktrees and branches whose task is no longer on the board. Repair removes the
+            worktrees (a dirty one is kept); a branch is never deleted from here, the line names the command:
+          </p>
+          <ul className="doctor-findings">
+            {data.orphans.map((o) => (
+              <li key={o}>{o}</li>
+            ))}
+          </ul>
+        </>
+      )}
+
       {data.duplicates.length > 0 && (
         <p className="doctor-note doctor-note--warn">
           Duplicate ids never auto-resolved (the hub can’t know which copy is canonical):{" "}
@@ -140,6 +155,7 @@ export const DoctorPanel = () => {
               result.revokedRequests.length ? `dropped ${result.revokedRequests.length} stray request(s)` : "",
               result.claimsSkipped ? "claims skipped (watcher live)" : "",
               result.denyLogCleared ? "deny log cleared" : "",
+              result.removedWorktrees?.length ? `removed ${result.removedWorktrees.length} orphan worktree(s)` : "",
               result.failed?.length ? `${result.failed.length} left for you` : "",
             ]
               .filter(Boolean)

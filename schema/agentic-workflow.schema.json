@@ -1,0 +1,429 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yenchang265-afk/agentic-workflow/schema/agentic-workflow.schema.json",
+  "title": ".agentic-workflow.json",
+  "description": "Configuration for the agentic-workflow loop and sitters. Every field has a default; refinements the runtime enforces (e.g. codePlatform 'ado' requires an ado section) are not expressed here.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "maxIterations": {
+      "default": 3,
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "tasksDir": {
+      "default": "docs/tasks",
+      "type": "string",
+      "minLength": 1
+    },
+    "ignoreBacklog": {
+      "default": true,
+      "type": "boolean"
+    },
+    "stageTimeoutMinutes": {
+      "default": 60,
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "checkTimeoutMinutes": {
+      "default": 10,
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "worktreesDir": {
+      "default": ".workflow-worktrees",
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "boolean",
+          "const": false
+        }
+      ]
+    },
+    "worktreeSetup": {
+      "type": "string",
+      "minLength": 1
+    },
+    "notifyCommand": {
+      "type": "string",
+      "minLength": 1
+    },
+    "notifyEvents": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "park",
+          "done",
+          "stop",
+          "error",
+          "stage"
+        ]
+      }
+    },
+    "taskBranch": {
+      "default": "feature/",
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\-/]*$"
+        },
+        {
+          "type": "boolean",
+          "const": false
+        }
+      ]
+    },
+    "workflows": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "codePlatform": {
+            "type": "string",
+            "enum": [
+              "github",
+              "ado"
+            ]
+          },
+          "prBase": {
+            "type": "string"
+          },
+          "trigger": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "poll"
+                  },
+                  "intervalMinutes": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1440
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "cron"
+                  },
+                  "schedule": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "type",
+                  "schedule"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "const": "idle"
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              }
+            ]
+          },
+          "stageModels": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "stageContext": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              }
+            }
+          },
+          "stageFanout": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "axis",
+                    "none"
+                  ]
+                },
+                {
+                  "maxItems": 5,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              ]
+            }
+          },
+          "stageConcurrency": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "stageChecks": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "command": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "cwd": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "timeoutMinutes": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "name",
+                  "command"
+                ]
+              }
+            }
+          },
+          "discoverChecks": {
+            "type": "boolean"
+          },
+          "maxDiffLines": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "planVisualization": {
+            "type": "boolean"
+          },
+          "scannerCommand": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": {}
+      }
+    },
+    "agentModels": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "bashAllowlistExtra": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "bashAllowlistPrefix": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "codePlatform": {
+      "default": "github",
+      "type": "string",
+      "enum": [
+        "github",
+        "ado"
+      ]
+    },
+    "shipPublish": {
+      "default": "pr",
+      "type": "string",
+      "enum": [
+        "pr",
+        "push",
+        "local"
+      ]
+    },
+    "prBase": {
+      "type": "string"
+    },
+    "protectedBranches": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\-/]*$"
+      }
+    },
+    "ado": {
+      "type": "object",
+      "properties": {
+        "organization": {
+          "type": "string",
+          "minLength": 1
+        },
+        "project": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selfLogin": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pat": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mcp": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string",
+              "minLength": 1
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "authentication": {
+              "type": "string",
+              "enum": [
+                "pat",
+                "envvar",
+                "azcli",
+                "interactive"
+              ]
+            },
+            "domains": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "tenant": {
+              "type": "string",
+              "minLength": 1
+            },
+            "env": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "minLength": 1
+              },
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "organization",
+        "project"
+      ],
+      "additionalProperties": {}
+    },
+    "projectManagement": {
+      "type": "object",
+      "properties": {
+        "system": {
+          "type": "string",
+          "enum": [
+            "jira",
+            "azure-devops"
+          ]
+        },
+        "baseUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "defaultType": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "system"
+      ]
+    }
+  }
+}

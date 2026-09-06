@@ -17,6 +17,8 @@ import {
 } from "@agentic-workflow/core/task/store"
 import { revokeStrayPlanRequests } from "@agentic-workflow/core/task/plan-request"
 import { taskDrivenByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
+import { auditOrphans, formatOrphans, removeOrphanWorktrees, type OrphanReport } from "@agentic-workflow/core/workflow/orphans"
+import { ACTIVE_STATUSES } from "@agentic-workflow/core/task/store"
 import { aggregateDenials, clearDenyLog, formatDenyFindings, readDenyLog, type DenyFinding } from "@agentic-workflow/core/workflow/deny-log"
 import { platformFor, stageBashGlobs } from "@agentic-workflow/core/config"
 import { stageDef } from "@agentic-workflow/core/manifest/schema"
@@ -59,6 +61,26 @@ const denyFindingsFor = (deps: HubDeps): DenyFinding[] =>
     }
   })
 
+/**
+ * The loop's leftovers (design 63) for every enabled backlog kind: worktrees
+ * and branches whose task left the board. Live ids span every non-terminal
+ * folder, so a task parked at any gate keeps its worktree.
+ */
+const orphansFor = async (deps: HubDeps): Promise<OrphanReport> => {
+  const liveIds = new Set<string>()
+  for (const status of ACTIVE_STATUSES) for (const t of await listByStatus(deps.client, deps.directory, deps.tasksDir, status, deps.log)) liveIds.add(t.id)
+  const worktrees: OrphanReport["worktrees"][number][] = []
+  const branches: OrphanReport["branches"][number][] = []
+  let base: string | null = null
+  for (const board of deps.boards.filter((b) => b.sourceType === "backlog")) {
+    const r = await auditOrphans(deps.sh, deps.directory, deps.config, board.kind, liveIds)
+    worktrees.push(...r.worktrees)
+    branches.push(...r.branches)
+    base = base ?? r.base
+  }
+  return { worktrees, branches, base }
+}
+
 /** GET /api/doctor — read-only: what the sweep finds, plus which claims are held. */
 export const getDoctor = async (deps: HubDeps): Promise<JsonResponse> => {
   const anomalies = await auditBacklog(deps.client, deps.directory, deps.tasksDir, auditStatuses(deps.boards))
@@ -89,6 +111,7 @@ export const getDoctor = async (deps: HubDeps): Promise<JsonResponse> => {
   )
 
   const denyFindings = denyFindingsFor(deps)
+  const orphans = await orphansFor(deps)
   const report: DoctorReport = {
     findings,
     strayRequests,
@@ -101,6 +124,7 @@ export const getDoctor = async (deps: HubDeps): Promise<JsonResponse> => {
     watcherLive: oracle.watcherLive,
     ...(oracle.watcherLive && oracle.leasePid !== null ? { watcherPid: oracle.leasePid } : {}),
     ...(denyFindings.length ? { deniedCommands: formatDenyFindings(denyFindings) } : {}),
+    ...(orphans.worktrees.length || orphans.branches.length ? { orphans: formatOrphans(orphans), orphanWorktrees: orphans.worktrees.length } : {}),
   }
   return ok(report)
 }
@@ -214,6 +238,10 @@ const doctorFix = async (deps: HubDeps): Promise<JsonResponse> => {
   // the GET report carried the aggregate, so the raw log is cleared rather
   // than re-reported forever.
   const denyLogCleared = denyFindingsFor(deps).length > 0 ? clearDenyLog(deps.directory, deps.tasksDir) : false
+  // Orphan worktrees are the one unambiguous leftover repair (design 63); a
+  // branch is never deleted from a button — unmerged commits are work.
+  const orphans = await orphansFor(deps)
+  const removedWorktrees = orphans.worktrees.length ? await removeOrphanWorktrees(deps.sh, deps.log, deps.directory, orphans) : []
 
   if (rescued.length > 0) {
     // Through core's `commitBacklog`, never raw `commitPaths`: that helper is the
@@ -237,6 +265,7 @@ const doctorFix = async (deps: HubDeps): Promise<JsonResponse> => {
     duplicates: anomalies.duplicates.map((d) => ({ id: d.id, statuses: [...d.statuses] })),
     ...(failed.length > 0 ? { failed } : {}),
     ...(denyLogCleared ? { denyLogCleared } : {}),
+    ...(removedWorktrees.length ? { removedWorktrees } : {}),
   }
   return ok(response)
 }

@@ -566,6 +566,13 @@ export interface DoctorReport {
    * Same report the CLI doctors carry; /fix clears the underlying log.
    */
   readonly deniedCommands?: readonly string[]
+  /**
+   * The loop's leftovers (design 63, core's formatOrphans lines): worktrees
+   * under the configured root and `feature/<id>` branches whose task is no
+   * longer on the board. /fix removes the worktrees (never a branch).
+   */
+  readonly orphans?: readonly string[]
+  readonly orphanWorktrees?: number
 }
 
 export interface DoctorFixResponse {
@@ -584,6 +591,8 @@ export interface DoctorFixResponse {
   readonly duplicates: readonly DuplicateTask[]
   /** Strays that couldn't be rescued (e.g. a draft/<id>.md collision) — left for a human. */
   readonly failed?: readonly { readonly path: string; readonly reason: string }[]
+  /** Orphan worktree paths removed (design 63). Branches are reported, never deleted. */
+  readonly removedWorktrees?: readonly string[]
   /** True when the fix acknowledged the deny telemetry by clearing the raw log. */
   readonly denyLogCleared?: boolean
 }

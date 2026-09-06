@@ -9,7 +9,7 @@ import { stageOrderError } from "./stage-guard.js"
 import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
 import { STALE_CLAIM_MINUTES, staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
 import { machineIdSync } from "@agentic-workflow/core/liveness"
-import { DEFAULT_CONFIG, bashAllowlistPrefixes, parseGateOptions, stageBashGlobs, loadConfig } from "@agentic-workflow/core/config"
+import { DEFAULT_CONFIG, bashAllowlistPrefixes, parseGateOptions, stageBashGlobs, loadConfig, unknownConfigKeys } from "@agentic-workflow/core/config"
 import { SHIP_PUBLISH_MODES, type Action, type Config, type ShipPublish, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
 import { advance, composePrompt, composePromptWithStats, firstStep, iterationCap, withCheckResults } from "@agentic-workflow/core/workflow/engine"
 import { checkCommands, checksBudgetMs, finalizeCheckRecord, runChecks } from "@agentic-workflow/core/workflow/checks"
@@ -102,6 +102,7 @@ import {
   type GateCtx,
   type GateResult,
 } from "@agentic-workflow/core/workflow/gate"
+import { auditOrphans, formatOrphans, removeOrphanWorktrees } from "@agentic-workflow/core/workflow/orphans"
 import { notifyLoopEvent, runTerminal as coreRunTerminal, type TerminalCtx, type TerminalReport } from "@agentic-workflow/core/workflow/terminal"
 import { listSnapshotIds, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
 import { type Task } from "@agentic-workflow/core/task/schema"
@@ -137,6 +138,7 @@ import {
   STATUSES,
   summarizeBacklog,
   type TaskStatus,
+  ACTIVE_STATUSES,
 } from "@agentic-workflow/core/task/store"
 import { consumePlanRequest, requestPlan, revokeStrayPlanRequests } from "@agentic-workflow/core/task/plan-request"
 import { auditBacklog, formatAnomalies, hasAnomalies } from "@agentic-workflow/core/task/audit"
@@ -2641,17 +2643,22 @@ server.registerTool(
     // force, and why isn't my repo key taking effect" — answered from the same
     // seam the load-time drops and the hub's effective view read.
     if (wantConfig) {
-      const cfgReport = effectiveConfigReport(directory, config)
-      return ok({
-        configReport: cfgReport,
-        ...(cfgReport.droppedRepoKeys.length
-          ? {
-              note:
-                `${cfgReport.droppedRepoKeys.length} repo-layer key(s) are ignored at runtime (honored from the user-scope config only): ` +
-                `${cfgReport.droppedRepoKeys.join(", ")} — move them to the user config to take effect.`,
-            }
-          : {}),
-      })
+      const cfgReport = effectiveConfigReport(directory, config, unknownConfigKeys)
+      const notes: string[] = []
+      if (cfgReport.droppedRepoKeys.length)
+        notes.push(
+          `${cfgReport.droppedRepoKeys.length} repo-layer key(s) are ignored at runtime (honored from the user-scope config only): ` +
+            `${cfgReport.droppedRepoKeys.join(", ")} — move them to the user config to take effect.`,
+        )
+      // Keys nothing reads (design 60), each named with the declared key it
+      // is one edit from — the typo that used to leave a setting silently on
+      // its default.
+      if (cfgReport.unknownKeys.length)
+        notes.push(
+          `${cfgReport.unknownKeys.length} config key(s) are not read by anything: ` +
+            cfgReport.unknownKeys.map((u) => (u.suggestion ? `${u.path} (did you mean "${u.suggestion}"?)` : u.path)).join(", "),
+        )
+      return ok({ configReport: cfgReport, ...(notes.length ? { note: notes.join(" ") } : {}) })
     }
     const anomalies = await auditBacklog(fsClient, directory, config.tasksDir)
     const heldClaims: Record<string, string[]> = {}
@@ -2686,9 +2693,15 @@ server.registerTool(
         return null
       }
     })
+    // The loop's leftovers (design 63): worktrees and feature/<id> branches
+    // whose task is no longer on the board. Live = any non-terminal folder.
+    const liveIds = new Set<string>()
+    for (const status of ACTIVE_STATUSES) for (const t of await listByStatus(fsClient, directory, config.tasksDir, status, log)) liveIds.add(t.id)
+    const orphans = await auditOrphans(sh, directory, config, "engineering", liveIds)
     const report = {
       findings: formatAnomalies(anomalies, config.tasksDir),
       heldClaims,
+      ...(orphans.worktrees.length || orphans.branches.length ? { orphans: formatOrphans(orphans) } : {}),
       ...(strayRequests.length ? { strayPlanRequests: strayRequests } : {}),
       ...(denyFindings.length ? { deniedCommands: formatDenyFindings(denyFindings) } : {}),
       ...(anomalies.duplicates.length ? { note: "duplicates are never auto-fixed — keep one copy, workflow_move the rest to abandoned" } : {}),
@@ -2697,8 +2710,8 @@ server.registerTool(
       return ok({
         ...report,
         next:
-          hasAnomalies(anomalies) || Object.keys(heldClaims).length || denyFindings.length
-            ? "workflow_doctor with fix:true applies the unambiguous repairs"
+          hasAnomalies(anomalies) || Object.keys(heldClaims).length || denyFindings.length || orphans.worktrees.length || orphans.branches.length
+            ? "workflow_doctor with fix:true applies the unambiguous repairs (orphan branches are never deleted — the report names the command)"
             : "backlog is clean",
       })
 
@@ -2761,12 +2774,22 @@ server.registerTool(
     // Deny telemetry is acknowledged by a fix: the report above carries the
     // aggregate, so the raw log is cleared rather than re-reported forever.
     const denyLogCleared = denyFindings.length ? clearDenyLog(directory, config.tasksDir) : false
+    // Orphan worktrees are the one unambiguous leftover repair; a branch is
+    // never deleted here (unmerged commits are work).
+    const removedWorktrees = orphans.worktrees.length ? await removeOrphanWorktrees(sh, log, directory, orphans) : []
     if (rescued.length) {
       await coreCommitBacklog(sh, directory, config, `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
     }
     return ok({
       ...report,
-      repaired: { rescued, removedDirs, releasedClaims, ...(revokedRequests.length ? { revokedRequests } : {}), ...(denyLogCleared ? { denyLogCleared } : {}) },
+      repaired: {
+        rescued,
+        removedDirs,
+        releasedClaims,
+        ...(revokedRequests.length ? { revokedRequests } : {}),
+        ...(denyLogCleared ? { denyLogCleared } : {}),
+        ...(removedWorktrees.length ? { removedWorktrees } : {}),
+      },
       ...(failed.length ? { failed } : {}),
     })
   },

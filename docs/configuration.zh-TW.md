@@ -3,7 +3,18 @@
 # 設定（`.agentic-workflow.json`）
 
 儲存庫根目錄下的一份可選 JSON 檔案。每個欄位都有合理的預設值；一份
-設定錯誤的檔案會快速失敗並附上清楚的訊息，而不是悄悄回退。
+設定錯誤的檔案會快速失敗並附上清楚的訊息，而不是悄悄回退。沒有東西讀的
+鍵會在載入時與 `doctor config` 中被警告，並在有的時候附上它差一個字的已宣告
+鍵（拼錯的頂層鍵否則會被悄悄剝掉；`workflows.<kind>` 的旋鈕只在近似已宣告
+的鍵時才標記，因為那些區段刻意帶著類型專屬的旋鈕）。要讓編輯器補全並檢查
+型別，把檔案指向產生的 JSON Schema：
+
+```json
+{ "$schema": "./schema/agentic-workflow.schema.json" }
+```
+
+（本 repo 的 `schema/agentic-workflow.schema.json`，由 `pnpm gen:schema` 重新產生；
+「platform `ado` 需要 `ado` 區段」這類只在執行期強制的規則不在其中。）
 
 ## 快速上手範本
 

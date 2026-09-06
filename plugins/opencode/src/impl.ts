@@ -22,6 +22,8 @@ import { failurePrompt, overrideCommandPrompt, readCommandPrompt, refusalPrompt 
 import { neutralizeArgumentMarkers, sliceCommandPrompt } from "./command-slice.ts"
 import { splitVerb } from "./verb.ts"
 import { listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
+import { distStaleness, staleDistWarning } from "@agentic-workflow/core/dist-staleness"
+import { fileURLToPath } from "node:url"
 import { listSnapshotIds } from "@agentic-workflow/core/workflow/persist"
 import { anyWorkflowActive, anyWorktreeWorkflowActive, findSessionDriving, getWorkflow, hasWorkflow, planStageTaskId } from "@agentic-workflow/core/workflow/state"
 import { appendDenyEntry } from "@agentic-workflow/core/workflow/deny-log"
@@ -597,6 +599,19 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       }
     } catch (err) {
       await log("warn", `startup task reconciliation failed: ${(err as Error).message}`)
+    }
+
+    // Stale core dist (design 62): this plugin resolves core through
+    // packages/core/dist — gitignored, rebuilt only by `pnpm install` — so a
+    // pull that touched core runs OLD core here with nothing failing until a
+    // contract mismatch surfaces mid-gate (`armTaskGateAsk` returning "" was
+    // one). Named at startup instead; absent sources read as "cannot tell".
+    try {
+      const coreDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "packages", "core")
+      const warn = staleDistWarning("core", distStaleness(coreDir, 1500), "Run `pnpm install` at the agentic-workflow repo root (or `pnpm --filter @agentic-workflow/core run build`), then restart opencode.")
+      if (warn) await log("warn", warn)
+    } catch {
+      /* a staleness probe must never cost the reconcile */
     }
 
     // Worktree reconciliation: prune vanished registrations, then surface the
