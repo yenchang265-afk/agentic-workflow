@@ -90,8 +90,9 @@ export const DoctorPanel = () => {
       {data.deniedCommands && data.deniedCommands.length > 0 && (
         <>
           <p className="doctor-note">
-            Commands the stage allowlists refused, with the config change that would admit each — repair acknowledges
-            them and clears the log:
+            Commands the enforcement seams refused — the stage allowlists (with the config change that would admit
+            each) and the write backstops (by design; no config admits those) — repair acknowledges them and clears
+            the log:
           </p>
           <ul className="doctor-findings">
             {data.deniedCommands.map((d) => (

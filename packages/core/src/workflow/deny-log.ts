@@ -56,9 +56,13 @@ export interface DenyEntry {
    * writers — absent on their older entries, which reads as agent), or a
    * plan-named discovered check the stage's admission refused (`"check"`).
    * The distinction matters to the operator: a check refusal starves VERIFY
-   * of a command the PLAN promised, one silent warning at a time.
+   * of a command the PLAN promised, one silent warning at a time. A write
+   * BACKSTOP refusal (`"backstop"`, design 70 — a push to a protected branch,
+   * a PR mutation, a mutating `find`, an ADO write) is by design and no
+   * allowlist change admits it; recording it is what stops the doctor from
+   * prescribing a glob for a denial the glob cannot reach.
    */
-  readonly source?: "agent" | "check"
+  readonly source?: "agent" | "check" | "backstop"
 }
 
 /**
@@ -100,7 +104,7 @@ export const parseDenyLine = (line: string): DenyEntry | null => {
       kind: typeof p.kind === "string" ? p.kind : "",
       stage: typeof p.stage === "string" ? p.stage : "",
       command: p.command,
-      ...(p.source === "check" || p.source === "agent" ? { source: p.source } : {}),
+      ...(p.source === "check" || p.source === "agent" || p.source === "backstop" ? { source: p.source } : {}),
     }
   } catch {
     return null
@@ -149,6 +153,8 @@ export interface DenyFinding {
   readonly count: number
   /** How many of `count` came from plan-discovered checks (source "check"); 0 ⇒ all agent-side. */
   readonly fromChecks: number
+  /** How many of `count` a write backstop refused (source "backstop") — by design, never an allowlist matter. */
+  readonly fromBackstop: number
   /** Actionable config suggestion, or null when none can be derived
    *  (e.g. the stage's allowlist could not be resolved). */
   readonly suggestion: string | null
@@ -221,21 +227,29 @@ export const suggestFor = (command: string, globs: readonly string[] | null): st
  * first. Pure given the lookup.
  */
 export const aggregateDenials = (entries: readonly DenyEntry[], globsFor: StageGlobsLookup): DenyFinding[] => {
-  const groups = new Map<string, { entry: DenyEntry; count: number; fromChecks: number }>()
+  const groups = new Map<string, { entry: DenyEntry; count: number; fromChecks: number; fromBackstop: number }>()
   for (const entry of entries) {
     const key = `${entry.kind}\u0000${entry.stage}\u0000${entry.command}`
-    const seen = groups.get(key) ?? { entry, count: 0, fromChecks: 0 }
-    groups.set(key, { entry, count: seen.count + 1, fromChecks: seen.fromChecks + (entry.source === "check" ? 1 : 0) })
+    const seen = groups.get(key) ?? { entry, count: 0, fromChecks: 0, fromBackstop: 0 }
+    groups.set(key, {
+      entry,
+      count: seen.count + 1,
+      fromChecks: seen.fromChecks + (entry.source === "check" ? 1 : 0),
+      fromBackstop: seen.fromBackstop + (entry.source === "backstop" ? 1 : 0),
+    })
   }
   const findings: DenyFinding[] = []
-  for (const { entry, count, fromChecks } of groups.values()) {
+  for (const { entry, count, fromChecks, fromBackstop } of groups.values()) {
     findings.push({
       kind: entry.kind,
       stage: entry.stage,
       command: entry.command,
       count,
       fromChecks,
-      suggestion: suggestFor(entry.command, globsFor(entry.kind, entry.stage)),
+      fromBackstop,
+      // A backstop denial is by design: `suggestFor` would shape a glob from the
+      // command's first tokens — advice the operator applies and nothing changes.
+      suggestion: fromBackstop > 0 && fromBackstop === count ? NOT_THE_ALLOWLIST : suggestFor(entry.command, globsFor(entry.kind, entry.stage)),
     })
   }
   return findings.sort((a, b) => b.count - a.count)
@@ -247,7 +261,16 @@ export const formatDenyFindings = (findings: readonly DenyFinding[]): string[] =
     const where = [f.kind || "unknown-kind", f.stage ? f.stage.toUpperCase() : "unknown-stage"].join(" ")
     // A check refusal starved the stage of a command its PLAN named — worth a
     // word, since the operator's mental model is "denials come from the agent".
-    const via = f.fromChecks > 0 ? (f.fromChecks === f.count ? " (a plan-discovered check)" : ` (${f.fromChecks.toString()} of these from plan-discovered checks)`) : ""
+    const via =
+      f.fromBackstop > 0 && f.fromBackstop === f.count
+        ? " (a write backstop)"
+        : f.fromChecks > 0
+          ? f.fromChecks === f.count
+            ? " (a plan-discovered check)"
+            : ` (${f.fromChecks.toString()} of these from plan-discovered checks)`
+          : f.fromBackstop > 0
+            ? ` (${f.fromBackstop.toString()} of these from a write backstop)`
+            : ""
     const base = `${where} denied ${f.count === 1 ? "once" : `${f.count.toString()}×`}${via}: ${f.command}`
     return f.suggestion ? `${base} — ${f.suggestion}` : base
   })

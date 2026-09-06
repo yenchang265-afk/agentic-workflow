@@ -8,6 +8,7 @@ import {
   CONFIG_FILE,
   bashAllowlistExtras,
   bashAllowlistPrefixes,
+  applyUserRepoOverrides,
   droppedRepoKeys,
   ignoredUserConfigPaths,
   isNearMiss,
@@ -30,6 +31,7 @@ import {
  */
 export {
   ADO_USER_LAYER_ONLY_KEYS,
+  applyUserRepoOverrides,
   ALLOWLIST_WIDENING_KEYS,
   CD_TWIN_PREFIX,
   CONFIG_FILE,
@@ -627,7 +629,26 @@ const BaseConfigSchema = z.object({
 
 const isAdo = (p: CodePlatform | undefined): boolean => p === "ado"
 
-export const ConfigSchema = BaseConfigSchema.superRefine((c, ctx) => {
+/**
+ * What one `repos.<key>` section may carry (design 73): every top-level key
+ * but `repos` itself, all optional — so a section is validated and linted
+ * (design 60) and completed by the JSON Schema (design 61) exactly like the
+ * top level, and cannot nest another `repos`. Defaults do not apply inside a
+ * section: the merge happens on the raw layers before parsing, so a section
+ * only ever OVERRIDES what it names.
+ */
+export const RepoOverrideSchema = BaseConfigSchema.partial()
+
+const WithReposSchema = BaseConfigSchema.extend({
+  /**
+   * Per-repo overrides in the USER layer, keyed by absolute path or basename
+   * (design 73). Merged over the global user keys and under the repo file;
+   * inert in a repo file. See `userRepoOverrides`.
+   */
+  repos: z.record(z.string(), RepoOverrideSchema).optional(),
+})
+
+export const ConfigSchema = WithReposSchema.superRefine((c, ctx) => {
   const platforms = [c.codePlatform, ...Object.values(c.workflows).map((section) => section.codePlatform)]
   const wantsAdo = platforms.some(isAdo)
   if (wantsAdo && !c.ado) {
@@ -1571,7 +1592,9 @@ export const loadConfigWith = async <T>(
         ? `${CONFIG_FILE} sets "${d.path}" — ignored: the Azure DevOps destination and credentials are honored from the user-scope config only, so a cloned repo cannot aim your PAT at a host it chooses. Move it to your user config (~/.agentic-workflow.json).`
         : d.family === "allowlist"
           ? `${CONFIG_FILE} sets "${d.path}" — ignored: the stage bash allowlist is widened from the user-scope config only, so a cloned repo cannot grant its own stage agents (or its plan's discovered checks) commands you did not allow. Move it to your user config (~/.agentic-workflow.json).`
-          : `${CONFIG_FILE} sets "${d.path}" — ignored: shell-bearing keys are honored from the user-scope config only. Move it to your user config (~/.agentic-workflow.json).`
+          : d.family === "userOnly"
+            ? `${CONFIG_FILE} sets "${d.path}" — ignored: per-repo sections belong to the user-scope config (~/.agentic-workflow.json), where "repos": { "<path or basename>": {…} } overrides one checkout without touching its committed config.`
+            : `${CONFIG_FILE} sets "${d.path}" — ignored: shell-bearing keys are honored from the user-scope config only. Move it to your user config (~/.agentic-workflow.json).`
     await client.app.log({ body: { service: "agentic-workflow", level: "warn", message } }).catch(() => {
       /* the drop matters, the log is best-effort */
     })
@@ -1580,7 +1603,9 @@ export const loadConfigWith = async <T>(
 
   if (userRaw === undefined && repoRaw === undefined) return schema.parse({}) // both absent/empty → defaults
   const label = userRaw === undefined ? CONFIG_FILE : `${CONFIG_FILE} (merged with ${userPath})`
-  const merged = mergeConfigLayers(userRaw ?? {}, repoRaw ?? {})
+  // The user layer's per-repo section for THIS directory is folded in first
+  // (design 73): global user keys < user `repos.<match>` < the repo file.
+  const merged = mergeConfigLayers(applyUserRepoOverrides(userRaw ?? {}, directory), repoRaw ?? {})
   // A retired top-level key is INVISIBLE after this line — zod strips what the
   // schema does not declare — so it is named here, against the raw merged layer,
   // while the value still exists. Warned rather than rejected so an in-flight

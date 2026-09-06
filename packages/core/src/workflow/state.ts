@@ -254,6 +254,8 @@ export type Action =
        * who reviews the diff never sees them. Absent ⇒ none were recorded.
        */
       readonly suggestions?: readonly string[]
+      /** Non-blocking findings past the cap that `suggestions` does not carry (design 71). Absent ⇒ none elided. */
+      readonly suggestionsElided?: number
     }
   /** A gate stage finished: the driver validates its output, moves the item to `toStatus`, and the loop exits. */
   | { readonly kind: "park"; readonly message: string; readonly toStatus?: string }

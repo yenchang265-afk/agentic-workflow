@@ -46,6 +46,37 @@ var SHELL_BEARING_KEYS = ["worktreeSetup", "notifyCommand"];
 var SHELL_BEARING_WORKFLOW_KEYS = ["scannerCommand", "stageChecks"];
 var ADO_USER_LAYER_ONLY_KEYS = ["organization", "pat", "mcp"];
 var ALLOWLIST_WIDENING_KEYS = ["bashAllowlistExtra", "bashAllowlistPrefix"];
+var REPOS_KEY = "repos";
+var userRepoOverrides = (userRaw, directory) => {
+  if (!isPlainObject(userRaw))
+    return { section: {}, matchedKey: null };
+  const repos = userRaw[REPOS_KEY];
+  if (!isPlainObject(repos))
+    return { section: {}, matchedKey: null };
+  const abs = path.resolve(directory);
+  const base = path.basename(abs);
+  let byPath = null;
+  let byBase = null;
+  for (const key of Object.keys(repos)) {
+    if (!isPlainObject(repos[key]))
+      continue;
+    if (path.isAbsolute(key) || key.startsWith("~")) {
+      const resolved = key.startsWith("~") ? path.resolve(key.replace(/^~/, process.env.HOME ?? "")) : path.resolve(key);
+      if (resolved === abs && byPath === null)
+        byPath = key;
+    } else if (key === base && byBase === null)
+      byBase = key;
+  }
+  const matchedKey = byPath ?? byBase;
+  return { section: matchedKey ? repos[matchedKey] : {}, matchedKey };
+};
+var applyUserRepoOverrides = (userRaw, directory) => {
+  if (!isPlainObject(userRaw))
+    return userRaw;
+  const { [REPOS_KEY]: _repos, ...global } = userRaw;
+  const { section } = userRepoOverrides(userRaw, directory);
+  return mergeConfigLayers(global, section);
+};
 var sanitizeRepoLayer = (repoRaw) => {
   if (!isPlainObject(repoRaw))
     return repoRaw;
@@ -60,6 +91,8 @@ var sanitizeRepoLayer = (repoRaw) => {
   for (const key of ALLOWLIST_WIDENING_KEYS)
     if (key in out)
       out = without(out, key);
+  if (REPOS_KEY in out)
+    out = without(out, REPOS_KEY);
   const workflows = out["workflows"];
   if (isPlainObject(workflows)) {
     const cleaned = {};
@@ -126,7 +159,7 @@ var readRawConfigLayers = (cwd) => {
     userLayer = void 0;
   }
   const repoLayer = sanitizeRepoLayer(read(path.join(cwd, CONFIG_FILE)));
-  const merged = mergeConfigLayers(userLayer ?? {}, repoLayer);
+  const merged = mergeConfigLayers(applyUserRepoOverrides(userLayer ?? {}, cwd), repoLayer);
   return isPlainObject(merged) ? merged : {};
 };
 var rawAgentModel = (config, agent, opts) => {

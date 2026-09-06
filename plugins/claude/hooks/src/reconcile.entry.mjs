@@ -22,6 +22,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { auditBacklog, formatAnomalies, hasAnomalies } from "@agentic-workflow/core/task/audit"
 import { distStaleness, staleDistWarning } from "@agentic-workflow/core/dist-staleness"
+import { readRawConfigLayers } from "@agentic-workflow/core/config-layers"
 import { dialectFor, hostFor } from "./dialect.mjs"
 import { exitAfterWrite } from "./emit.mjs"
 import { idList, MAX_LISTED } from "./idlist.mjs"
@@ -104,6 +105,47 @@ const fsClient = {
  * synchronous `fs` calls, so nothing can interrupt one that has started.
  */
 const RECONCILE_BUDGET_MS = 30_000
+
+/** Basename of the installer's bake record under `<qwen config>/agents/` — TWIN of scripts/qwen-agents.mjs BAKE_RECORD_FILE. */
+const BAKE_RECORD_FILE = ".agentic-workflow-baked.json"
+
+/** The model-deciding subtrees of a raw config — TWIN of scripts/qwen-agents.mjs `modelSubtrees`. */
+const modelSubtrees = (config) => {
+  const isObj = (v) => typeof v === "object" && v !== null && !Array.isArray(v)
+  const workflows = {}
+  for (const [kind, section] of Object.entries(config?.workflows ?? {})) {
+    if (isObj(section) && isObj(section.stageModels)) workflows[kind] = section.stageModels
+  }
+  return { agentModels: isObj(config?.agentModels) ? config.agentModels : {}, workflows }
+}
+
+/** Stable JSON: keys sorted at every level, so two equal configs compare equal whatever their file order. */
+const canonical = (v) => JSON.stringify(v, (_k, val) => (val && typeof val === "object" && !Array.isArray(val) ? Object.fromEntries(Object.keys(val).sort().map((k) => [k, val[k]])) : val))
+
+/**
+ * A warning when the Qwen agents were baked from model keys that no longer
+ * match the current config (design 74), else null. Fails toward silence: no
+ * record (an older install, or not Qwen) is not drift.
+ */
+const qwenBakeDrift = (cwd) => {
+  try {
+    const dialect = dialectFor(hostFor())
+    if (!dialect || dialect.conveysSpawnModel !== false) return null
+    const agentsDir = path.join(process.env.QWEN_CONFIG_DIR || path.join(process.env.HOME || "", ".qwen"), "agents")
+    const record = JSON.parse(fs.readFileSync(path.join(agentsDir, BAKE_RECORD_FILE), "utf8"))
+    if (!record || typeof record !== "object" || !record.configModels) return null
+    const now = modelSubtrees(readRawConfigLayers(cwd))
+    if (canonical(now) === canonical(record.configModels)) return null
+    const baked = Object.keys(record.bindings ?? {}).length
+    return (
+      `agentic-workflow: the Qwen stage agents were baked with model bindings that no longer match the config ` +
+      `(stageModels/agentModels changed since ${String(record.at ?? "the install")}; ${String(baked)} agent(s) carry a baked model). ` +
+      `Qwen binds a subagent's model at install time — run ${dialect.installer}, then restart the session.`
+    )
+  } catch {
+    return null
+  }
+}
 
 /** Ids of the claim markers held under `<status>/.claims`, newest-first order irrelevant. */
 const claimIds = (root, tasksDir, status) => {
@@ -205,6 +247,15 @@ const main = async () => {
   const serverBuilt = fs.existsSync(process.env.AGENTIC_WORKFLOW_SERVER_JS || path.join(pluginRoot, "mcp-server", "dist", "server.js"))
 
   const lines = []
+  // Qwen bakes each stage agent's model into the installed agent file at
+  // install time (design 74): an edit to `stageModels`/`agentModels` since then
+  // leaves every stage on the OLD model with nothing failing — the exact
+  // silent-binding failure the model-stamp hook exists to end on Claude. The
+  // installer records the config's model subtrees beside the agents; a session
+  // start compares them with the current config and names the fix. Host-gated:
+  // a host that conveys the model at spawn time has no bake to go stale.
+  const qwenDrift = qwenBakeDrift(cwd)
+  if (qwenDrift) lines.push(qwenDrift)
   if (!serverBuilt)
     lines.push(
       `agentic-workflow: MCP server not built (mcp-server/dist/server.js missing) — gates and loop tools will not work. Run ${dialectFor(hostFor())?.installer ?? "the installer"}, then restart the session.`,

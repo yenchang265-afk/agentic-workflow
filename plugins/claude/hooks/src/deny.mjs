@@ -28,7 +28,7 @@ export const DENY_LOG_MAX_BYTES = 1024 * 1024
  * Append one denial record. Never throws; every failure path leaves the file
  * as it was.
  */
-export const noteDeny = (runsDirPath, host, marker, command) => {
+export const noteDeny = (runsDirPath, host, marker, command, source) => {
   try {
     const file = path.join(runsDirPath, DENY_LOG_FILE)
     try {
@@ -42,6 +42,9 @@ export const noteDeny = (runsDirPath, host, marker, command) => {
       kind: typeof marker?.kind === "string" ? marker.kind : "",
       stage: typeof marker?.stage === "string" ? marker.stage : "",
       command: String(command ?? ""),
+      // Only the backstop writers pass a source (design 70); the allowlist
+      // denial keeps its byte-identical entry so older readers keep grouping it.
+      ...(source === "backstop" || source === "check" ? { source } : {}),
     }
     if (!entry.command.trim()) return
     // Create `runs/` rather than ENOENT into the catch below — see core's

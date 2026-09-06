@@ -100,6 +100,8 @@ export type TerminalReport =
       readonly diffCmd?: string
       /** The final check stage's non-blocking findings, for the human at the diff review (see `Action`'s done arm). */
       readonly suggestions?: readonly string[]
+      /** Findings past the cap that `suggestions` omits (design 71). */
+      readonly suggestionsElided?: number
     }
   | { readonly kind: "stop"; readonly message: string; readonly taskId?: string; readonly branch?: string; readonly retryable?: boolean }
 
@@ -429,9 +431,13 @@ const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" 
         if (action.suggestions?.length) {
           const flat = redact(action.suggestions.join("; ")).text.replace(/\s*\n\s*/g, " ")
           const clamped = flat.length > SUGGESTIONS_NOTE_MAX ? `${flat.slice(0, SUGGESTIONS_NOTE_MAX)}…` : flat
+          // The cap's remainder rides INSIDE the free-text half (design 71), so
+          // `extractRunSuggestions`' `(N)` stays the rendered count and the
+          // regex still matches; a reader sees the list was cut and by how much.
+          const more = action.suggestionsElided ? ` (+${String(action.suggestionsElided)} more not shown)` : ""
           // Built from SUGGESTIONS_MARKER (minus the `> ` appendNote adds):
           // `extractRunSuggestions` parses this line, so its shape is a contract.
-          await appendNote($, cur, auditNote(`${SUGGESTIONS_MARKER.slice(2)}${action.suggestions.length}) — ${clamped}`, new Date(), actor), log)
+          await appendNote($, cur, auditNote(`${SUGGESTIONS_MARKER.slice(2)}${action.suggestions.length}) — ${clamped}${more}`, new Date(), actor), log)
         }
         const runBase = state.git && !state.git.onCurrentBranch ? `, base ${state.git.base}` : ""
         // The diff-stat clause goes LAST (see RUN_DIFF_PREFIX's doc for why its
@@ -491,6 +497,7 @@ const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" 
     ...(diffstat ? { diffstat } : {}),
     ...(diffCmd ? { diffCmd } : {}),
     ...(action.suggestions?.length ? { suggestions: action.suggestions } : {}),
+    ...(action.suggestionsElided ? { suggestionsElided: action.suggestionsElided } : {}),
   }
 }
 

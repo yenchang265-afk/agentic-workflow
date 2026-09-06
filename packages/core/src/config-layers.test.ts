@@ -19,6 +19,8 @@ import {
   stripCommandPrefix,
   withCdTwins,
   withCommandPrefixes,
+  applyUserRepoOverrides,
+  userRepoOverrides,
 } from "./config-layers.js"
 
 /**
@@ -466,4 +468,25 @@ test("effectiveConfigReport degrades to defaults-nothing-dropped outside a confi
     else process.env["AGENTIC_WORKFLOW_USER_CONFIG"] = prev
     fs.rmSync(cwd, { recursive: true, force: true })
   }
+})
+
+test("userRepoOverrides matches an absolute path before a basename, folds the section over the global keys, and ignores a repo-layer `repos` (design 73)", () => {
+  const user = {
+    maxIterations: 2,
+    notifyCommand: "global-notify",
+    repos: {
+      "/work/app": { maxIterations: 5, workflows: { engineering: { stageModels: { build: "opus" } } } },
+      app: { maxIterations: 9 },
+      other: { maxIterations: 7 },
+    },
+  }
+  assert.deepEqual(userRepoOverrides(user, "/work/app").matchedKey, "/work/app")
+  assert.deepEqual(userRepoOverrides(user, "/elsewhere/app").matchedKey, "app")
+  assert.deepEqual(userRepoOverrides(user, "/elsewhere/none").matchedKey, null)
+  assert.deepEqual(applyUserRepoOverrides(user, "/work/app"), { maxIterations: 5, notifyCommand: "global-notify", workflows: { engineering: { stageModels: { build: "opus" } } } })
+  assert.deepEqual(applyUserRepoOverrides(user, "/x/none"), { maxIterations: 2, notifyCommand: "global-notify" }, "the repos key never survives into the merge")
+  assert.deepEqual(applyUserRepoOverrides("nope", "/x"), "nope")
+  // A repo file's `repos` is dropped and named.
+  assert.deepEqual(droppedRepoKeys({ repos: { x: {} } }), [{ path: "repos", family: "userOnly" }])
+  assert.deepEqual(sanitizeRepoLayer({ repos: { x: {} }, maxIterations: 1 }), { maxIterations: 1 })
 })

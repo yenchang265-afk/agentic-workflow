@@ -161,6 +161,28 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 列在[已退役的鍵](#已退役的鍵)；仍然設定了其中之一的設定檔可以正常載入，
 並會記錄一則指出替代做法的警告。
 
+### 使用者層的每 repo 區段（`repos`）
+
+一份使用者層級設定檔可以讓兩個 checkout 有不同的設定，而不必把差異提交進任一
+repo：
+
+```json
+{
+  "notifyCommand": "notify-send agentic-workflow \"$AW_MESSAGE\"",
+  "repos": {
+    "/work/app": { "workflows": { "engineering": { "stageModels": { "build": "opus" } } } },
+    "experiments": { "notifyCommand": "" , "maxIterations": 2 }
+  }
+}
+```
+
+鍵是絕對路徑（`~` 會展開）或 repo 的 basename；兩者都符合時精確路徑優先。符合的
+區段會疊在全域使用者鍵**之上**、repo 檔**之下**，優先序為：全域使用者鍵 <
+`repos.<match>` < `.agentic-workflow.json`。每個讀取器都遵守——迴圈、綁定階段
+模型的打包 hook、管理面板的設定視圖、以及 Qwen 安裝程式的模型烘焙。repo 檔裡的
+`repos` 鍵會被忽略並警告：每 repo 區段是使用者撰寫的構造，從 clone 遵守它會讓
+repo 用包裝重新授予自己帶 shell 的鍵。`doctor config` 會指名套用了哪個區段。
+
 ## 工作流程類型（`workflows`）
 
 `workflows` 底下的每一個鍵會啟用並設定一種工作流程類型（一份

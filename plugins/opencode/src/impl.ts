@@ -935,6 +935,17 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // default-deny anything but reads, with carve-outs for authoring
       // draft/*.md and the live PLAN stage writing its own queued/ task.
       const config = await getConfig()
+      // Backstop telemetry (design 70): a write-backstop refusal is by design and
+      // no allowlist change admits it, so the doctor must see it as such rather
+      // than shape a glob for it. Synchronous and best-effort — the throw that
+      // follows each call is the decision, this is bookkeeping.
+      const noteBackstop = (stage: { readonly kind?: string; readonly stage: string } | undefined, command: string): void => {
+        try {
+          appendDenyEntry(directory, config.tasksDir, { ts: new Date().toISOString(), host: "opencode", kind: stage?.kind ?? "", stage: stage?.stage ?? "", command, source: "backstop" })
+        } catch {
+          /* telemetry only */
+        }
+      }
       // Stage commands run as subtasks, so tool calls arrive with the CHILD
       // session's id — getWorkflow misses and every per-loop guard below would be
       // silently skipped (the worktree pinning was dead code for stage
@@ -1020,6 +1031,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       if (loop?.platform === "ado" && isAdoMcpTool(input.tool)) {
         const args = (output.args ?? {}) as Record<string, unknown>
         if (isAdoMcpWriteViolation(input.tool, args)) {
+          noteBackstop(loop, input.tool)
           throw new Error(
             "agentic-workflow: blocked an Azure DevOps write — loops may only read, post a comment thread or reply, " +
               "or create a DRAFT pull request (isDraft: true); completing, abandoning, approving, voting, reviewer " +
@@ -1028,6 +1040,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
         }
         const granted = adoStageTools(loop)
         if (isAdoMcpToolOutOfStageScope(input.tool, granted)) {
+          noteBackstop(loop, input.tool)
           throw new Error(
             `agentic-workflow: the ${loop.stage} stage may not call ${input.tool} — its manifest grants ` +
               `${granted.length ? granted.join(", ") : "no ADO tools"}. Add it to platformTools in ` +
@@ -1052,6 +1065,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
           // as a side effect, so this guard no longer depends on whether that
           // proxy's plugin ran before or after ours in `tool.execute.before`.
           if (loop && (chainedGithubPrMutation(cmd, commandPrefixes) || chainedGitPushViolation(cmd, commandPrefixes, protectedBranches))) {
+            noteBackstop(loop, cmd)
             throw new Error(
               "agentic-workflow: blocked a PR-state or protected-branch mutation — the loop never merges, closes, " +
                 "approves, force-pushes, or pushes the default branch; those stay a human call.",
@@ -1064,6 +1078,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
           // this into its PreToolUse `commandAllowed`; OpenCode's frontmatter
           // allowlist can't express a flag exclusion, so the deny lives here.
           if (loop && stageIsCheck(loop) && chainedFindMutation(cmd, commandPrefixes)) {
+            noteBackstop(loop, cmd)
             throw new Error(
               `agentic-workflow: blocked a mutating find (-exec/-execdir/-ok/-okdir/-delete/-fprint*/-fls) — ` +
                 `the ${loop.stage} stage is read-only; locate files with plain find and report instead of mutating.`,

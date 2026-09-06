@@ -318,11 +318,42 @@ export const formatMetricsHeadline = (h: MetricsHeadline, label: string): string
 
 // --- IO: the one reader every surface shares ---
 
+/** A file's identity for the parse cache: size AND mtime, per `transcripts.ts`'s lesson (size alone served a same-length rewrite stale). */
+export interface FileStamp {
+  readonly size: number
+  readonly mtimeMs: number
+}
+
+/** One cached parse: the stamps of both files it was parsed from, and the result. */
+export interface RunParseCacheEntry {
+  readonly key: string
+  readonly input: RunMetricsInput
+}
+
+export interface ReadRunInputsOptions {
+  /**
+   * Stat an ABSOLUTE path, or null when it does not exist. Core's `Client` has
+   * no stat, so caching is opt-in through this hook (design 72): the hub
+   * passes `fs.statSync`, and with it a parse is reused until either file's
+   * size or mtime changes — on a DrvFs tree with hundreds of runs, re-parsing
+   * everything per SSE tick was the dominant cost of the Metrics tab.
+   */
+  readonly stat?: (absPath: string) => FileStamp | null
+  /** Process-lifetime cache keyed by run id; caller-owned so its lifetime is the caller's. */
+  readonly cache?: Map<string, RunParseCacheEntry>
+  /** Files read at once; a serial loop scaled latency with the whole history. */
+  readonly concurrency?: number
+}
+
+const stampKey = (log: FileStamp | null, sidecar: FileStamp | null): string =>
+  `${log ? `${String(log.size)}:${String(log.mtimeMs)}` : "-"}|${sidecar ? `${String(sidecar.size)}:${String(sidecar.mtimeMs)}` : "-"}`
+
 /** Every run's two files under `<tasksDir>/runs`, parsed; `skipped` lists ids whose log could not be read. */
 export const readRunInputs = async (
   client: Client,
   directory: string,
   tasksDir: string,
+  opts: ReadRunInputsOptions = {},
 ): Promise<{ readonly inputs: RunMetricsInput[]; readonly skipped: string[] }> => {
   const rel = `${tasksDir}/runs`
   let ids: string[] = []
@@ -340,15 +371,42 @@ export const readRunInputs = async (
       return null
     }
   }
+  const abs = (p: string): string => `${directory}/${p}`
+  const one = async (id: string): Promise<RunMetricsInput | null> => {
+    const logRel = `${rel}/${id}.md`
+    const sidecarRel = `${rel}/${id}.metrics.json`
+    let key: string | null = null
+    if (opts.stat && opts.cache) {
+      key = stampKey(opts.stat(abs(logRel)), opts.stat(abs(sidecarRel)))
+      const hit = opts.cache.get(id)
+      if (hit && hit.key === key) return hit.input
+    }
+    const [log, sidecar] = await Promise.all([read(logRel), read(sidecarRel)])
+    if (log === null) return null
+    const input: RunMetricsInput = { id, log: parseRunLog(log), sidecar: sidecar === null ? null : parseRunMetrics(sidecar) }
+    if (key !== null && opts.cache) opts.cache.set(id, { key, input })
+    return input
+  }
+  // Bounded worker pool, order preserved: a serial loop scaled latency with the
+  // backlog's whole history, an unbounded fan-out materialises every log at once.
+  const limit = Math.max(1, Math.floor(opts.concurrency ?? 16))
+  const results = new Array<RunMetricsInput | null>(ids.length)
+  let cursor = 0
+  const worker = async (): Promise<void> => {
+    while (cursor < ids.length) {
+      const i = cursor++
+      results[i] = await one(ids[i] as string)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, ids.length) }, worker))
   const inputs: RunMetricsInput[] = []
   const skipped: string[] = []
-  for (const id of ids) {
-    const [log, sidecar] = await Promise.all([read(`${rel}/${id}.md`), read(`${rel}/${id}.metrics.json`)])
-    if (log === null) {
-      skipped.push(id)
-      continue
-    }
-    inputs.push({ id, log: parseRunLog(log), sidecar: sidecar === null ? null : parseRunMetrics(sidecar) })
-  }
+  ids.forEach((id, i) => {
+    const r = results[i]
+    if (r) inputs.push(r)
+    else skipped.push(id)
+  })
+  // Ids that vanished leave no stale cache entry behind.
+  if (opts.cache) for (const k of [...opts.cache.keys()]) if (!ids.includes(k)) opts.cache.delete(k)
   return { inputs, skipped }
 }

@@ -77,3 +77,14 @@ test("noteDeny stops appending past the byte cap instead of growing without boun
   noteDeny(runs, "claude", { stage: "verify" }, "npm test")
   assert.equal(fs.statSync(file).size, DENY_LOG_MAX_BYTES + 1, "no append past the cap")
 })
+
+test("noteDeny records a backstop source when told, and none otherwise (design 70)", () => {
+  const runs = tmpRuns()
+  noteDeny(runs, "claude", { kind: "pr-sitter", stage: "publish" }, "git push --force origin main", "backstop")
+  noteDeny(runs, "claude", { kind: "engineering", stage: "verify" }, "npm test", undefined)
+  noteDeny(runs, "claude", { kind: "engineering", stage: "verify" }, "npm test", "made-up")
+  const lines = fs.readFileSync(path.join(runs, DENY_LOG_FILE), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l))
+  assert.equal(lines[0].source, "backstop")
+  assert.equal("source" in lines[1], false)
+  assert.equal("source" in lines[2], false, "an unknown source is not written")
+})

@@ -2277,7 +2277,7 @@ server.registerTool(
               ? `the run's diff is ${done.diffstat}${done.diffCmd ? ` (\`${done.diffCmd}\`)` : ""} — show the user that summary`
               : `show the user the loop branch's diff summary`
             const suggLine = done?.suggestions?.length
-              ? ` Relay the reviewer's ${done.suggestions.length} non-blocking suggestion${done.suggestions.length === 1 ? "" : "s"} too (this result's \`suggestions\`; also on the task's audit note) — they inform the diff review, they block nothing.`
+              ? ` Relay the reviewer's ${done.suggestions.length} non-blocking suggestion${done.suggestions.length === 1 ? "" : "s"}${done.suggestionsElided ? ` (+${String(done.suggestionsElided)} more past the cap, in the metrics sidecar)` : ""} too (this result's \`suggestions\`; also on the task's audit note) — they inform the diff review, they block nothing.`
               : ""
             return {
               taskId,
@@ -2285,6 +2285,7 @@ server.registerTool(
               ...(done?.diffstat ? { diffstat: done.diffstat } : {}),
               ...(done?.diffCmd ? { diffCmd: done.diffCmd } : {}),
               ...(done?.suggestions?.length ? { suggestions: done.suggestions } : {}),
+              ...(done?.suggestionsElided ? { suggestionsElided: done.suggestionsElided } : {}),
               next:
                 `ship gate: ${diffLine}, then ask with ${dialect.askTool} — ` +
                 `Ship (workflow_ship("${taskId}")), Replan with a reason (workflow_replan("${taskId}", reason)), ` +
@@ -2687,6 +2688,8 @@ server.registerTool(
       // Keys nothing reads (design 60), each named with the declared key it
       // is one edit from — the typo that used to leave a setting silently on
       // its default.
+      if (cfgReport.matchedRepoSection)
+        notes.push(`The user-scope config's repos["${cfgReport.matchedRepoSection}"] section applied to this checkout, over the global user keys and under the repo file.`)
       if (cfgReport.unknownKeys.length)
         notes.push(
           `${cfgReport.unknownKeys.length} config key(s) are not read by anything: ` +

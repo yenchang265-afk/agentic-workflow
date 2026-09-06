@@ -852,6 +852,18 @@ export const suggestionFindings = (record: VerdictRecord | null): readonly strin
   return out
 }
 
+/**
+ * How many non-blocking findings `suggestionFindings` dropped past
+ * `SUGGESTIONS_MAX` (design 71). The cap used to be silent: the done note's
+ * `(N)` was the capped count and read as the truth. Rendered as `+K more` by
+ * every surface that shows the list; never enters the rebuild seam. Pure.
+ */
+export const suggestionsElided = (record: VerdictRecord | null): number => {
+  let total = 0
+  for (const axis of record?.axes ?? []) total += (axis.findings ?? []).filter((f) => !isBlocking(f)).length
+  return Math.max(0, total - SUGGESTIONS_MAX)
+}
+
 /** The verdict tags emitted by the loop's check stages. */
 export const WORKFLOW_VERIFY_TAG = "WORKFLOW_VERIFY"
 export const WORKFLOW_REVIEW_TAG = "WORKFLOW_REVIEW"

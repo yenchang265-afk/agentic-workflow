@@ -2,6 +2,7 @@ import { parseWindow, readRunInputs } from "@agentic-workflow/core/workflow/metr
 import type { HubDeps } from "../deps.js"
 import { badRequest, ok, type JsonResponse, type ParsedRequest } from "../http.js"
 import { aggregateMetrics } from "../metrics/aggregate.js"
+import { runParseCacheFor, statStamp } from "../metrics/runcache.js"
 
 /**
  * Cross-run loop health: `GET /api/metrics?window=30d&kind=engineering`.
@@ -28,6 +29,8 @@ export const getMetrics = async (deps: HubDeps, req: ParsedRequest): Promise<Jso
   const kind = req.query.get("kind") ?? ""
   if (kind && !KIND_RE.test(kind)) return badRequest(`invalid kind "${kind}"`)
   const days = window.since === undefined ? null : Math.round((Date.now() - window.since) / 86_400_000)
-  const { inputs, skipped } = await readRunInputs(deps.client, deps.directory, deps.tasksDir)
+  // Cached per repo on size+mtime (design 72); a changed file re-parses, an
+  // unchanged one is reused across SSE-driven refetches.
+  const { inputs, skipped } = await readRunInputs(deps.client, deps.directory, deps.tasksDir, { stat: statStamp, cache: runParseCacheFor(deps.directory) })
   return ok(aggregateMetrics(inputs, skipped, { ...window, ...(kind ? { kind } : {}), days }))
 }

@@ -179,6 +179,31 @@ only it can honor — though none does today. Keys that used to exist and no
 longer do are listed under [Retired keys](#retired-keys); a config that still
 sets one loads fine and logs a warning naming its replacement.
 
+### Per-repo sections in the user layer (`repos`)
+
+One user-scope file can give two checkouts different settings without
+committing the difference into either repo:
+
+```json
+{
+  "notifyCommand": "notify-send agentic-workflow \"$AW_MESSAGE\"",
+  "repos": {
+    "/work/app": { "workflows": { "engineering": { "stageModels": { "build": "opus" } } } },
+    "experiments": { "notifyCommand": "" , "maxIterations": 2 }
+  }
+}
+```
+
+A key is an absolute path (`~` expands) or a repo basename; an exact path
+beats a basename when both match. The matching section is merged OVER the
+global user keys and UNDER the repo file, so precedence is: global user keys
+< `repos.<match>` < `.agentic-workflow.json`. Every reader honours it — the
+loop, the bundled hooks that bind stage models, the hub's config view, and
+the Qwen installer's model bake. A `repos` key in a repo file is ignored and
+warned about: per-repo sections are a user-authored construct, and honouring
+one from a clone would let a repo re-grant itself a shell-bearing key under
+a wrapper. `doctor config` names the section that applied.
+
 ## Workflow kinds (`workflows`)
 
 Each key under `workflows` enables and configures one workflow kind (a

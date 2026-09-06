@@ -200,11 +200,57 @@ export const ADO_USER_LAYER_ONLY_KEYS = ["organization", "pat", "mcp"] as const
  */
 export const ALLOWLIST_WIDENING_KEYS = ["bashAllowlistExtra", "bashAllowlistPrefix"] as const
 
+/**
+ * The user-layer key holding per-repo overrides (design 73):
+ * `"repos": { "<absolute path or basename>": { ...any config keys... } }`.
+ * A matching section is merged OVER the global user layer and UNDER the repo
+ * layer, so one user file can give two checkouts different `stageModels` or
+ * `notifyCommand` without touching either repo's committed config. A repo
+ * file carrying this key is inert (dropped by `sanitizeRepoLayer`): it is a
+ * user-authored construct, and honouring it from a clone would let a repo
+ * re-grant itself a shell-bearing key under a `repos` wrapper.
+ */
+export const REPOS_KEY = "repos"
+
+/**
+ * The user layer's `repos` section for `directory`, and which key matched.
+ * Precedence is explicit and deterministic: an exact absolute path (after
+ * `path.resolve`) beats a basename match — two keys can match one repo, and
+ * "whichever `Object.entries` yielded first" is the bug `resolveAgentModels`
+ * fixed once already. Pure.
+ */
+export const userRepoOverrides = (userRaw: unknown, directory: string): { readonly section: Record<string, unknown>; readonly matchedKey: string | null } => {
+  if (!isPlainObject(userRaw)) return { section: {}, matchedKey: null }
+  const repos = userRaw[REPOS_KEY]
+  if (!isPlainObject(repos)) return { section: {}, matchedKey: null }
+  const abs = path.resolve(directory)
+  const base = path.basename(abs)
+  let byPath: string | null = null
+  let byBase: string | null = null
+  for (const key of Object.keys(repos)) {
+    if (!isPlainObject(repos[key])) continue
+    if (path.isAbsolute(key) || key.startsWith("~")) {
+      const resolved = key.startsWith("~") ? path.resolve(key.replace(/^~/, process.env.HOME ?? "")) : path.resolve(key)
+      if (resolved === abs && byPath === null) byPath = key
+    } else if (key === base && byBase === null) byBase = key
+  }
+  const matchedKey = byPath ?? byBase
+  return { section: matchedKey ? (repos[matchedKey] as Record<string, unknown>) : {}, matchedKey }
+}
+
+/** The user layer with its per-repo section for `directory` folded in (design 73): global keys under the matching section, `repos` itself removed. Pure. */
+export const applyUserRepoOverrides = (userRaw: unknown, directory: string): unknown => {
+  if (!isPlainObject(userRaw)) return userRaw
+  const { [REPOS_KEY]: _repos, ...global } = userRaw
+  const { section } = userRepoOverrides(userRaw, directory)
+  return mergeConfigLayers(global, section)
+}
+
 /** Which drop rule claimed a repo-layer key — decides the warning's wording. */
 export interface DroppedRepoKey {
   /** Dotted path as the config file spells it, e.g. `workflows.engineering.stageChecks`. */
   readonly path: string
-  readonly family: "shell" | "workflowShell" | "ado" | "allowlist"
+  readonly family: "shell" | "workflowShell" | "ado" | "allowlist" | "userOnly"
 }
 
 /**
@@ -218,6 +264,7 @@ export const droppedRepoKeys = (repoRaw: unknown): DroppedRepoKey[] => {
   const out: DroppedRepoKey[] = []
   for (const key of SHELL_BEARING_KEYS) if (key in repoRaw) out.push({ path: key, family: "shell" })
   for (const key of ALLOWLIST_WIDENING_KEYS) if (key in repoRaw) out.push({ path: key, family: "allowlist" })
+  if (REPOS_KEY in repoRaw) out.push({ path: REPOS_KEY, family: "userOnly" })
   const workflows = repoRaw["workflows"]
   if (isPlainObject(workflows)) {
     for (const [kind, section] of Object.entries(workflows)) {
@@ -251,6 +298,7 @@ export const sanitizeRepoLayer = (repoRaw: unknown): unknown => {
   }
   for (const key of SHELL_BEARING_KEYS) if (key in out) out = without(out, key)
   for (const key of ALLOWLIST_WIDENING_KEYS) if (key in out) out = without(out, key)
+  if (REPOS_KEY in out) out = without(out, REPOS_KEY)
   const workflows = out["workflows"]
   if (isPlainObject(workflows)) {
     const cleaned: Record<string, unknown> = {}
@@ -348,6 +396,8 @@ export interface EffectiveConfigReport {
   readonly droppedRepoKeys: readonly string[]
   /** The config actually in force, secrets masked. Display only — never write it back. */
   readonly effective: unknown
+  /** The user layer's `repos` key that applied to this directory (design 73), or null. */
+  readonly matchedRepoSection: string | null
   /**
    * Keys in the RAW merged layers that no schema declares (design 60) — a
    * misspelled top-level key is stripped by zod before any code sees it, so it
@@ -393,12 +443,19 @@ export const effectiveConfigReport = (
       unknownKeys = []
     }
   }
+  let matchedRepoSection: string | null = null
+  try {
+    matchedRepoSection = userPath ? userRepoOverrides(readUserLayer(userPath), cwd).matchedKey : null
+  } catch {
+    matchedRepoSection = null
+  }
   return {
     userConfigPath: userPath,
     repoConfigPath: CONFIG_FILE,
     droppedRepoKeys: droppedRepoKeys(repoRaw).map((d) => d.path),
     effective: maskConfigSecrets(parsedConfig),
     unknownKeys,
+    matchedRepoSection,
   }
 }
 
@@ -493,7 +550,11 @@ export const readRawConfigLayers = (cwd: string): Record<string, unknown> => {
   // reached the hooks that trust this function.
   const repoLayer = sanitizeRepoLayer(read(path.join(cwd, CONFIG_FILE)))
 
-  const merged = mergeConfigLayers(userLayer ?? {}, repoLayer)
+  // The per-repo user section (design 73) is folded in HERE as well as in
+  // `loadConfigWith`: this reader feeds the model-binding hook, and a per-repo
+  // `stageModels` the loop honoured but the hook did not would run every spawn
+  // on the wrong model with nothing failing.
+  const merged = mergeConfigLayers(applyUserRepoOverrides(userLayer ?? {}, cwd), repoLayer)
   return isPlainObject(merged) ? merged : {}
 }
 

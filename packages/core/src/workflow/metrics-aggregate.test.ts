@@ -99,3 +99,36 @@ test("readRunInputs reads every runs/*.md with its sidecar and reports unreadabl
   assert.deepEqual(skipped, ["gone"])
   assert.ok(inputs[0]!.sidecar !== null, "the sidecar parsed")
 })
+
+test("readRunInputs reuses a cached parse while both files' size+mtime stand, re-parses on a change, and forgets a vanished id (design 72)", async () => {
+  const LOG = "## build · iteration 1 · 2026-09-01T00:00:00Z\n\nx\n\n**Run summary** — done — 2026-09-01T01:00:00Z\n\n| stage | iter | verdict | wall-clock |\n|---|---|---|---|\n| verify | 1 | PASS | 1m 0s |\n"
+  const files: Record<string, string> = { "docs/tasks/runs/a.md": LOG, "docs/tasks/runs/b.md": LOG }
+  const stamps: Record<string, { size: number; mtimeMs: number }> = { "/repo/docs/tasks/runs/a.md": { size: 1, mtimeMs: 1 }, "/repo/docs/tasks/runs/b.md": { size: 1, mtimeMs: 1 } }
+  let reads = 0
+  const client = {
+    file: {
+      list: async () => ({ data: Object.keys(files).map((p) => ({ type: "file", name: p.split("/").pop() })) }),
+      read: async ({ query }: { query: { path: string } }) => {
+        reads++
+        return { data: query.path in files ? { content: files[query.path] } : null }
+      },
+    },
+    app: { log: async () => undefined },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any
+  const cache = new Map()
+  const opts = { stat: (p: string) => stamps[p] ?? null, cache, concurrency: 2 }
+  const first = await readRunInputs(client, "/repo", "docs/tasks", opts)
+  assert.deepEqual(first.inputs.map((i) => i.id), ["a", "b"])
+  const afterFirst = reads
+  const second = await readRunInputs(client, "/repo", "docs/tasks", opts)
+  assert.equal(reads, afterFirst, "nothing re-read while the stamps stand")
+  assert.equal(second.inputs[0], first.inputs[0], "the very same parsed object")
+  stamps["/repo/docs/tasks/runs/b.md"] = { size: 1, mtimeMs: 2 }
+  await readRunInputs(client, "/repo", "docs/tasks", opts)
+  assert.equal(reads, afterFirst + 2, "only b re-read (its two files)")
+  delete files["docs/tasks/runs/a.md"]
+  const third = await readRunInputs(client, "/repo", "docs/tasks", opts)
+  assert.deepEqual(third.inputs.map((i) => i.id), ["b"])
+  assert.equal(cache.has("a"), false, "a vanished id leaves no stale entry")
+})

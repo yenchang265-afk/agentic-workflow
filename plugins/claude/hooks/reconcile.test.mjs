@@ -136,3 +136,18 @@ test("a stale MCP server or core dist is named at session start, with the rebuil
   touch("plugins/claude/mcp-server/dist/server.js", 0)
   assert.equal(run(cwd, { AGENTIC_WORKFLOW_PLUGIN_ROOT: path.join(root, "plugins", "claude") }), "")
 })
+
+test("on Qwen, agents baked from model keys that no longer match the config are named at session start (design 74)", () => {
+  const cwd = makeRepo({ "docs/tasks/in-progress/": null, ".agentic-workflow.json": JSON.stringify({ workflows: { engineering: { stageModels: { build: "opus" } } } }) })
+  const qwenDir = fs.mkdtempSync(path.join(os.tmpdir(), "aw-qwen-"))
+  fs.mkdirSync(path.join(qwenDir, "agents"), { recursive: true })
+  const record = (configModels) => fs.writeFileSync(path.join(qwenDir, "agents", ".agentic-workflow-baked.json"), JSON.stringify({ at: "2026-09-01T00:00:00Z", bindings: { "workflow-build": "sonnet" }, configModels }))
+  const env = { AGENTIC_WORKFLOW_HOST: "qwen", QWEN_CONFIG_DIR: qwenDir }
+  record({ agentModels: {}, workflows: { engineering: { build: "sonnet" } } })
+  assert.match(run(cwd, env), /Qwen stage agents were baked with model bindings that no longer match the config.*run \.\/install\.sh qwen/)
+  record({ agentModels: {}, workflows: { engineering: { build: "opus" } } })
+  assert.equal(run(cwd, env), "", "a matching record is silence")
+  // The Claude host conveys the model at spawn time — no bake, no drift.
+  record({ agentModels: {}, workflows: { engineering: { build: "sonnet" } } })
+  assert.equal(run(cwd, { AGENTIC_WORKFLOW_HOST: "claude", QWEN_CONFIG_DIR: qwenDir }), "")
+})
