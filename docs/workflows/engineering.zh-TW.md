@@ -180,6 +180,13 @@ VERIFY 或 REVIEW 可以記錄帶 `planDefect: true` 與 reason 的 FAIL，迴�
 敗那次的輸出回報給 VERIFY，作為非阻擋建議帶到 ship 把關點，不壓低任何東西；兩次
 都敗則一如既往壓低該階段。見設計 49–50。
 
+又有兩項事實會在階段之間傳遞，而不是被重新發現。**停下的執行會告訴 replan 的
+PLAN 回合它留下了什麼**：一條 `> Prior work` 稽核註記記錄分支、基底與 diffstat，
+連同 admission 拒絕的 discovered check 指令，以一節的形式到達下一份計畫，要求它
+決定建立於該工作之上或捨棄，並改用可被接受的檢查指令。**VERIFY PASS 會告訴
+REVIEW 它確立了什麼**：達成的條件及逐條的 `evidence` 參照、迴圈跑過的檢查、引用
+的證據、以及無法評估的軸，經由 FAIL 已在使用的同一接縫。見設計 51–52。
+
 ### 切片組（`new` 拆解重大想法）
 
 `new <idea>` 可以把一個龐大的想法拆成多份子草稿，外加一份 `type: epic`
