@@ -10,6 +10,7 @@ import {
   commitAll,
   defaultBranchName,
   diffShortstat,
+  diffText,
   headSha,
   listWorktrees,
   pushBranch,
@@ -297,4 +298,14 @@ test("diffShortstat reads an empty diff, a failure, and git chatter all as null"
   // Singular forms and a missing insertions/deletions half are all real git output.
   assert.equal(await diffShortstat(makeShell(() => ({ stdout: " 1 file changed, 1 insertion(+)" })), "/repo", "a", "b"), "1 file changed, 1 insertion(+)")
   assert.equal(await diffShortstat(makeShell(() => ({ stdout: " 2 files changed, 3 deletions(-)" })), "/repo", "a", "b"), "2 files changed, 3 deletions(-)")
+})
+
+test("diffText returns the diff by ref, capped at maxLines with the true line count", async () => {
+  const body = ["diff --git a/x b/x", "--- a/x", "+++ b/x", "@@ -1 +1 @@", "-old", "+new"].join("\n")
+  const $ = makeShell((cmd) => (cmd === "git -C /repo diff main...feature/x --" ? { stdout: `${body}\n` } : { exitCode: 1 }))
+  assert.deepEqual(await diffText($, "/repo", "main", "feature/x", 100), { text: body, lines: 6, truncated: false })
+  assert.deepEqual(await diffText($, "/repo", "main", "feature/x", 2), { text: "diff --git a/x b/x\n--- a/x", lines: 6, truncated: true })
+  // Empty diff and a failed command both read as "nothing to show".
+  assert.equal(await diffText(makeShell(() => ({ stdout: "" })), "/repo", "a", "b", 10), null)
+  assert.equal(await diffText(makeShell(() => ({ exitCode: 1, stdout: "fatal" })), "/repo", "a", "b", 10), null)
 })

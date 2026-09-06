@@ -407,6 +407,44 @@ export const extractRunDiffstat = (task: Task): string | undefined => {
 }
 
 /**
+ * The note `runDone` writes ahead of the done note when REVIEW left
+ * non-blocking findings: `> Review suggestions (<n>) — <a; b; c>`. A constant
+ * because `extractRunSuggestions` parses it (design 58): the hub's review queue
+ * shows the trail's LAST note, which is the done note, so the suggestions —
+ * written for exactly the human at that gate — were invisible there.
+ */
+export const SUGGESTIONS_MARKER = "> Review suggestions ("
+
+/**
+ * The last completed run's review suggestions, or `undefined`: the count from
+ * the marker and the clamped, redacted text after it. Read off the LAST
+ * stamped `SUGGESTIONS_MARKER` line, and only when it belongs to the LAST
+ * completed run: a run that ends with no suggestions writes no note, so an
+ * older run's line must not be shown against a newer run's diff. Pure.
+ *
+ * Display data: never split on `; ` back into findings — a finding's detail
+ * may carry semicolons — the text is shown as the one line it is.
+ */
+export const extractRunSuggestions = (task: Task): { readonly count: number; readonly text: string } | undefined => {
+  const idx = lastMarkerIndex(task.body, SUGGESTIONS_MARKER)
+  const done = lastMarkerIndex(task.body, RUN_DONE_MARKER)
+  if (idx === -1 || done === -1 || done < idx) return undefined
+  // A run writes [suggestions?, done]. The FIRST done note after this
+  // suggestions line must be the LAST done note, or the line belongs to an
+  // older run whose successor recorded no suggestions.
+  const nextDone = /^> Loop done/m.exec(task.body.slice(idx))
+  if (!nextDone || idx + nextDone.index !== done) return undefined
+  const end = task.body.indexOf("\n", idx)
+  const line = task.body.slice(idx, end === -1 ? task.body.length : end)
+  if (!AUDIT_NOTE_LINE_RE.test(line)) return undefined
+  const m = /^> Review suggestions \((\d+)\) — (.*?)\s*\[[^\]\n]+\]\s*$/.exec(line)
+  if (!m) return undefined
+  const count = Number(m[1])
+  const text = (m[2] ?? "").trim()
+  return Number.isInteger(count) && count > 0 && text ? { count, text } : undefined
+}
+
+/**
  * The PENDING rejection reason a human gave `replan` (or the plan contract's
  * park refusal recorded), or `undefined`. Pure.
  *

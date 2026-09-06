@@ -1,7 +1,7 @@
 import type { Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { resolveValidateHook } from "../manifest/registry.js"
-import { appendNote, auditNote, contractRejectedNote, extractPlan, findByIdIn, moveTask, planHeadingCount, priorWorkNote, releaseClaim, RUN_DIFF_PREFIX, stopContextNote, unaddressedRejectionCount } from "../task/store.js"
+import { SUGGESTIONS_MARKER, appendNote, auditNote, contractRejectedNote, extractPlan, findByIdIn, moveTask, planHeadingCount, priorWorkNote, releaseClaim, RUN_DIFF_PREFIX, stopContextNote, unaddressedRejectionCount } from "../task/store.js"
 import { redact } from "../task/redact.js"
 import { clampedChecksDetail, previewDiscoveredChecks } from "./discovered-checks.js"
 import { depsSummaryLine, previewDeclaredDeps } from "./declared-deps.js"
@@ -429,7 +429,9 @@ const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" 
         if (action.suggestions?.length) {
           const flat = redact(action.suggestions.join("; ")).text.replace(/\s*\n\s*/g, " ")
           const clamped = flat.length > SUGGESTIONS_NOTE_MAX ? `${flat.slice(0, SUGGESTIONS_NOTE_MAX)}…` : flat
-          await appendNote($, cur, auditNote(`Review suggestions (${action.suggestions.length}) — ${clamped}`, new Date(), actor), log)
+          // Built from SUGGESTIONS_MARKER (minus the `> ` appendNote adds):
+          // `extractRunSuggestions` parses this line, so its shape is a contract.
+          await appendNote($, cur, auditNote(`${SUGGESTIONS_MARKER.slice(2)}${action.suggestions.length}) — ${clamped}`, new Date(), actor), log)
         }
         const runBase = state.git && !state.git.onCurrentBranch ? `, base ${state.git.base}` : ""
         // The diff-stat clause goes LAST (see RUN_DIFF_PREFIX's doc for why its

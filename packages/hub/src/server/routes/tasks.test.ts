@@ -5,12 +5,12 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 import { DEFAULT_CONFIG } from "@agentic-workflow/core/config"
-import type { KindBoardInfo, SaveTaskRequest, SaveTaskResponse, TaskDetailResponse } from "../../shared/api.js"
+import type { CreateTaskResponse, KindBoardInfo, SaveTaskRequest, SaveTaskResponse, TaskDetailResponse } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { fsClient, sh } from "../fsclient.js"
 import type { JsonResponse } from "../http.js"
 import { postGate } from "./gate.js"
-import { getTaskDetail, postTaskSave } from "./tasks.js"
+import { getTaskDetail, postTaskCreate, postTaskSave } from "./tasks.js"
 
 /**
  * The in-place task editor, against a real git repo and real task files. The
@@ -458,4 +458,58 @@ test("a save and a gate move on the same task are serialized, and the loser 409s
   )
   if (saved.status === 409) assert.ok(at(dir, "queued", "aaa1-thing"), "the gate won and the edit stood down")
   cleanup(dir)
+})
+
+// --- create: the board's way into draft/ (design 59) ---
+
+const create = async (deps: HubDeps, body: unknown): Promise<JsonResponse> =>
+  postTaskCreate(deps, { params: {}, query: new URLSearchParams(), body })
+
+test("postTaskCreate mints a draft through writeTask, notes it, commits, and the detail route sees it", async () => {
+  const dir = makeRepo()
+  try {
+    const deps = depsFor(dir)
+    const before = countCommits(dir)
+    const res = await create(deps, { title: "Add a thing", type: "feature", priority: 2, labels: ["api"], acceptance: ["It works"], body: "Because.", reason: "from the board" })
+    assert.equal(res.status, 200, JSON.stringify(res.body))
+    const r = res.body as CreateTaskResponse
+    assert.equal(r.ok, true)
+    if (!r.ok) return
+    assert.match(r.id, /^[a-z0-9]{4}-add-a-thing$/)
+    assert.ok(at(dir, "draft", r.id))
+    const text = read(dir, "draft", r.id)
+    assert.match(text, /title: Add a thing/)
+    assert.match(text, /priority: 2/)
+    assert.match(text, /> Task created in the hub — from the board \[/)
+    assert.equal(countCommits(dir), before + 1)
+    assert.match(headMessage(dir), /task created in the hub/)
+    const d = await detail(deps, "draft", r.id)
+    assert.equal(d.card.title, "Add a thing")
+    assert.ok(d.editable, "a fresh draft is editable in place")
+    // A second draft with the same title gets its own id.
+    const again = (await create(deps, { title: "Add a thing", priority: 0, labels: [], acceptance: [], body: "" })).body as CreateTaskResponse
+    assert.equal(again.ok, true)
+    if (again.ok) assert.notEqual(again.id, r.id)
+  } finally {
+    cleanup(dir)
+  }
+})
+
+test("postTaskCreate refuses a secret-shaped body and a malformed request, writing nothing", async () => {
+  const dir = makeRepo()
+  try {
+    const deps = depsFor(dir)
+    const before = countCommits(dir)
+    const secret = await create(deps, { title: "Leak", priority: 0, labels: [], acceptance: [], body: "token: ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ab" })
+    assert.equal(secret.status, 200)
+    assert.equal((secret.body as CreateTaskResponse).ok, false)
+    assert.match((secret.body as { message: string }).message, /secret/)
+    assert.equal((await create(deps, { title: "", priority: 0, labels: [], acceptance: [], body: "" })).status, 400)
+    assert.equal((await create(deps, { title: "x", priority: 5000, labels: [], acceptance: [], body: "" })).status, 400)
+    assert.equal((await create(deps, { title: "multi\nline", priority: 0, labels: [], acceptance: [], body: "" })).status, 400)
+    assert.equal(fs.readdirSync(path.join(dir, "docs", "tasks", "draft")).length, 0)
+    assert.equal(countCommits(dir), before)
+  } finally {
+    cleanup(dir)
+  }
 })

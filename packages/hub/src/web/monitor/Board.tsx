@@ -13,6 +13,7 @@ import { Card } from "../ui/Card.js"
 import { Chip } from "../ui/Chip.js"
 import { DoctorPanel } from "./DoctorPanel.js"
 import { GateActions } from "./GateActions.js"
+import { NewDraft } from "./NewDraft.js"
 import { TaskDrawer } from "./TaskDrawer.js"
 import { parseTaskParam, taskParam } from "./taskparam.js"
 
@@ -115,6 +116,9 @@ const TaskCardView = ({
 
 export const Board = ({ info }: { info: KindBoardInfo }) => {
   const { versions } = useEvents()
+  // The create form (design 59) — one per board, on the draft column, closed
+  // once the draft lands and its drawer opens.
+  const [creating, setCreating] = useState(false)
   const { repoId } = useRepo()
   const [doctorOpen, setDoctorOpen] = useState(false)
   const route = useRoute()
@@ -188,8 +192,25 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
             <div key={status} className={`column${gate ? " gate-column" : ""}`}>
               <div className="column-title">
                 <span>{status}</span>
-                <span>{tasks.length}</span>
+                <span>
+                  {status === "draft" && info.sourceType === "backlog" && (
+                    <button type="button" className="column-title__action" onClick={() => setCreating((c) => !c)} title="Create a planless draft here">
+                      {creating ? "close" : "+ new"}
+                    </button>
+                  )}
+                  {tasks.length}
+                </span>
               </div>
+              {status === "draft" && creating && (
+                <NewDraft
+                  onCreated={(id) => {
+                    setCreating(false)
+                    refetch()
+                    navigate(withQuery(route, { task: taskParam("draft", id) }))
+                  }}
+                  onCancel={() => setCreating(false)}
+                />
+              )}
               {tasks.map((t) => (
                 <TaskCardView
                   key={t.id}

@@ -77,6 +77,33 @@ export const diffShortstat = async ($: Shell, cwd: string, base: string, branch:
   return /^\d+ files? changed(, \d+ insertions?\(\+\))?(, \d+ deletions?\(-\))?$/.test(line) ? line : null
 }
 
+/** What `diffText` returns: the diff, cut at `maxLines` when it ran over. */
+export interface DiffText {
+  readonly text: string
+  readonly lines: number
+  readonly truncated: boolean
+}
+
+/**
+ * The `git diff <base>...<branch>` a ship gate reviews, by REF from the main
+ * checkout (like `diffShortstat`), capped at `maxLines` lines — the hub's
+ * ship gate renders it (design 58) and a diff is unbounded. Null on an empty
+ * diff, unknown refs, or not a repo. The refs are shell-escaped by `$` and
+ * arrive from `extractRunBranch`/`extractRunBase`, whose validated shape
+ * forbids a leading dash, so neither can read as a git option; the `--`
+ * closes the option list regardless.
+ */
+export const diffText = async ($: Shell, cwd: string, base: string, branch: string, maxLines: number): Promise<DiffText | null> => {
+  const { ok, stdout } = await runRaw($, cwd, ["diff", `${base}...${branch}`, "--"])
+  if (!ok) return null
+  const all = stdout.replace(/\n$/, "")
+  if (!all) return null
+  const lines = all.split("\n")
+  const cap = Math.max(1, Math.floor(maxLines))
+  const truncated = lines.length > cap
+  return { text: truncated ? lines.slice(0, cap).join("\n") : all, lines: lines.length, truncated }
+}
+
 /**
  * The repo's default branch, resolved LOCALLY: `origin/HEAD` (set by clone, or
  * by `git remote set-head`), else `init.defaultBranch`, else null.

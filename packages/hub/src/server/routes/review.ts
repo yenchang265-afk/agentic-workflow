@@ -1,8 +1,11 @@
-import { extractPlan, extractRunBranch, extractRunDiffstat, listByStatus, listClaimIds } from "@agentic-workflow/core/task/store"
+import { extractPlan, extractRunBase, extractRunBranch, extractRunDiffstat, extractRunSuggestions, findByIdIn, listByStatus, listClaimIds, STATUSES } from "@agentic-workflow/core/task/store"
+import { defaultBranchName, diffText } from "@agentic-workflow/core/workflow/git"
+import { DEFAULT_MAX_DIFF_LINES } from "@agentic-workflow/core/source/pr-shared"
+import type { Config } from "@agentic-workflow/core/workflow/state"
 import { parseRunLog } from "@agentic-workflow/core/workflow/runlog"
-import type { ReviewItem, ReviewResponse } from "../../shared/api.js"
+import type { ReviewDiffResponse, ReviewItem, ReviewResponse } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
-import { ok, type JsonResponse } from "../http.js"
+import { badRequest, isSafeId, json, notFound, ok, type JsonResponse, type ParsedRequest } from "../http.js"
 import { readText } from "../io.js"
 import { extractAuditNotes } from "../notes.js"
 import { byWaiting, noteTimestamps, planExcerpt, runContext } from "../review.js"
@@ -69,6 +72,10 @@ export const getReview = async (deps: HubDeps): Promise<JsonResponse> => {
           // simply omits the line.
           branch: extractRunBranch(task) ?? null,
           diffstat: extractRunDiffstat(task) ?? null,
+          // The suggestions note precedes the done note, so `lastEvent` (the
+          // trail's newest line) never showed it — the one note written FOR
+          // this gate was the one the gate could not see.
+          suggestions: extractRunSuggestions(task) ?? null,
           lastRun: log === null ? null : runContext(task.id, parseRunLog(log)),
           claimed: claimed.has(task.id),
         })
@@ -80,5 +87,47 @@ export const getReview = async (deps: HubDeps): Promise<JsonResponse> => {
     items: items.sort(byWaiting),
     kinds: backlogKinds.map((b) => b.kind),
   }
+  return ok(response)
+}
+
+/**
+ * `workflows.<kind>.maxDiffLines`, else the reviewer-role default. The knob
+ * was declared for the review sitter; the human's own review has the same
+ * reason to be bounded, and one number is better than two.
+ */
+const diffLimitFor = (config: Config, kind: string): number => {
+  const knob = (config.workflows?.[kind] as { readonly maxDiffLines?: unknown } | undefined)?.maxDiffLines
+  return typeof knob === "number" && Number.isInteger(knob) && knob > 0 ? knob : DEFAULT_MAX_DIFF_LINES
+}
+
+/**
+ * GET /api/review/:status/:id/diff — the diff behind a ship decision (design
+ * 58). Designs 33/34 gave the CLI ship gate a verified diff view and the
+ * reviewer's suggestions; the hub's ship button approved a diff it had only
+ * ever shown the SIZE of. The branch and base come off the done note the run
+ * wrote — the same fields the ship gate pushes — never from the request, so
+ * this route cannot be pointed at an arbitrary ref pair; the base falls back to
+ * the repo's default branch exactly as the ship does. Read-only, and rendered
+ * on demand rather than on the queue listing, because a diff is unbounded and
+ * the queue is fetched on every SSE tick.
+ */
+export const getReviewDiff = async (deps: HubDeps, req: ParsedRequest): Promise<JsonResponse> => {
+  const status = req.params["status"] ?? ""
+  const id = req.params["id"] ?? ""
+  if (!isSafeId(id)) return badRequest(`invalid task id "${id}"`)
+  const known = new Set<string>([...deps.boards.flatMap((b) => b.statuses), ...STATUSES])
+  if (!known.has(status)) return badRequest(`unknown status "${status}"`)
+  const task = await findByIdIn(deps.sh, deps.directory, deps.tasksDir, status, id, deps.log)
+  if (!task) return notFound(`task ${status}/${id}`)
+  const branch = extractRunBranch(task)
+  if (!branch) return json(409, { error: `"${id}" has no completed run on record — nothing to diff (the done note names the branch).` })
+  const base = extractRunBase(task) ?? (await defaultBranchName(deps.sh, deps.directory))
+  if (!base) return json(409, { error: `"${id}": the run recorded no base and the repo's default branch could not be resolved.` })
+  const kind = deps.boards.find((b) => b.statuses.includes(status))?.kind ?? "engineering"
+  const maxLines = diffLimitFor(deps.config, kind)
+  const diff = await diffText(deps.sh, deps.directory, base, branch, maxLines)
+  const diffCmd = `git diff ${base}...${branch}`
+  if (!diff) return json(409, { error: `\`${diffCmd}\` is empty or its refs are gone — the branch may have been deleted or merged.` })
+  const response: ReviewDiffResponse = { branch, base, diffCmd, ...diff, maxLines }
   return ok(response)
 }

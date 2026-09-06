@@ -18,6 +18,7 @@ import {
   extractRunBase,
   extractRunBranch,
   extractRunDiffstat,
+  extractRunSuggestions,
   nextActions,
   extractReplanReason,
   extractStopContext,
@@ -2106,4 +2107,19 @@ test("a fully-populated tracker is not reported, and a malformed one is not desc
   // An UNKNOWN top-level object is reported whole, not child by child: the file
   // is already refused, and listing its children only makes the refusal noisier.
   assert.deepEqual(unknownFrontmatterKeys("---\ntitle: T\ncustom:\n  a: 1\n  b: 2\n---\nbody"), ["custom"])
+})
+
+test("extractRunSuggestions reads the LAST run's suggestions note, and only that run's", () => {
+  const stamp = "[2026-01-01T00:00:00.000Z by loop]"
+  const done = `> Loop done — review passed on branch feature/a, base main, awaiting human diff review; diff: 1 file changed, 1 insertion(+) ${stamp}`
+  const withNote = `c\n\n> Review suggestions (2) — correctness: consider a guard (src/x.ts:3); security: rotate the token; docs ${stamp}\n${done}\n`
+  assert.deepEqual(extractRunSuggestions(task("a", 0, withNote)), { count: 2, text: "correctness: consider a guard (src/x.ts:3); security: rotate the token; docs" })
+  // A newer run with no suggestions: the older note is not shown against the new diff.
+  const older = `${withNote}> Plan rejected — sent back to queued for re-planning — again [2026-01-02T00:00:00.000Z by dev]\n${done.replace("feature/a", "feature/b")}\n`
+  assert.equal(extractRunSuggestions(task("a", 0, older)), undefined)
+  // No done note after it (the run never finished), unstamped, or a quotation in prose.
+  assert.equal(extractRunSuggestions(task("a", 0, `c\n\n> Review suggestions (1) — x ${stamp}\n`)), undefined)
+  assert.equal(extractRunSuggestions(task("a", 0, `c\n\n> Review suggestions (1) — x\n${done}\n`)), undefined)
+  assert.equal(extractRunSuggestions(task("a", 0, `The loop writes "> Review suggestions (1) — x" before the done note.\n\n${done}\n`)), undefined)
+  assert.equal(extractRunSuggestions(task("a", 0, `c\n\n${done}\n`)), undefined)
 })

@@ -12,8 +12,8 @@ import { resolveRepos } from "./repos.js"
 import { startWatcher } from "./watch.js"
 import { getActive } from "./routes/active.js"
 import { getBacklog } from "./routes/backlog.js"
-import { getReview } from "./routes/review.js"
-import { getTaskDetail, postTaskSave } from "./routes/tasks.js"
+import { getReview, getReviewDiff } from "./routes/review.js"
+import { getTaskDetail, postTaskCreate, postTaskSave } from "./routes/tasks.js"
 import { getConfig, saveConfig } from "./routes/config.js"
 import { getDoctor, postDoctorFix } from "./routes/doctor.js"
 import { postGate } from "./routes/gate.js"
@@ -161,7 +161,9 @@ const routes: Route[] = [
   { method: "GET", pattern: "/api/monitor/kinds", handler: scoped(async (deps) => ok({ kinds: deps.boards })) },
   { method: "GET", pattern: "/api/backlog", handler: scoped(getBacklog) },
   { method: "GET", pattern: "/api/review", handler: scoped((deps) => getReview(deps)) },
+  { method: "GET", pattern: "/api/review/:status/:id/diff", handler: scoped(getReviewDiff) },
   { method: "GET", pattern: "/api/tasks/:status/:id", handler: scoped(getTaskDetail) },
+  { method: "POST", pattern: "/api/tasks/draft", handler: scoped(postTaskCreate), mutating: true },
   { method: "POST", pattern: "/api/tasks/:status/:id", handler: scoped(postTaskSave), mutating: true },
   { method: "GET", pattern: "/api/kinds", handler: scoped((deps) => getKinds(deps)) },
   { method: "GET", pattern: "/api/kinds/:kind", handler: scoped(getKind) },

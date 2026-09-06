@@ -24,8 +24,9 @@ cwd.
 per task waiting on a human, across every enabled backlog kind, longest-waiting
 first, each carrying the evidence a gate decision needs: how long it has waited,
 what the last run did, which stage failed, how much of the iteration budget it
-burned, the branch and diffstat of its diff, and what the plan opens with.
-`GET /api/review`.
+burned, the branch and diffstat of its diff, the reviewer's suggestions, the
+diff itself behind a disclosure, and what the plan opens with.
+`GET /api/review`, `GET /api/review/:status/:id/diff`.
 
 **Loop monitor** — a board per kind, derived from its manifest: gate columns,
 task cards carrying the human gate moves (approve / replan / ship), and run
@@ -109,9 +110,14 @@ happened. It is in-memory and session-scoped; git remains the durable record.
   trail — core stores no timestamps, and an untimestamped task reads "age
   unknown" rather than pretending to be new), the last run's outcome, the stage
   that failed, iteration burn against the cap, the branch and diffstat of the
-  run's diff (when the done note recorded one), and the opening of the plan. A
-  run's id is its task's id, so every row links straight to its run log.
-  `GET /api/review`.
+  run's diff (when the done note recorded one), REVIEW's non-blocking
+  suggestions for that run, and the opening of the plan. On an in-review row a
+  **Diff** disclosure renders the `base...branch` diff the ship approves —
+  fetched only when opened, capped by `workflows.<kind>.maxDiffLines` (else
+  2000 lines) with the `git diff` command named for the rest. The branch and
+  base come off the run's done note, never the request. A run's id is its
+  task's id, so every row links straight to its run log.
+  `GET /api/review`, `GET /api/review/:status/:id/diff`.
 
 - **Loop monitor**: one sub-tab per enabled workflow kind, each view derived from
   the kind's manifest — backlog kinds get a board over their own
@@ -162,7 +168,10 @@ happened. It is in-memory and session-scoped; git remains the durable record.
   human types the reshape. Saving a **`queued/`** task therefore also sends it
   back to `draft/` and withdraws its task-gate approval — a goal the loop was
   approved to plan is not one you may change quietly. The comment lands on the
-  audit note, where the next PLAN pass will read it.
+  audit note, where the next PLAN pass will read it. The draft column's
+  **+ new** opens the same form empty: a planless draft created from the
+  board (`POST /api/tasks/draft`), minted and committed like every other
+  backlog write, waiting at the task gate like any other.
 
   A task with a plan is not editable here — its goal was already planned
   against — so the drawer **reviews** it instead: body and plan rendered as
