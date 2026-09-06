@@ -70,8 +70,30 @@ export interface ReviewItem {
   readonly branch: string | null
   /** That run's one-line `git diff --shortstat` summary, read off the done note — the size of what a ship approves. */
   readonly diffstat: string | null
+  /**
+   * REVIEW's non-blocking findings for that run, read off the `Review
+   * suggestions (N)` note the loop wrote ahead of the done note — one clamped
+   * line, never split back into findings. Null when the run left none.
+   */
+  readonly suggestions: { readonly count: number; readonly text: string } | null
   readonly lastRun: ReviewRunContext | null
   readonly claimed: boolean
+}
+
+/**
+ * GET /api/review/:status/:id/diff — the diff a ship approves, rendered on
+ * demand (design 58). Capped at `maxLines` (`workflows.<kind>.maxDiffLines`,
+ * else the reviewer default) so an unbounded diff cannot flood the page; the
+ * command line is carried so the human can see the whole thing in a terminal.
+ */
+export interface ReviewDiffResponse {
+  readonly branch: string
+  readonly base: string
+  readonly diffCmd: string
+  readonly text: string
+  readonly lines: number
+  readonly truncated: boolean
+  readonly maxLines: number
 }
 
 export interface ReviewResponse {
@@ -149,6 +171,22 @@ export interface TaskDetailResponse {
    */
   readonly editable?: TaskEditable
 }
+
+/** POST /api/tasks/draft — create a planless draft from the board (design 59). */
+export interface CreateTaskRequest {
+  readonly title: string
+  readonly type?: string
+  readonly priority: number
+  readonly labels: readonly string[]
+  readonly acceptance: readonly string[]
+  readonly body: string
+  /** Recorded on the draft's first audit note. */
+  readonly reason?: string
+}
+
+export type CreateTaskResponse =
+  | { readonly ok: true; readonly id: string; readonly path: string; readonly message: string }
+  | { readonly ok: false; readonly message: string; readonly variant: "warning" }
 
 /**
  * The editable split of a task body. `tail` is display-only — the browser never

@@ -1,4 +1,5 @@
-import type { ReviewItem, ReviewResponse } from "../../shared/api.js"
+import { useState } from "react"
+import type { ReviewDiffResponse, ReviewItem, ReviewResponse } from "../../shared/api.js"
 import { useEvents } from "../events.js"
 import { GateActions } from "../monitor/GateActions.js"
 import { TaskDrawer } from "../monitor/TaskDrawer.js"
@@ -62,9 +63,39 @@ const RunContext = ({ item }: { item: ReviewItem }) => {
   )
 }
 
+/**
+ * The diff a ship approves, fetched only once the disclosure is opened (design
+ * 58). Lazy for the same reason the cancellations are: the queue re-fetches on
+ * every SSE tick, and a diff is unbounded — the server caps it at the kind's
+ * `maxDiffLines` and says so, with the command that shows the rest.
+ */
+const DiffView = ({ item }: { item: ReviewItem }) => {
+  const { repoId } = useRepo()
+  const { data, error, loading } = useResource<ReviewDiffResponse>(
+    repoPath(`/api/review/${item.status}/${encodeURIComponent(item.card.id)}/diff`, repoId),
+    [repoId, item.card.id, item.diffstat],
+  )
+  if (error) return <StatusMessage tone="warn">Could not load the diff: {error}</StatusMessage>
+  if (loading || !data) return <div className="placeholder">Loading diff…</div>
+  return (
+    <div className="review__diffview">
+      <div className="muted review__diffcmd">
+        <code>{data.diffCmd}</code>
+        {data.truncated && (
+          <span>
+            {" "}— showing the first {data.maxLines} of {data.lines} lines; run the command for the rest
+          </span>
+        )}
+      </div>
+      <pre className="md-code review__difftext">{data.text}</pre>
+    </div>
+  )
+}
+
 const ReviewRow = ({ item, now }: { item: ReviewItem; now: number }) => {
   const route = useRoute()
   const age = ageLabel(item.lastEventAt, now)
+  const [diffOpen, setDiffOpen] = useState(false)
   return (
     <li className={`review__item${item.claimed ? " review__item--claimed" : ""}`}>
       <div className="review__head">
@@ -107,6 +138,24 @@ const ReviewRow = ({ item, now }: { item: ReviewItem; now: number }) => {
       </div>
 
       {item.planExcerpt && <p className="review__plan">{item.planExcerpt}</p>}
+
+      {/* The reviewer's non-blocking notes — written for exactly this gate, and
+          invisible here until now because the done note is the newer line. */}
+      {item.suggestions && (
+        <p className="review__suggestions" title="REVIEW's non-blocking findings for this run">
+          <strong>
+            {item.suggestions.count} review {item.suggestions.count === 1 ? "suggestion" : "suggestions"}
+          </strong>{" "}
+          — {item.suggestions.text}
+        </p>
+      )}
+
+      {item.branch !== null && (
+        <details className="review__diff-disclosure" open={diffOpen} onToggle={(e) => setDiffOpen((e.target as HTMLDetailsElement).open)}>
+          <summary>Diff{item.diffstat ? ` (${item.diffstat})` : ""}</summary>
+          {diffOpen && <DiffView item={item} />}
+        </details>
+      )}
 
       {item.claimed && (
         <StatusMessage tone="info">

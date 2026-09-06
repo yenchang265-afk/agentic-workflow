@@ -32,14 +32,14 @@ interface TaskEditorProps {
 }
 
 /** One item per line — matches the server's rule that a list item cannot contain a newline. */
-const toLines = (list: readonly string[]): string => list.join("\n")
-const fromLines = (text: string): string[] =>
+export const toLines = (list: readonly string[]): string => list.join("\n")
+export const fromLines = (text: string): string[] =>
   text
     .split("\n")
     .map((s) => s.trim())
     .filter(Boolean)
 
-const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
+export const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
   <label className="form-field">
     <span>{label}</span>
     {children}

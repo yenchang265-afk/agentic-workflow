@@ -2205,6 +2205,57 @@ body {
   line-height: var(--lh);
 }
 
+/* The reviewer's non-blocking notes and the diff behind a ship decision
+   (design 58). The diff is behind a disclosure and fetched on open only. */
+.review__suggestions {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-2);
+  background: var(--panel-raised);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+}
+.review__diff-disclosure > summary {
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.review__diffview {
+  margin-top: var(--sp-2);
+}
+.review__diffcmd {
+  font-size: var(--fs-xs);
+  margin-bottom: var(--sp-1);
+}
+.review__difftext {
+  max-height: 60vh;
+  overflow: auto;
+  font-size: var(--fs-xs);
+  white-space: pre;
+}
+
+/* The draft column's create form (design 59). */
+.column-title__action {
+  border: none;
+  background: none;
+  padding: 0;
+  margin-right: var(--sp-2);
+  color: var(--accent);
+  font: inherit;
+  text-transform: none;
+  letter-spacing: normal;
+  cursor: pointer;
+}
+.new-draft {
+  margin-bottom: var(--sp-2);
+}
+.new-draft__actions {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+}
+
 /* --- gate overflow menu ------------------------------------------------------ */
 /* The cancellations. Flat, they were three buttons of near-equal weight — and
    Abandon rendered `primary`, identical to Approve. */

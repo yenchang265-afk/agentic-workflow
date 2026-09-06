@@ -10,13 +10,14 @@ import {
   rewriteTask,
   splitTaskBody,
   STATUSES,
+  writeTask,
 } from "@agentic-workflow/core/task/store"
 import { PRIORITY_MAX, PRIORITY_MIN, taskToInput, unknownFrontmatterKeys, type Task } from "@agentic-workflow/core/task/schema"
 import { redact } from "@agentic-workflow/core/task/redact"
 import { commitBacklog, oneLineReason, retaskTask } from "@agentic-workflow/core/workflow/gate"
 import { gitActor } from "@agentic-workflow/core/workflow/git"
 import type { TaskStatus } from "@agentic-workflow/core/task/statuses"
-import type { SaveTaskRequest, SaveTaskResponse, TaskDetailResponse } from "../../shared/api.js"
+import type { CreateTaskRequest, CreateTaskResponse, SaveTaskRequest, SaveTaskResponse, TaskDetailResponse } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { gateCtx } from "../gatectx.js"
 import { badRequest, isSafeId, json, notFound, ok, type JsonResponse, type ParsedRequest } from "../http.js"
@@ -62,6 +63,20 @@ const SaveTaskRequestSchema = z.object({
   acceptance: z.array(line(500)).max(30),
   // Comfortably under MAX_BODY_BYTES, and under the argv limit the shell write
   // ultimately passes it through.
+  body: z.string().max(100_000),
+  reason: z.string().trim().max(500).optional(),
+})
+
+/**
+ * The create form's body: the editor's fields minus the two that describe an
+ * EXISTING file (`expectStatus`, `baseHash`). Same bounds, same line rule.
+ */
+const CreateTaskRequestSchema = z.object({
+  title: line(200),
+  type: line(40).optional(),
+  priority: z.number().int().min(PRIORITY_MIN).max(PRIORITY_MAX),
+  labels: z.array(line(60)).max(20),
+  acceptance: z.array(line(500)).max(30),
   body: z.string().max(100_000),
   reason: z.string().trim().max(500).optional(),
 })
@@ -279,5 +294,61 @@ export const postTaskSave = async (deps: HubDeps, req: ParsedRequest): Promise<J
       retask,
     }
     return ok(saved)
+  })
+}
+
+/**
+ * POST /api/tasks/draft — create a planless draft (design 59).
+ *
+ * The hub could edit, gate, plan, abandon, restore and remove a task and could
+ * not CREATE one: the board's first column had no way in but the CLI's `new`
+ * interview or a hand-written file. This is the form the interview would have
+ * filled — `writeTask`, core's programmatic creator (which the CLI `new` verb
+ * deliberately does not call, handing the turn to an authoring agent instead),
+ * mints the board-unique id and refuses to clobber. The same refusals as a save:
+ * a body that scans as a secret is named, never rewritten. Under the gate lock
+ * so two creates cannot mint one id from one lagging index, and committed the
+ * way every backlog write is.
+ */
+export const postTaskCreate = async (deps: HubDeps, req: ParsedRequest): Promise<JsonResponse> => {
+  const parsed = CreateTaskRequestSchema.safeParse(req.body ?? {})
+  if (!parsed.success) {
+    return badRequest(parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"} ${i.message}`).join("; "))
+  }
+  const body = parsed.data as CreateTaskRequest
+  const scan = redact(body.body)
+  if (scan.hits.length > 0) {
+    const refusal: CreateTaskResponse = {
+      ok: false,
+      message: `That body looks like it contains a secret (${scan.hits.map((h) => h.pattern).join(", ")}) — remove it before creating the draft.`,
+      variant: "warning",
+    }
+    return ok(refusal)
+  }
+  return withGateLock(deps.directory, async () => {
+    let created: { id: string; path: string }
+    try {
+      created = await writeTask(deps.sh, deps.client, { directory: deps.directory, tasksDir: deps.tasksDir, status: "draft" }, {
+        title: body.title,
+        ...(body.type ? { type: body.type } : {}),
+        priority: body.priority,
+        labels: body.labels,
+        acceptance: body.acceptance,
+        body: body.body,
+      })
+    } catch (err) {
+      return badRequest(`could not create the draft: ${(err as Error).message}`)
+    }
+    const actor = await gitActor(deps.sh, deps.directory)
+    const reason = oneLineReason(body.reason)
+    await appendNote(deps.sh, created, auditNote(`Task created in the hub${reason ? ` — ${reason}` : ""}`, new Date(), actor), deps.log)
+    await commitBacklog(deps.sh, deps.directory, deps.config, `loop(${created.id}): task created in the hub`)
+    const response: CreateTaskResponse = {
+      ok: true,
+      id: created.id,
+      path: created.path,
+      message: `Created draft "${body.title}" as ${created.id} — approve it when it is ready to plan.`,
+    }
+    return ok(response)
   })
 }

@@ -2,12 +2,12 @@
 
 # Agentic loop —— 工程（engineering）工作流程改進計畫
 
-**本頁每一份計畫（01–57）都已實作並測試完成**，存放於共用的
+**本頁每一份計畫（01–59）都已實作並測試完成**，存放於共用的
 `@agentic-workflow/core` 套件（`packages/core/`）中，供 OpenCode 外掛和 Claude
 MCP 伺服器共同使用。這些文件保留作為這些功能的設計紀錄，而非待辦的
 backlog。計畫 10–13 已於 2026-08-02 落地；計畫 14 於 2026-08-03；計畫 15 於
 2026-08-07；計畫 16–18 於 2026-08-08；計畫 24–27 於 2026-08-11；計畫 32 於
-2026-08-17；計畫 33–40 於 2026-08-23；計畫 41–45 於 2026-08-26；計畫 46–48 於 2026-09-02；計畫 49–57 於 2026-09-06。
+2026-08-17；計畫 33–40 於 2026-08-23；計畫 41–45 於 2026-08-26；計畫 46–48 於 2026-09-02；計畫 49–59 於 2026-09-06。
 
 來源：目前的程式碼（所有引用的路徑與函式名稱均已對照撰寫當下的原始碼驗證
 過）、[`../threat-model.md`](../threat-model.md) 中列出的殘餘風險，以及
@@ -78,6 +78,8 @@ backlog。計畫 10–13 已於 2026-08-02 落地；計畫 14 於 2026-08-03；�
 | 55 | [`show <id>`：用把關點讀任務的方式讀一份任務](./55-show-verb.zh-TW.md) | `status` 是總覽；要了解一份任務，CLI host 只有 `cat`，而它把引文當紀錄——把關點的事實是由蓋章稽核行解析器推導的。`describeTask`/`formatTaskDescription` 是兩種 host 共用的一份純投影與一個渲染器，每個欄位來自對應動詞所信任的解析器（`extractReplanReason`、`extractStopContext`、`priorRunFor`、`isClaimable`、`wasInterrupted`、設計 53 的快照規則）；`extractAuditNotes` 從管理面板移入 core；`showTask` 像每個動詞一樣解析、不移動、不提交；Claude/Qwen hook 派送 `gate show` 並以報告阻斷 | `task/describe.ts`；`workflow/gate.ts` 的 `showTask`；`plugins/opencode/src/workflow/driver.ts` 的 `handleShow`；`plugins/claude/mcp-server/src/server.ts` 的 `workflow_show` 與 `show` CLI 分支；`plugins/claude/hooks/gate-parse.mjs` 的 `SHOW`；`describe.test.ts`、`gate.test.ts`、`gate-parse.test.mjs` |
 | 56 | [`restore <id>`：`abandon` 一直承諾的反向動作](./56-restore-verb.zh-TW.md) | `abandon` 被記載為可逆，卻沒有東西能反向：`canTransition` 在 `abandoned/` 上終結，每個動詞、`workflow_move` 與管理面板都拒絕，「反向」是沒有註記、沒有提交的手動 `mv`。`restoreAbandoned` 像 `rescueStray` 一樣繞過 `canTransition`（是修復，`moveTask` 維持嚴格）且永遠落在 `draft/`——絕不是來源資料夾，那會重新主張沒人重做的核准；`restoreTask` 拒絕非 abandoned 任務並指名其資料夾、經 `noteThenMove`（新增選填 mover）寫入 `TASK_RESTORED_MARKER` 並提交；`ABANDONED_MARKER`/`extractAbandonOrigin` 讓 `show` 能讀來源；管理面板 abandoned 欄多了 Restore | `task/store.ts` 的 `restoreAbandoned`、`ABANDONED_MARKER`、`extractAbandonOrigin`；`workflow/gate.ts` 的 `restoreTask`/`TASK_RESTORED_MARKER` 與 `noteThenMove` 的 `mover`；`handleRestore`、`workflow_restore`、hook 的 `RESTORE`、`packages/hub/src/server/routes/gate.ts` 的 `restore` 與 `gatemoves.ts` 的 `RESTORE_MOVE`；`gate.test.ts`、`store.test.ts`、`gatemoves.test.ts` |
 | 57 | [`priority <id> <n>`：從終端機調迴圈自己的排序旋鈕](./57-priority-verb.zh-TW.md) | `priority` 是排程器唯一會讀的 frontmatter 欄位（`selectOrder`），只有管理面板的編輯器能改；終端機只能手動編輯 YAML，跳過 off-schema 檢查、註記與提交。`setTaskPriority` 解析 id，拒絕超出 `PRIORITY_MIN..PRIORITY_MAX`（自 `task/schema.ts` 匯出，也成為管理面板編輯器的界限——在寫入者上，絕不在解析 schema 上）、終結資料夾、驅動中或持有認領的任務與 off-schema frontmatter；目前值視為 `alreadyDone`；否則單欄位 `rewriteTask` + `Priority changed from X to Y` 註記 + `commitBacklog`。hook 解析「id 後面跟著整數」，因為它會阻斷回合 | `task/schema.ts` 的 `PRIORITY_MIN`/`PRIORITY_MAX`；`workflow/gate.ts` 的 `setTaskPriority`；`handlePriority`、`workflow_priority` 與 `priority` CLI 分支、`gate-parse.mjs` 的 `PRIORITY`；`packages/hub/src/server/routes/tasks.ts` 的 `SaveTaskRequestSchema`；`gate.test.ts`、`gate-parse.test.mjs` |
+| 58 | [管理面板的出貨把關點顯示它所核准的 diff](./58-hub-ship-gate-diff.zh-TW.md) | 設計 33/34 給了 CLI 出貨把關點經驗證的 diff 視圖與 REVIEW 的建議；管理面板的出貨按鈕核准的是只顯示過大小的 diff，而寫在 done 註記之前（好讓 done 維持最新）的 `Review suggestions` 註記，正是佇列 `lastEvent` 顯示不到的那行。`extractRunSuggestions` 解析該註記（蓋章行規則，錨定最後一次完成的執行；`runDone` 以 `SUGGESTIONS_MARKER` 建構）；`diffText` 依 ref 渲染 `base...branch`，截斷並附真實行數；`GET /api/review/:status/:id/diff` 的分支與 base 只來自 done 註記——絕不來自請求——以 `workflows.<kind>.maxDiffLines` 截斷；佇列列帶建議與展開才抓取的 Diff 揭露區 | `task/store.ts` 的 `SUGGESTIONS_MARKER`/`extractRunSuggestions`；`workflow/git.ts` 的 `diffText`；`workflow/terminal.ts` 以 marker 建構的註記；`packages/hub/src/server/routes/review.ts` 的 `getReviewDiff` 與 `suggestions`；`packages/hub/src/web/review/ReviewQueue.tsx` 的 `DiffView`；`store.test.ts`、`git.test.ts`、`routes/review.test.ts` |
+| 59 | [看板可以建立草稿](./59-hub-draft-creation.zh-TW.md) | 管理面板能把關、編輯、規劃、放棄、還原與移除任務，卻不能建立一份；core 的程式化建立者 `writeTask` 沒有呼叫者（CLI 的 `new` 動詞把回合交給撰寫代理）。`POST /api/tasks/draft` 接受編輯器欄位減去 `expectStatus`/`baseHash`，相同界限與機密拒絕，在把關鎖下經 `writeTask` 鑄造 id、註記 `Task created in the hub` 並提交；看板 draft 欄多了 `+ new`（`NewDraft`，重用編輯器輔助）並在抽屜開啟新任務 | `packages/hub/src/server/routes/tasks.ts` 的 `CreateTaskRequestSchema`/`postTaskCreate`；`shared/api.ts` 的 `CreateTaskRequest`/`CreateTaskResponse`；`NewDraft.tsx` 與 `Board.tsx` 的 draft 欄按鈕；`routes/tasks.test.ts` |
 
 仍未解決的殘留事項：跨行程的 `index.lock` 競速與遮罩選項。（本清單原本列出的
 另外兩項已經完成——bash 工作樹釘選在 `packages/core/src/workflow/worktree-guard.ts`，
