@@ -1,7 +1,7 @@
 ---
 name: agentic-workflow:engineering
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] [--all] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix|config] | init | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] [--auto-plan] [--all] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover [id] | kinds | doctor [fix|config] | init | stop | status
 ---
 
 The engineering agentic loop — one command for authoring, the human gates,
@@ -286,7 +286,7 @@ only after seeing the file in its target folder.
   mid-drive also unwatches *and* interrupts the running loop (see `recover`).
 <!-- /aw:verb unwatch -->
 <!-- aw:verb recover -->
-- **`recover <id>`** — resume an in-progress task whose run stopped early — a
+- **`recover [id]`** — resume an in-progress task whose run stopped early (id optional when exactly one is interrupted) — a
   crash/restart, or a user **interrupt (ESC)** mid-drive: re-claims it and
   resumes from its state snapshot at the exact stage it reached (or, with no
   valid snapshot, re-enters at BUILD from the persisted plan). ESC is a pause

@@ -2,12 +2,12 @@
 
 # Agentic loop —— 工程（engineering）工作流程改進計畫
 
-**本頁每一份計畫（01–52）都已實作並測試完成**，存放於共用的
+**本頁每一份計畫（01–54）都已實作並測試完成**，存放於共用的
 `@agentic-workflow/core` 套件（`packages/core/`）中，供 OpenCode 外掛和 Claude
 MCP 伺服器共同使用。這些文件保留作為這些功能的設計紀錄，而非待辦的
 backlog。計畫 10–13 已於 2026-08-02 落地；計畫 14 於 2026-08-03；計畫 15 於
 2026-08-07；計畫 16–18 於 2026-08-08；計畫 24–27 於 2026-08-11；計畫 32 於
-2026-08-17；計畫 33–40 於 2026-08-23；計畫 41–45 於 2026-08-26；計畫 46–48 於 2026-09-02；計畫 49–52 於 2026-09-06。
+2026-08-17；計畫 33–40 於 2026-08-23；計畫 41–45 於 2026-08-26；計畫 46–48 於 2026-09-02；計畫 49–54 於 2026-09-06。
 
 來源：目前的程式碼（所有引用的路徑與函式名稱均已對照撰寫當下的原始碼驗證
 過）、[`../threat-model.md`](../threat-model.md) 中列出的殘餘風險，以及
@@ -73,6 +73,8 @@ backlog。計畫 10–13 已於 2026-08-02 落地；計畫 14 於 2026-08-03；�
 | 50 | [怪罪建置之前，先確認紅色檢查](./50-flaky-check-rerun.zh-TW.md) | `runChecks` 對每個發現的檢查只跑一次，不穩定套件的非零退出成為把 VERIFY 壓成 FAIL 的 `critical` 發現——迴圈於是對著不存在的缺陷重建，BUILD「修」了本來沒問題的程式碼。現在 `fail`——絕不是 `error` 或 `pass`——會再跑一次（`CHECK_RERUNS = 1`，`onCheck` 每次執行觸發以重新蓋章 claim）：先敗後過即 FLAKY——outcome 為 pass，設定 `flaky`/`reruns`，保留**第一次**失敗的尾巴作為輸出，`checksBlock` 標出 `FLAKY` 行，並在 checks 軸加一個非阻擋的 `suggestion` 發現隨 `suggestionFindings` 抵達 ship 把關點；兩次都敗則記錄 `reruns: 1`。`checksBudgetMs` 把重跑算進去，公告的期限仍能界定該階段，`persist.ts` 宣告這兩個欄位 | `workflow/checks.ts` 的 `CHECK_RERUNS`、`runChecks` 的重跑迴圈、`CheckResult` 上的 `flaky`/`reruns`、`checksBlock`/`checkAxis`/`checksBudgetMs` 的變更；`workflow/persist.ts` 的 check schema；`checks.test.ts`、`persist.test.ts` |
 | 51 | [replan 的 PLAN 回合看得到上一次執行留下的東西](./51-prior-run-to-plan.zh-TW.md) | 在上限停下的執行，其 commit 仍在 `feature/<id>`——分支撐過 `closeIsolation`，下一次 BUILD 從它切出——但任務上沒說，replan 便當乾淨的樹規劃；admission 拒絕的 discovered checks 只留在 deny log 與被剝掉的稽核註記，下一份計畫又寫出同樣被拒的指令。`runStop` 現在寫下 `> Prior work` 註記（分支、基底、驗證過的 shortstat；寫在 attempts 註記之前，讓那條仍是最後一條 `> Run stopped`），`priorRunFor` 解析它加上最後一條 checks-provenance 註記的拒絕條目——由停止情境的錨退役——PLAN 進入狀態帶著 `priorRun`（如 `replan`，從不持久化），plan.md 渲染它：決定建立於該工作之上或捨棄，並改用可被接受的檢查指令 | `task/store.ts` 的 `priorWorkNote`/`extractPriorWork`/`extractRefusedChecks`/`priorRunFor`；`terminal.ts` `runStop` 的註記；`WorkflowState` 上的 `priorRun` 與 `startAtPlan`（`state.ts`），由 `source/backlog.ts` 與 `orchestrate.ts` 串接；`engine.ts` 的 `priorRun` 情境與 `workflows/engineering/stages/plan.md` 的段落；`store.test.ts`、`terminal.test.ts`、`engine.test.ts`、`backlog.test.ts` |
 | 52 | [REVIEW 看得到 VERIFY 確立了什麼，而不只是它失敗了什麼](./52-verify-pass-facts.zh-TW.md) | review.md 的「What VERIFY established」由只渲染失敗的 `verdictFeedbackBlock` 餵入——在最常見的乾淨 PASS 路徑上接縫被丟棄，REVIEW 不知道哪些條件被檢查、靠什麼、哪些 driver 檢查是綠的；一條 criterion 也只帶 `{ criterion, pass }`。加入 `CriterionResult.evidence?: string[]`（兩種 host 的 verdict schema、sidecar 的 criterion schema）；`verdictPassBlock` 渲染條件及其證據、檢查行（`checksSummaryLine`）、引用的證據、備註與未評估的軸——什麼都沒確立時為空，裸 PASS 仍清掉接縫——`advance` 在檢查階段 PASS 時經 FAIL 用的同一接縫熔入它，讓那一節在它被寫來服務的路徑上渲染 | `verdict.ts` 的 `CriterionResult.evidence`、`verdictPassBlock`、契約句；`checks.ts` 的 `checksSummaryLine`；`engine.ts` `advance` 的 PASS 分支；`metrics.ts`/`metrics-file.ts` 的 `SampleCriterion`；`plugins/opencode/src/impl.ts` 與 `plugins/claude/mcp-server/src/server.ts` 的 criteria schema；`verdict.test.ts`、`engine.test.ts`、`checks.test.ts` |
+| 53 | [復原看得見每一種崩潰，只有一個時不需要 id](./53-recovery-ux.zh-TW.md) | `status` 的中斷清單只讀 body 的 BUILD 標記，死在 VERIFY 或 REVIEW 的執行（BUILD 配對完整）讀作未中斷，而它的精確階段快照無人列出——`recover` 在兩種 host 上即使只有一個任務也要求 id。`summarizeBacklog` 接受 `snapshotIds`，把帶快照、不可認領的 in-progress 任務列為中斷（兩種 host 的 status 與管理面板都傳入）；`soleInterrupted` 是無 id 的 `recover` 唯一可能指的任務——兩種 host 都接受 `recover [id]`，多個時附清單拒絕，所有提示與文件改為 `[id]` | `task/store.ts` 的 `summarizeBacklog` `snapshotIds` 與 `soleInterrupted`；`plugins/opencode/src/workflow/driver.ts` 的 `backlogSummary`/recover 動詞；`plugins/claude/mcp-server/src/server.ts` 的 `workflow_status`/`workflow_recover`；`packages/hub/src/server/routes/backlog.ts`；動詞/路由提示；`store.test.ts` |
+| 54 | [迴圈回報自己的時鐘與預算](./54-local-loop-observability.zh-TW.md) | 設計 44 讓 status 看得到其他程序的迴圈（階段、期限），自己的卻停在 `stage · iteration N`；`notifyEvents` 只涵蓋終端事件，webhook 在把關點之間一小時聽不到任何事；階段撞上牆鐘上限前沒有警告；OpenCode 的 `deferIdle` 無聲地排隊輸入的 `plan`/`claim`。兩種 host 的 status 現在渲染 `iteration N/cap` 與自己的階段期限（OpenCode 讀自己的即時 marker，Claude 讀 `stageDeadline`）；`notifyEvents` 多了選擇加入的 `"stage"`，經匯出的 `notifyLoopEvent` 由兩種 host 在每次觸發時呼叫；OpenCode 的 `runStage` 在上限 80% 處警告（`NEAR_DEADLINE_FRACTION`，與逾時一起清除）；`deferIdle` 記錄樹正忙 | `workflow/terminal.ts` 的 `NotifyEvent`/`notifyLoopEvent`；`config.ts` + `state.ts` 的 `stage` 字面值；`plugins/opencode/src/workflow/driver.ts` 的 `NEAR_DEADLINE_FRACTION`、`runStage` 的 `onNearDeadline`、status 行、階段觸發通知與 `deferIdle` log；`plugins/claude/mcp-server/src/server.ts` 的 status `active` 欄位與觸發通知；`docs/configuration.md`；`terminal.test.ts` |
 
 仍未解決的殘留事項：跨行程的 `index.lock` 競速與遮罩選項。（本清單原本列出的
 另外兩項已經完成——bash 工作樹釘選在 `packages/core/src/workflow/worktree-guard.ts`，
