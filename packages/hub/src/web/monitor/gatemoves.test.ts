@@ -72,7 +72,7 @@ test("terminal columns offer Remove but not Abandon — core refuses it there", 
   assert.deepEqual(labels(cancellationMoves("queued")), ["Abandon", "Remove"])
   assert.deepEqual(labels(cancellationMoves("in-review")), ["Abandon", "Remove"])
   assert.deepEqual(labels(cancellationMoves("completed")), ["Remove"])
-  assert.deepEqual(labels(cancellationMoves("abandoned")), ["Remove"])
+  assert.deepEqual(labels(cancellationMoves("abandoned")), ["Restore", "Remove"], "the reversal abandon's copy promises")
 })
 
 test("every move carries confirm copy — the <Confirm> contract, as a rule a test can enforce", () => {

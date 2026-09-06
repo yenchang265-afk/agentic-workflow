@@ -1,9 +1,11 @@
 import path from "node:path"
 import type { Client, Log, Shell } from "../host.js"
 import type { Config, ShipPublish } from "./state.js"
-import { isEpicType, isSafeTaskId, parseTask, taskToInput, unknownFrontmatterKeys, type Task } from "../task/schema.js"
-import { ACTIVE_STATUSES, appendNote, auditNote, epicSiblings, extractPlan, extractRunBase, extractRunBranch, extractStopContext, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, planHeadingCount, planRejectedNote, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, rewriteTask, selectOrder, STATUSES } from "../task/store.js"
+import { isEpicType, isSafeTaskId, parseTask, PRIORITY_MAX, PRIORITY_MIN, taskToInput, unknownFrontmatterKeys, type Task } from "../task/schema.js"
+import { ABANDONED_MARKER, ACTIVE_STATUSES, appendNote, auditNote, epicSiblings, extractPlan, extractRunBase, extractRunBranch, extractStopContext, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, planHeadingCount, planRejectedNote, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, restoreAbandoned, rewriteTask, selectOrder, STATUSES } from "../task/store.js"
 import { auditNoteRecorded, withoutPlanSections } from "../task/plan-section.js"
+import { describeTask, formatTaskDescription } from "../task/describe.js"
+import { listSnapshotIds } from "./persist.js"
 import { redact } from "../task/redact.js"
 import { hasVerificationSection } from "./verdict.js"
 import { unverifiedDepsCaveat } from "./declared-deps.js"
@@ -209,11 +211,14 @@ const noteThenMove = async (
   to: TaskStatus,
   note: string,
   actor?: string | null,
+  // The lifecycle move by default; `restoreTask` passes the one repair move
+  // that leaves a terminal folder, so it gets the same note-correction protocol.
+  mover: (shell: Shell, task: { readonly id: string; readonly path: string }, to: TaskStatus) => Promise<string> = moveTask,
 ): Promise<{ ok: true; path: string } | { ok: false; result: GateResult }> => {
   const { $, log } = ctx
   await appendNote($, ref, auditNote(note, new Date(), actor), log)
   try {
-    return { ok: true, path: await moveTask($, ref, to) }
+    return { ok: true, path: await mover($, ref, to) }
   } catch (err) {
     const why = (err as Error).message
     await log("warn", `loop(${ref.id}): move to ${to}/ failed after its audit note: ${why}`)
@@ -733,7 +738,9 @@ export const abandonTask = async (ctx: GateCtx, id: string, reason?: string): Pr
     ctx,
     { id, path: task.path },
     "abandoned",
-    `Abandoned from ${from}${why ? ` — ${why}` : ""}`,
+    // Built from ABANDONED_MARKER (minus its `> ` prefix, which appendNote adds):
+    // `extractAbandonOrigin` parses this line, so its shape is a contract.
+    `${ABANDONED_MARKER.slice(2)}${from}${why ? ` — ${why}` : ""}`,
     await gitActor($, directory),
   )
   // Same rule the terminal handlers follow: a thrown move must not escape a
@@ -751,6 +758,163 @@ export const abandonTask = async (ctx: GateCtx, id: string, reason?: string): Pr
     path: newPath,
     data: { abandoned: true, path: newPath, id, from },
   }
+}
+
+/**
+ * The note `restoreTask` writes. A marker constant like the others: nothing
+ * parses it today, but the counters that anchor on human moves
+ * (`unaddressedRejectionCount` on `TASK_APPROVED_MARKER`) are what a restored
+ * task will cross next, and pinning the note's shape keeps that reasoning
+ * checkable rather than implicit.
+ */
+export const TASK_RESTORED_MARKER = "> Restored to draft"
+
+/**
+ * Un-abandon (design 56): move an `abandoned/` task back to `draft/`.
+ *
+ * `abandon` has always been documented as the REVERSIBLE cancellation — "the
+ * file is kept, so it can be moved back" — and nothing could move it back:
+ * `canTransition` is terminal on `abandoned`, so `workflow_move`, the hub and a
+ * hand-typed `approve` all refused, and the documented reversal was a `mv` by
+ * hand that left no audit note. This is the verb.
+ *
+ * It lands in `draft/`, never the folder it left: the task-gate approval is the
+ * human's to re-make, and a task restored straight to `queued/` or further would
+ * carry an approval (and a plan request, which `moveTask` revokes on abandon for
+ * this exact reason) that nobody re-made. The plan sections and the trail stay —
+ * the next PLAN pass sees the old plan as `priorPlan` and its rejection, if any,
+ * as pending, which is the right thing for a task that was parked, not wrong.
+ *
+ * The claim/live-loop guards the other cancellation verbs carry are vacuous
+ * here — abandoning released both — so the refusals are: not in `abandoned/`
+ * (an id in another folder is named, never guessed at), and a duplicate id
+ * already in `draft/`.
+ */
+export const restoreTask = async (ctx: GateCtx, id: string, reason?: string): Promise<GateResult> => {
+  const { $, directory, config } = ctx
+  const resolved = await resolveGateId(ctx, id)
+  if (resolved && "error" in resolved) return resolved.error
+  if (resolved) id = resolved.id
+  const task = await findAnyStatus(ctx, id)
+  if (!task) {
+    return { ok: false, message: (await unparseableAt(ctx, id)) ?? `No task "${id}" to restore.`, variant: "warning" }
+  }
+  const from = statusFolder(task)
+  if (from !== "abandoned") {
+    return {
+      ok: false,
+      message: `Can't restore "${id}": it is in ${from}/, not abandoned/ — only an abandoned task is restored${from === "draft" ? " (it is already a draft)" : ""}.`,
+      variant: from === "draft" ? "info" : "warning",
+    }
+  }
+  const why = oneLineReason(reason)
+  const moved = await noteThenMove(
+    ctx,
+    { id, path: task.path },
+    "draft",
+    `${TASK_RESTORED_MARKER.slice(2)} from abandoned${why ? ` — ${why}` : ""}`,
+    await gitActor($, directory),
+    (shell, ref) => restoreAbandoned(shell, ref),
+  )
+  if (!moved.ok) return moved.result
+  await commitBacklog($, directory, config, `loop(${id}): restored from abandoned${why ? ` — ${why}` : ""}`)
+  return {
+    ok: true,
+    message: `"${task.title}" restored — moved to ${config.tasksDir}/draft/. Re-approve it (approve ${id}) when it is ready to plan.`,
+    path: moved.path,
+    data: { restored: true, path: moved.path, id, from, to: "draft" },
+  }
+}
+
+/**
+ * Re-prioritise one task in place (design 57): `priority <id> <n>`.
+ *
+ * The hub's editor could change `priority` and no CLI verb could — the one
+ * frontmatter field the loop's own scheduling reads (`selectOrder`) was editable
+ * with a mouse and not from the terminal the loop is driven from. A priority-only
+ * rewrite is safe from any NON-terminal folder (ordering is what claims and gate
+ * listings sort by; a completed or abandoned task is ordered by nothing), and is
+ * refused while a loop drives the task or a claim marker is held — reordering a
+ * task mid-run changes nothing the run reads and would race its own notes.
+ *
+ * Bounds are `PRIORITY_MIN..PRIORITY_MAX`, the hub editor's — shared constants so
+ * the two writers cannot drift. The off-schema screen is the one from `retask`:
+ * `rewriteTask` serializes through the schema and zod strips unknown keys, so a
+ * file carrying any would lose them; that is refused, never warned past. A value
+ * equal to the current one is an `alreadyDone` success, like a repeated gate move.
+ */
+export const setTaskPriority = async (ctx: GateCtx, id: string, priority: number): Promise<GateResult> => {
+  const { $, directory, config, log } = ctx
+  if (!Number.isInteger(priority) || priority < PRIORITY_MIN || priority > PRIORITY_MAX) {
+    return { ok: false, message: `Priority must be an integer between ${String(PRIORITY_MIN)} and ${String(PRIORITY_MAX)} (lower runs first); got ${String(priority)}.`, variant: "warning" }
+  }
+  const resolved = await resolveGateId(ctx, id)
+  if (resolved && "error" in resolved) return resolved.error
+  if (resolved) id = resolved.id
+  if (ctx.isDriving?.(id)) {
+    return { ok: false, message: `Task "${id}" is being driven by a live loop — stop it first (/agentic-workflow:engineering stop).`, variant: "warning" }
+  }
+  const task = await findAnyStatus(ctx, id)
+  if (!task) {
+    return { ok: false, message: (await unparseableAt(ctx, id)) ?? `No task "${id}" to re-prioritise.`, variant: "warning" }
+  }
+  const from = statusFolder(task) as TaskStatus
+  if (from === "completed" || from === "abandoned") {
+    return { ok: false, message: `Can't change the priority of "${id}": it is in ${from}/, where nothing orders it.`, variant: "warning" }
+  }
+  const held = await listClaimIds($, directory, config.tasksDir, from)
+  if (held.includes(id)) {
+    return { ok: false, message: `Task "${id}" holds a claim marker — a loop may be driving it; stop it or run /agentic-workflow:engineering doctor fix first.`, variant: "warning" }
+  }
+  if (task.priority === priority) {
+    return { ok: true, message: `"${task.title}" is already at priority ${String(priority)}.`, path: task.path, data: { id, path: task.path, status: from, priority, alreadyDone: true } }
+  }
+  const raw = await $`cat ${task.path}`.quiet().nothrow()
+  const unknown = raw.exitCode === 0 ? unknownFrontmatterKeys(raw.stdout.toString()) : []
+  if (unknown.length > 0) {
+    return { ok: false, message: `Can't change the priority of "${id}": the file carries off-schema frontmatter (${unknown.join(", ")}) that a rewrite would delete — edit it by hand.`, variant: "warning" }
+  }
+  const previous = task.priority
+  try {
+    await rewriteTask($, { id, path: task.path }, { ...taskToInput(task), priority }, log)
+  } catch (err) {
+    return { ok: false, message: `Can't change the priority of "${id}": ${(err as Error).message}`, variant: "warning" }
+  }
+  await appendNote($, { id, path: task.path }, auditNote(`Priority changed from ${String(previous)} to ${String(priority)}`, new Date(), await gitActor($, directory)), log)
+  await commitBacklog($, directory, config, `loop(${id}): priority ${String(previous)} → ${String(priority)}`)
+  return {
+    ok: true,
+    message: `"${task.title}" priority ${String(previous)} → ${String(priority)} (in ${from}/).`,
+    path: task.path,
+    data: { id, path: task.path, status: from, priority, previous },
+  }
+}
+
+/**
+ * `show <id>` (design 55): one task, projected — never moved, never committed.
+ *
+ * A gate-shaped op rather than a store helper because it resolves the id the
+ * way every verb does (short-hash handles, an ambiguity refused with the
+ * candidates, an unparseable file named as such) and because its `data` IS the
+ * projection (`TaskDescription`, spread): the MCP host returns it, the OpenCode
+ * host renders it through the same `formatTaskDescription`. `message` carries the rendered lines for the
+ * hosts whose only channel is a string (the Claude/Qwen gate hook).
+ */
+export const showTask = async (ctx: GateCtx, id: string): Promise<GateResult> => {
+  const { $, client, directory, config } = ctx
+  if (!id) return { ok: false, message: "Usage: show <id>.", variant: "warning" }
+  const resolved = await resolveGateId(ctx, id)
+  if (resolved && "error" in resolved) return resolved.error
+  if (resolved) id = resolved.id
+  const task = await findAnyStatus(ctx, id)
+  if (!task) {
+    return { ok: false, message: (await unparseableAt(ctx, id)) ?? `No task "${id}" found in any status folder.`, variant: "warning" }
+  }
+  const status = statusFolder(task) as TaskStatus
+  const claimed = (await listClaimIds($, directory, config.tasksDir, status)).includes(id)
+  const snapshot = status === "in-progress" && (await listSnapshotIds(client, directory, config.tasksDir).catch(() => [] as string[])).includes(id)
+  const description = describeTask(task, status, { claimed, snapshot })
+  return { ok: true, message: formatTaskDescription(description).join("\n"), path: task.path, data: { ...description } }
 }
 
 /**

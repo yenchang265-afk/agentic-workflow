@@ -88,6 +88,16 @@ const StringListSchema = z.preprocess(
   z.array(z.string()),
 )
 
+/**
+ * The bounds every priority WRITER honours — the hub's editor and the
+ * `priority` verb (design 57). One constant pair, so a value the hub accepts is
+ * never one the CLI refuses, or the reverse. Deliberately NOT on the parse
+ * schema above: a hand-written task outside them must still parse, or it would
+ * vanish from every listing instead of merely sorting first or last.
+ */
+export const PRIORITY_MIN = -1000
+export const PRIORITY_MAX = 1000
+
 export const TaskFrontmatterSchema = z.object({
   /** Required. The one-line task title; also the loop goal's headline. (Jira Summary / ADO Title) */
   title: z.string().min(1, "title is required"),

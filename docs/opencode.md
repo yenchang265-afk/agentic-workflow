@@ -91,6 +91,17 @@ from, or `--base=<branch>`): `--pr`/`--push`/`--local` on the
   task is refused). The file is kept, so the move is reversible — this is the
   cancellation to reach for, and the way to close a tracking epic once every
   child has shipped
+- `/agentic-workflow:engineering restore <id> [reason]` — abandon's reversal: the task
+  moves from `abandoned/` back to `draft/` — always `draft/`, so the task gate
+  is yours to re-take with `approve` — with its plan and audit trail kept
+- `/agentic-workflow:engineering show <id>` — print one task, read-only: status
+  folder, frontmatter, plan presence, build-ready / claim-held / interrupted,
+  the pending replan reason, what the last stopped run left behind, the last
+  completed run's branch and diffstat, and the audit trail
+- `/agentic-workflow:engineering priority <id> <n>` — set one task's priority in
+  place (integer, lower runs first) with an audit note and a backlog commit,
+  from any non-terminal folder; refused while a loop drives it or a claim is
+  held
 - `/agentic-workflow:engineering remove <id> --force` — hard-delete a task: unlike every
   other verb the file is deleted rather than moved. A bare `remove <id>`
   deletes nothing and reports which task the id resolved to; `--force` is the

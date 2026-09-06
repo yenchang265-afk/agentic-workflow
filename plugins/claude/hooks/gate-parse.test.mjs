@@ -88,7 +88,13 @@ test("only approve may continue on an ambiguous refusal", () => {
 })
 
 test("the verbs that finish deterministically carry neither continue flag", () => {
-  for (const prompt of ["/agentic-workflow:engineering abandon f7k3", "/agentic-workflow:engineering remove f7k3 --force"]) {
+  for (const prompt of [
+    "/agentic-workflow:engineering abandon f7k3",
+    "/agentic-workflow:engineering remove f7k3 --force",
+    "/agentic-workflow:engineering restore f7k3",
+    "/agentic-workflow:engineering priority f7k3 1",
+    "/agentic-workflow:engineering show f7k3",
+  ]) {
     const d = gateArgsFor(prompt)
     assert.ok(!d.continueTurn && !d.continueOnGate && !d.continueOnAmbiguity, `${prompt} has nothing left for the model to do`)
   }
@@ -191,6 +197,27 @@ test("abandon routes to the gate abandon CLI verb, carrying its reason", () => {
   ])
 })
 
+test("restore routes to the gate restore CLI verb, carrying its reason; a bare one is usage", () => {
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering restore my-task").argv, ["gate", "restore", "my-task"])
+  assert.deepEqual(gateArgsFor('/agentic-workflow:engineering restore "my-task" needed after all').argv, ["gate", "restore", "my-task", "needed", "after", "all"])
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering restore"), { usage: "Usage: /agentic-workflow:engineering restore <id> [reason]." })
+})
+
+test("priority routes id + integer to the gate priority CLI verb, and refuses every other shape as usage", () => {
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering priority my-task 3").argv, ["gate", "priority", "my-task", "3"])
+  assert.deepEqual(gateArgsFor('/agentic-workflow:engineering priority "my-task" -2').argv, ["gate", "priority", "my-task", "-2"])
+  const usage = "Usage: /agentic-workflow:engineering priority <id> <integer> (lower runs first)."
+  for (const bad of ["priority", "priority my-task", "priority my-task high", "priority my-task 1.5", "priority my-task 1 extra"]) {
+    assert.deepEqual(gateArgsFor(`/agentic-workflow:engineering ${bad}`), { usage }, bad)
+  }
+})
+
+test("show routes to the read-only gate show CLI verb; a bare one is usage", () => {
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering show f7k3").argv, ["gate", "show", "f7k3"])
+  assert.deepEqual(gateArgsFor('/agentic-workflow:engineering show "f7k3-thing" trailing words ignored').argv, ["gate", "show", "f7k3-thing"])
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering show"), { usage: "Usage: /agentic-workflow:engineering show <id>." })
+})
+
 test("a bare abandon is malformed — never guess which task to cancel", () => {
   assert.deepEqual(gateArgsFor("/agentic-workflow:engineering abandon"), {
     usage: "Usage: /agentic-workflow:engineering abandon <id> [reason].",
@@ -272,13 +299,16 @@ test("gateArgsFor and verbFor agree on which verb the prompt invokes", () => {
   // They disagreed once: verbFor read the first token while the gate matchers
   // scanned every line, so `new` injected its instructions while `remove`
   // silently deleted a task. Any divergence is that bug returning.
-  const gateVerb = { "approve-any": "approve", "reject-any": "replan", retask: "retask", remove: "remove", abandon: "abandon" }
+  const gateVerb = { "approve-any": "approve", "reject-any": "replan", retask: "retask", remove: "remove", abandon: "abandon", restore: "restore", priority: "priority", show: "show" }
   for (const prompt of [
     "/agentic-workflow:engineering new fix bug\nor /agentic-workflow:engineering remove abc --force",
     "/agentic-workflow:engineering approve my-task",
     "/agentic-workflow:engineering replan my-task the plan misses the cache",
     "/agentic-workflow:engineering retask my-task tighten it",
     "/agentic-workflow:engineering abandon my-task superseded",
+    "/agentic-workflow:engineering restore my-task",
+    "/agentic-workflow:engineering priority my-task 2",
+    "/agentic-workflow:engineering show my-task",
     "/agentic-workflow:engineering status",
   ]) {
     const d = gateArgsFor(prompt)

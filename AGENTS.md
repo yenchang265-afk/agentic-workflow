@@ -23,7 +23,9 @@ sections below cover each.
    alone over every reviewed draft at once (priority order, tracking epics
    excluded) — the plan and ship gates stay one-at-a-time; `abandon <id>` is
    the reversible cancellation (file kept in `abandoned/` — how a tracking
-   epic is closed); `remove <id> --force` hard-deletes from any folder (bare
+   epic is closed) and `restore <id>` its reversal (back to `draft/`, always);
+   `show <id>` prints one task read-only and `priority <id> <n>` rewrites its
+   priority in place; `remove <id> --force` hard-deletes from any folder (bare
    `remove` is a dry run; both refused while a loop drives the task or a claim
    is held); `claim [id]`, or a `watch [trigger]` worker session (`unwatch`
    reverses it), drives BUILD→VERIFY→REVIEW unattended on plan-approved tasks,
@@ -86,6 +88,7 @@ stateDiagram-v2
     plan_review --> abandoned: abandon &lt;id&gt;
     in_progress --> abandoned: abandon &lt;id&gt;
     in_review --> abandoned: abandon &lt;id&gt;
+    abandoned --> draft: restore &lt;id&gt;
     completed --> [*]
     abandoned --> [*]
 

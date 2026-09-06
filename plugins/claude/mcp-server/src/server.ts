@@ -91,6 +91,9 @@ import {
   findAnyStatus as coreFindAnyStatus,
   rejectAny as coreRejectAny,
   abandonTask as coreAbandonTask,
+  restoreTask as coreRestoreTask,
+  setTaskPriority as coreSetTaskPriority,
+  showTask as coreShowTask,
   commitBacklog as coreCommitBacklog,
   removeTask as coreRemoveTask,
   replanTask as coreReplanTask,
@@ -2792,6 +2795,10 @@ const removeTask = (id: string, liveTaskId: string | null, force = false): Promi
   coreRemoveTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, force)
 const abandonTask = (id: string, reason: string | undefined, liveTaskId: string | null): Promise<GateResult> =>
   coreAbandonTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, reason)
+const restoreTask = (id: string, reason: string | undefined): Promise<GateResult> => coreRestoreTask(gateCtx(), id, reason)
+const setTaskPriority = (id: string, priority: number, liveTaskId: string | null): Promise<GateResult> =>
+  coreSetTaskPriority({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, priority)
+const showTask = (id: string): Promise<GateResult> => coreShowTask(gateCtx(), id)
 
 /**
  * The candidates on a gate result's `data` (an ambiguity's choices, or a task
@@ -2963,6 +2970,48 @@ server.registerTool(
   async ({ id, reason }) => {
     await loadCfg()
     const r = await abandonTask(id, reason?.trim() || undefined, active?.task?.id ?? null)
+    return r.ok ? ok(r.data) : fail(r.message)
+  },
+)
+
+server.registerTool(
+  "workflow_restore",
+  {
+    description:
+      "Deterministic /agentic-workflow:engineering restore <id> — abandon's reversal: move a task from abandoned/ back to draft/ (ALWAYS draft/, never the folder it left — the human re-takes the task gate with approve). Its plan sections and audit trail are kept. Refuses a task that is not in abandoned/ (naming its folder) and a duplicate id already in draft/. The agent writes nothing.",
+    inputSchema: { id: z.string().min(1), reason: z.string().optional() },
+  },
+  async ({ id, reason }) => {
+    await loadCfg()
+    const r = await restoreTask(id, reason?.trim() || undefined)
+    return r.ok ? ok(r.data) : fail(r.message)
+  },
+)
+
+server.registerTool(
+  "workflow_priority",
+  {
+    description:
+      "Deterministic /agentic-workflow:engineering priority <id> <n> — set one task's priority (an integer, lower runs first; the same bounds the hub editor enforces) by rewriting its frontmatter in place, with an audit note and a backlog commit. Works from any non-terminal folder; refuses a completed/abandoned task, one a live loop is driving or that holds a claim marker, and a file carrying off-schema frontmatter a rewrite would delete. Idempotent: the current value reports success (alreadyDone). The agent writes nothing.",
+    inputSchema: { id: z.string().min(1), priority: z.number().int() },
+  },
+  async ({ id, priority }) => {
+    await loadCfg()
+    const r = await setTaskPriority(id, priority, active?.task?.id ?? null)
+    return r.ok ? ok(r.data) : fail(r.message)
+  },
+)
+
+server.registerTool(
+  "workflow_show",
+  {
+    description:
+      "Read-only /agentic-workflow:engineering show <id> — one task, projected: status folder, frontmatter (priority, type, labels, epic, blockedBy, acceptance), whether it carries a plan, claimable/claimed/interrupted flags, the pending replan reason, what the last stopped run left behind, the last completed run's branch and diffstat, and the audit trail. Short-hash handles resolve; an ambiguous one is refused with the candidates. Moves nothing, commits nothing. Relay it as given — every field is derived by the same parsers the gate verbs act on.",
+    inputSchema: { id: z.string().min(1) },
+  },
+  async ({ id }) => {
+    await loadCfg()
+    const r = await showTask(id)
     return r.ok ? ok(r.data) : fail(r.message)
   },
 )
@@ -3315,7 +3364,7 @@ async function runGate(argv: string[]): Promise<number> {
   const remainder = rest.join(" ").trim()
   const emit = (r: GateResult) => process.stdout.write(`${JSON.stringify(r)}\n`)
   if (!verb) {
-    emit({ ok: false, message: "Usage: gate <approve-any|reject-any|approve|approve-plan|replan|retask|abandon|remove> [id] [reason|--pr|--push|--local|--base=<branch>]" })
+    emit({ ok: false, message: "Usage: gate <approve-any|reject-any|approve|approve-plan|replan|retask|abandon|restore|priority|show|remove> [id] [reason|<n>|--pr|--push|--local|--base=<branch>]" })
     return 1
   }
   await loadCfg()
@@ -3340,7 +3389,7 @@ async function runGate(argv: string[]): Promise<number> {
     const [id, ...reasonParts] = rest
     const reason = reasonParts.join(" ").trim() || undefined
     if (!id) {
-      emit({ ok: false, message: "Usage: gate <approve|approve-plan|replan|retask|abandon|remove> <id> [reason|--force]" })
+      emit({ ok: false, message: "Usage: gate <approve|approve-plan|replan|retask|abandon|restore|priority|show|remove> <id> [reason|<n>|--force]" })
       return 1
     }
     if (verb === "approve") result = await approveTask(id)
@@ -3348,11 +3397,20 @@ async function runGate(argv: string[]): Promise<number> {
     else if (verb === "replan") result = await replanTask(id, reason, readStageTaskId())
     else if (verb === "retask") result = await retaskTask(id, reason, readStageTaskId())
     else if (verb === "abandon") result = await abandonTask(id, reason, readStageTaskId())
+    else if (verb === "restore") result = await restoreTask(id, reason)
+    // The value is the first trailing word; the hook already refused a form
+    // without one, so a missing/non-integer value here is a malformed dispatch.
+    else if (verb === "priority") {
+      const value = reasonParts[0] ?? ""
+      result = /^-?\d+$/.test(value)
+        ? await setTaskPriority(id, Number(value), readStageTaskId())
+        : { ok: false, message: `Usage: gate priority <id> <integer> — got ${JSON.stringify(value)}.` }
+    } else if (verb === "show") result = await showTask(id)
     // `--force` is remove's confirmation. It arrives as a trailing word from the
     // hook (which parses it, because the hook blocks the turn and no model gets
     // to ask); without it core reports what it would delete and deletes nothing.
     else if (verb === "remove") result = await removeTask(id, readStageTaskId(), reasonParts.includes("--force"))
-    else result = { ok: false, message: `Unknown gate verb "${verb}" — expected approve-any, reject-any, approve, approve-plan, replan, retask, abandon, or remove.` }
+    else result = { ok: false, message: `Unknown gate verb "${verb}" — expected approve-any, reject-any, approve, approve-plan, replan, retask, abandon, restore, priority, show, or remove.` }
   }
   emit(result)
   return result.ok ? 0 : 1

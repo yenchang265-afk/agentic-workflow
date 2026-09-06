@@ -89,6 +89,9 @@ var REPLAN = new RegExp(`${AT_START}${CMD}\\s+replan\\b[ \\t]*(.*)`, "i");
 var RETASK = new RegExp(`${AT_START}${CMD}\\s+retask\\b[ \\t]*(.*)`, "i");
 var REMOVE = new RegExp(`${AT_START}${CMD}\\s+remove\\b[ \\t]*(.*)`, "i");
 var ABANDON = new RegExp(`${AT_START}${CMD}\\s+abandon\\b[ \\t]*(.*)`, "i");
+var RESTORE = new RegExp(`${AT_START}${CMD}\\s+restore\\b[ \\t]*(.*)`, "i");
+var PRIORITY = new RegExp(`${AT_START}${CMD}\\s+priority\\b[ \\t]*(.*)`, "i");
+var SHOW = new RegExp(`${AT_START}${CMD}\\s+show\\b[ \\t]*(.*)`, "i");
 var ANY_VERB = new RegExp(`${AT_START}${CMD}(\\s+\\S*)?`, "i");
 var verbFor = (prompt) => {
   const match = String(prompt ?? "").match(ANY_VERB);
@@ -124,6 +127,28 @@ var gateArgsFor = (prompt) => {
     const id = unquote(words[0] || "");
     if (!id) return { usage: "Usage: /agentic-workflow:engineering abandon <id> [reason]." };
     return { argv: ["gate", "abandon", id, ...words.slice(1)] };
+  }
+  const restore = prompt.match(RESTORE);
+  if (restore) {
+    const words = (restore[1] || "").trim().split(/\s+/).filter(Boolean);
+    const id = unquote(words[0] || "");
+    if (!id) return { usage: "Usage: /agentic-workflow:engineering restore <id> [reason]." };
+    return { argv: ["gate", "restore", id, ...words.slice(1)] };
+  }
+  const priority = prompt.match(PRIORITY);
+  if (priority) {
+    const words = (priority[1] || "").trim().split(/\s+/).filter(Boolean);
+    const id = unquote(words[0] || "");
+    const value = words[1] || "";
+    if (!id || !/^-?\d+$/.test(value) || words.length > 2) return { usage: "Usage: /agentic-workflow:engineering priority <id> <integer> (lower runs first)." };
+    return { argv: ["gate", "priority", id, value] };
+  }
+  const show = prompt.match(SHOW);
+  if (show) {
+    const words = (show[1] || "").trim().split(/\s+/).filter(Boolean);
+    const id = unquote(words[0] || "");
+    if (!id) return { usage: "Usage: /agentic-workflow:engineering show <id>." };
+    return { argv: ["gate", "show", id] };
   }
   const remove = prompt.match(REMOVE);
   if (remove) {

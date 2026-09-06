@@ -197,6 +197,13 @@ pnpm install
 - `/agentic-workflow:engineering abandon <id> [reason]` —— 取消一項任務：移到 `abandoned/`，
   也就是「不會再做」的終結資料夾。檔案會保留，因此可以再移回來；一份追蹤用的
   epic 草稿在所有子任務都出貨後，也是用這個動詞收尾
+- `/agentic-workflow:engineering restore <id> [reason]` —— abandon 的反向動作：任務從
+  `abandoned/` 移回 `draft/`（永遠是 `draft/`——準備好時再 approve 一次），計畫
+  與稽核紀錄都保留
+- `/agentic-workflow:engineering show <id>` · `priority <id> <n>` —— `show` 唯讀列印一份
+  任務（資料夾、frontmatter、計畫、認領／中斷旗標、待處理的 replan 原因、上次
+  執行的分支與 diffstat、稽核紀錄）；`priority` 就地改寫一份任務的優先序
+  （整數，越低越先跑）並附上稽核註記，可從任何非終結資料夾執行
 - `/agentic-workflow:engineering remove <id> --force` —— 硬刪除一項任務：檔案會被刪除，
   而不是移動。單獨的 `remove <id>` 不會刪除任何東西，只會回報該 id 解析到哪一份
   任務 —— `--force` 才是確認。只有在你設定 `ignoreBacklog: false` 時才能從 git

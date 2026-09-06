@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { DEFAULT_CONFIG } from "../config.js"
-import { PLAN_APPROVED_MARKER, PLAN_HEADING, TASK_APPROVED_MARKER } from "../task/store.js"
+import { ABANDONED_MARKER, extractAbandonOrigin, PLAN_APPROVED_MARKER, PLAN_HEADING, TASK_APPROVED_MARKER } from "../task/store.js"
 import { parseTask, serializeTask } from "../task/schema.js"
-import { abandonTask, approveAllTasks, approveAny, approvePlan, approveTask, oneLineReason, planCaveats, rejectAny, removeTask, replanTask, REPLAN_REASON_MAX, retaskTask, shipAny, shipTask, type GateCtx, type GateResult } from "./gate.js"
+import { abandonTask, approveAllTasks, approveAny, approvePlan, approveTask, oneLineReason, planCaveats, rejectAny, removeTask, replanTask, REPLAN_REASON_MAX, restoreTask, retaskTask, setTaskPriority, shipAny, shipTask, showTask, TASK_RESTORED_MARKER, type GateCtx, type GateResult } from "./gate.js"
 
 /**
  * The shared gate moves, driven against a tiny in-memory backlog. A fake shell
@@ -1728,4 +1728,151 @@ test("an unbalanced quote stays a reason word — half a quote is not an id", as
   assert.equal(r.ok, true, r.message)
   assert.equal(r.ok && r.data.id, "f7k3-mine", "no token named a task, so the id-less pick still runs")
   assert.match(fs["/repo/docs/tasks/queued/f7k3-mine.md"]!, /"wrong approach" — redo it/)
+})
+
+// --- restoreTask (design 56): the un-abandon ---
+
+test("abandonTask's note is the one extractAbandonOrigin parses — the writer and the parser are pinned together", async () => {
+  const { ctx, fs } = makeCtx({ "queued/t.md": task("Do it") })
+  const r = await abandonTask(ctx, "t", "parked for now")
+  assert.equal(r.ok, true)
+  const moved = parseTask("t.md", fs["/repo/docs/tasks/abandoned/t.md"]!, "/repo/docs/tasks/abandoned/t.md")
+  assert.ok(moved.body.includes(ABANDONED_MARKER))
+  assert.equal(extractAbandonOrigin(moved), "queued")
+})
+
+test("restoreTask moves an abandoned task back to draft/, keeps its trail, and names the re-approve", async () => {
+  const { ctx, fs, raw } = makeCtx({ "queued/t.md": task("Do it") })
+  assert.equal((await abandonTask(ctx, "t", "parked")).ok, true)
+  const r = await restoreTask(ctx, "t", "needed after all")
+  assert.equal(r.ok, true, r.message)
+  assert.ok("/repo/docs/tasks/draft/t.md" in fs, "landed in draft/")
+  assert.ok(!("/repo/docs/tasks/abandoned/t.md" in fs), "left abandoned/")
+  assert.match(r.message, /approve t/)
+  assert.deepEqual((r as { data: Record<string, unknown> }).data, { restored: true, path: "/repo/docs/tasks/draft/t.md", id: "t", from: "abandoned", to: "draft" })
+  const body = fs["/repo/docs/tasks/draft/t.md"]!
+  assert.ok(body.includes(ABANDONED_MARKER), "the abandon note survives — the trail is append-only")
+  assert.ok(body.includes(TASK_RESTORED_MARKER), "the restore is on the trail")
+  assert.equal(notePayload(raw, "Restored to draft").length, 1, "one line")
+  assert.ok(notePayload(raw, "Restored to draft")[0]!.includes("needed after all"))
+})
+
+test("restoreTask never lands anywhere but draft/ — the abandon origin is display data, not a destination", async () => {
+  // Abandoned from in-progress with an approved plan: restore must not re-assert the approval.
+  const planful = serializeTask({ title: "Built", body: `${PLAN_HEADING}\n\n1. Go.\n\n${PLAN_APPROVED_MARKER} [2026-01-01T00:00:00.000Z by dev]` })
+  const { ctx, fs } = makeCtx({ "in-progress/t.md": planful })
+  assert.equal((await abandonTask(ctx, "t")).ok, true)
+  const r = await restoreTask(ctx, "t")
+  assert.equal(r.ok, true)
+  assert.ok("/repo/docs/tasks/draft/t.md" in fs)
+  assert.ok(!("/repo/docs/tasks/in-progress/t.md" in fs))
+})
+
+test("restoreTask refuses a task that is not abandoned, naming its folder, and a not-found id", async () => {
+  const { ctx } = makeCtx({ "queued/t.md": task("Do it"), "draft/d.md": task("Draft") })
+  const r = await restoreTask(ctx, "t")
+  assert.equal(r.ok, false)
+  assert.match(r.message, /in queued\/, not abandoned\//)
+  const d = await restoreTask(ctx, "d")
+  assert.equal(d.ok, false)
+  assert.equal(d.variant, "info", "already a draft is informational")
+  const none = await restoreTask(ctx, "nope")
+  assert.equal(none.ok, false)
+  assert.match(none.message, /No task "nope"/)
+})
+
+test("restoreTask reports a failed move and corrects its own note, never asserting a move that did not land", async () => {
+  const { ctx, fs, raw } = makeCtx({ "abandoned/t.md": `${task("Old")}\n> Abandoned from queued [2026-01-01T00:00:00.000Z by dev]\n` }, { failMv: true })
+  const r = await restoreTask(ctx, "t")
+  assert.equal(r.ok, false)
+  assert.match(r.message, /Can't move "t" to draft\//)
+  assert.ok("/repo/docs/tasks/abandoned/t.md" in fs, "nothing moved")
+  assert.ok(raw.some((c) => c.includes("Move to draft/ failed")), "the note that asserted the move is retracted")
+  assert.ok(!raw.some((c) => c.includes("git commit")), "a move that did not happen is not committed")
+})
+
+// --- setTaskPriority (design 57) ---
+
+test("setTaskPriority rewrites the frontmatter in place, notes the change and commits", async () => {
+  const { ctx, fs, raw } = makeCtx({ "queued/t.md": serializeTask({ title: "Do it", priority: 5, body: "context" }) }, { ignoreBacklog: false })
+  const r = await setTaskPriority(ctx, "t", -2)
+  assert.equal(r.ok, true, r.message)
+  const after = parseTask("t.md", fs["/repo/docs/tasks/queued/t.md"]!, "/repo/docs/tasks/queued/t.md")
+  assert.equal(after.priority, -2)
+  assert.equal(after.title, "Do it")
+  assert.ok(after.body.includes("> Priority changed from 5 to -2"))
+  assert.deepEqual((r as { data: Record<string, unknown> }).data, { id: "t", path: "/repo/docs/tasks/queued/t.md", status: "queued", priority: -2, previous: 5 })
+  assert.ok(raw.some((c) => c.startsWith("git add") || c.startsWith("git -C")), "the backlog write is committed (ignoreBacklog: false)")
+})
+
+test("setTaskPriority is idempotent, bounded, and refuses terminal folders, held claims and a live loop", async () => {
+  const { ctx } = makeCtx({ "queued/t.md": serializeTask({ title: "Do it", priority: 3, body: "c" }), "completed/c.md": task("Shipped"), "abandoned/a.md": task("Gone") })
+  const same = await setTaskPriority(ctx, "t", 3)
+  assert.equal(same.ok, true)
+  assert.equal((same as { data: Record<string, unknown> }).data.alreadyDone, true)
+  for (const bad of [1.5, 1001, -1001, Number.NaN]) {
+    const r = await setTaskPriority(ctx, "t", bad)
+    assert.equal(r.ok, false, String(bad))
+    assert.match(r.message, /between -1000 and 1000/)
+  }
+  assert.match((await setTaskPriority(ctx, "c", 1)).message, /completed\//)
+  assert.match((await setTaskPriority(ctx, "a", 1)).message, /abandoned\//)
+  const { ctx: driving } = makeCtx({ "in-progress/t.md": task("Building") }, { driving: "t" })
+  assert.match((await setTaskPriority(driving, "t", 1)).message, /live loop/)
+  const { ctx: held } = makeCtx({ "in-progress/t.md": task("Building"), "in-progress/.claims/t": "" })
+  assert.match((await setTaskPriority(held, "t", 1)).message, /claim marker/)
+})
+
+test("setTaskPriority refuses over off-schema frontmatter rather than deleting it", async () => {
+  const withExtra = serializeTask({ title: "Do it", body: "c" }).replace("---\n", "---\nowner: dana\n")
+  const { ctx, fs } = makeCtx({ "queued/t.md": withExtra })
+  const r = await setTaskPriority(ctx, "t", 1)
+  assert.equal(r.ok, false)
+  assert.match(r.message, /off-schema frontmatter \(owner\)/)
+  assert.equal(fs["/repo/docs/tasks/queued/t.md"], withExtra, "byte-identical")
+})
+
+// --- showTask (design 55) ---
+
+test("showTask projects one task from any folder, resolving handles, and never moves or commits", async () => {
+  const body = `${PLAN_HEADING}\n\n1. Go.\n\n> Plan approved [2026-01-01T00:00:00.000Z by dev]\n> CLAIMED — loop starting [2026-01-01T00:01:00.000Z by loop]\n> BUILD started (iteration 1) [2026-01-01T00:02:00.000Z by loop]`
+  const { ctx, fs, raw } = makeCtx({ "in-progress/f7k3-add-thing.md": serializeTask({ title: "Add thing", priority: 2, labels: ["api"], acceptance: ["Returns 429"], blockedBy: ["base"], body }) })
+  const before = { ...fs }
+  const r = await showTask(ctx, "f7k3")
+  assert.equal(r.ok, true, r.message)
+  const d = (r as { data: Record<string, unknown> }).data
+  assert.equal(d.id, "f7k3-add-thing")
+  assert.equal(d.status, "in-progress")
+  assert.equal(d.hasPlan, true)
+  assert.equal(d.interrupted, true, "a BUILD started with no finish is an interruption")
+  assert.equal(d.claimable, false)
+  assert.equal(d.priority, 2)
+  assert.deepEqual(d.blockedBy, ["base"])
+  assert.equal((d.notes as unknown[]).length, 3)
+  assert.match(r.message, /^f7k3-add-thing — in-progress\/ · priority 2 · interrupted — recover, plan\n  Add thing/)
+  assert.match(r.message, /blocked by: base/)
+  assert.match(r.message, /audit trail:/)
+  assert.deepEqual(fs, before, "nothing written")
+  assert.ok(!raw.some((c) => c.includes("git commit") || c.startsWith("mv ")), "no move, no commit")
+})
+
+test("showTask reports an abandoned task's origin and a held claim; refuses an unknown or ambiguous id", async () => {
+  const { ctx } = makeCtx({
+    "abandoned/t.md": `${task("Gone")}\n> Abandoned from plan-review — parked [2026-01-01T00:00:00.000Z by dev]\n`,
+    "in-progress/h.md": `${serializeTask({ title: "Held", body: `${PLAN_HEADING}\n\n1. Go.\n\n> Plan approved [2026-01-01T00:00:00.000Z by dev]` })}`,
+    "in-progress/.claims/h": "",
+    "draft/aa11-one.md": task("One"),
+    "draft/aa11-two.md": task("Two"),
+  })
+  const t = await showTask(ctx, "t")
+  assert.equal(t.ok, true)
+  assert.equal((t as { data: Record<string, unknown> }).data.abandonedFrom, "plan-review")
+  assert.match(t.message, /abandoned from: plan-review\//)
+  const h = await showTask(ctx, "h")
+  assert.equal((h as { data: Record<string, unknown> }).data.claimed, true)
+  assert.equal((h as { data: Record<string, unknown> }).data.claimable, false, "a held claim is not claimable")
+  assert.match(h.message, /claim held/)
+  assert.match((await showTask(ctx, "zzzz")).message, /No task "zzzz"/)
+  assert.match((await showTask(ctx, "aa11")).message, /Ambiguous/)
+  assert.match((await showTask(ctx, "")).message, /Usage/)
 })
