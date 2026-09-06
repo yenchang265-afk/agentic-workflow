@@ -371,6 +371,21 @@ export const addWorktree = async (
 export const removeWorktree = async ($: Shell, cwd: string, wtPath: string): Promise<boolean> =>
   (await run($, cwd, ["worktree", "remove", wtPath])).ok
 
+/**
+ * Local branch names under `prefix` (`feature/` → every `feature/*`), via
+ * `for-each-ref` so the answer is the ref list itself — never `branch --list`'s
+ * decorated output with its `*` and `+` markers. Empty on failure.
+ */
+export const listBranches = async ($: Shell, cwd: string, prefix: string): Promise<string[]> => {
+  const { ok, stdout } = await run($, cwd, ["for-each-ref", "--format=%(refname:short)", `refs/heads/${prefix}`])
+  if (!ok) return []
+  return stdout.split("\n").map((l) => l.trim()).filter(Boolean)
+}
+
+/** Whether `ancestor` is reachable from `descendant` — i.e. a branch is fully merged into a base. False on any failure. */
+export const isAncestor = async ($: Shell, cwd: string, ancestor: string, descendant: string): Promise<boolean> =>
+  (await run($, cwd, ["merge-base", "--is-ancestor", ancestor, descendant])).ok
+
 /** Drop registrations for worktrees whose directories have vanished. Safe/no-op otherwise. */
 export const pruneWorktrees = async ($: Shell, cwd: string): Promise<void> => {
   await run($, cwd, ["worktree", "prune"])

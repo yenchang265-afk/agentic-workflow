@@ -10,7 +10,9 @@ import {
   bashAllowlistPrefixes,
   droppedRepoKeys,
   ignoredUserConfigPaths,
+  isNearMiss,
   isPlainObject,
+  type UnknownConfigKey,
   mergeConfigLayers,
   rawAgentModel,
   readUserLayer,
@@ -173,6 +175,12 @@ export const WorkflowTriggerSchema = z.discriminatedUnion("type", [
 ]) satisfies z.ZodType<WorkflowTrigger>
 
 const BaseConfigSchema = z.object({
+  /**
+   * The JSON Schema an editor validates this file against — the checked-in
+   * `schema/agentic-workflow.schema.json` (design 61). Declared so the key is
+   * not itself reported as unknown (design 60); nothing reads its value.
+   */
+  $schema: z.string().optional(),
   /** Max loop iterations before stopping on repeated verify/review failures. */
   maxIterations: z.number().int().positive().default(3),
   /**
@@ -958,6 +966,75 @@ export const retiredConfigKeys = (raw: unknown): { readonly key: string; readonl
     .map(([key, replacement]) => ({ key, replacement }))
 }
 
+/**
+ * The keys a `workflows.<kind>` section declares, read off the schema so the
+ * lint below cannot drift from it. Empty (never throws) if zod's internals
+ * move — a test pins that it currently returns the real set.
+ */
+export const workflowSectionKeys = (): string[] => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let s: any = ConfigSchema.shape.workflows
+    for (let hops = 0; s && s.def?.type !== "record" && typeof s.unwrap === "function" && hops < 4; hops++) s = s.unwrap()
+    const value = s?.valueType ?? s?.def?.valueType
+    const shape = value?.shape ?? value?.def?.shape
+    return shape && typeof shape === "object" ? Object.keys(shape) : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Config keys nothing reads (design 60), from the RAW merged layers — the
+ * same pre-parse vantage `retiredConfigKeys` needs, and for the same reason:
+ * zod strips a top-level key it does not declare, so by the time anyone holds
+ * a `Config` a misspelled `maxIteration` is simply gone, the behaviour reverts
+ * to a default, and nothing says so.
+ *
+ * Three scopes, each judged against its own schema shape:
+ * - top level, against `ConfigSchema.shape` (retired keys excluded — they
+ *   already get their own, more specific warning);
+ * - `projectManagement.*`, against its schema;
+ * - `workflows.<kind>.*` — flagged ONLY when one typo away from a declared
+ *   section key (`enable` → `enabled`, `stagemodels` → `stageModels`). The
+ *   section is a `looseObject` on purpose: kind-specific knobs (`query`,
+ *   `severityFloor`, …) are read positionally by the work sources, so an
+ *   unrecognised name there is not evidence of a typo.
+ * `ado` is skipped: it is loose by design and `deprecatedAdoKeys` covers its
+ * stale names. Pure.
+ */
+export const unknownConfigKeys = (raw: unknown): UnknownConfigKey[] => {
+  if (!isPlainObject(raw)) return []
+  const out: UnknownConfigKey[] = []
+  const suggest = (key: string, known: readonly string[]): { suggestion?: string } => {
+    const hit = known.find((k) => isNearMiss(k, key))
+    return hit ? { suggestion: hit } : {}
+  }
+  const top = Object.keys(ConfigSchema.shape)
+  for (const key of Object.keys(raw)) {
+    if (top.includes(key) || key in RETIRED_CONFIG_KEYS) continue
+    out.push({ path: key, ...suggest(key, top) })
+  }
+  const pm = raw["projectManagement"]
+  if (isPlainObject(pm)) {
+    const known = Object.keys(ProjectManagementSchema.shape)
+    for (const key of Object.keys(pm)) if (!known.includes(key)) out.push({ path: `projectManagement.${key}`, ...suggest(key, known) })
+  }
+  const workflows = raw["workflows"]
+  if (isPlainObject(workflows)) {
+    const known = workflowSectionKeys()
+    for (const [kind, section] of Object.entries(workflows)) {
+      if (!isPlainObject(section)) continue
+      for (const key of Object.keys(section)) {
+        if (known.includes(key)) continue
+        const s = suggest(key, known)
+        if (s.suggestion) out.push({ path: `workflows.${kind}.${key}`, ...s })
+      }
+    }
+  }
+  return out
+}
+
 /** How a watching host schedules claims for a workflow kind: configured trigger, else poll. Pure. */
 export const triggerFor = (config: Config, kind: string): WorkflowTrigger =>
   config.workflows[kind]?.trigger ?? { type: "poll" }
@@ -1515,6 +1592,24 @@ export const loadConfigWith = async <T>(
           service: "agentic-workflow",
           level: "warn",
           message: `${label} sets "${key}", which no longer exists — it is ignored. Instead: ${replacement}.`,
+        },
+      })
+      .catch(() => {
+        /* the load matters, the warning is best-effort */
+      })
+  }
+  // Same vantage, same reason, one level more general: a key no schema
+  // declares — a typo'd top-level name, a `projectManagement` field that does
+  // not exist, a `workflows.<kind>` knob one letter off a declared one — is
+  // stripped or ignored silently, and this is the only line that will ever
+  // say so (design 60). `doctor config` renders the same list.
+  for (const { path: keyPath, suggestion } of unknownConfigKeys(merged)) {
+    await client.app
+      .log({
+        body: {
+          service: "agentic-workflow",
+          level: "warn",
+          message: `${label} sets "${keyPath}", which nothing reads — it is silently ignored.${suggestion ? ` Did you mean "${suggestion}"?` : ""}`,
         },
       })
       .catch(() => {

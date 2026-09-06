@@ -21,6 +21,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { auditBacklog, formatAnomalies, hasAnomalies } from "@agentic-workflow/core/task/audit"
+import { distStaleness, staleDistWarning } from "@agentic-workflow/core/dist-staleness"
 import { dialectFor, hostFor } from "./dialect.mjs"
 import { exitAfterWrite } from "./emit.mjs"
 import { idList, MAX_LISTED } from "./idlist.mjs"
@@ -208,6 +209,28 @@ const main = async () => {
     lines.push(
       `agentic-workflow: MCP server not built (mcp-server/dist/server.js missing) — gates and loop tools will not work. Run ${dialectFor(hostFor())?.installer ?? "the installer"}, then restart the session.`,
     )
+  // Built but STALE (design 62): the server and core resolve through dist/,
+  // gitignored and rebuilt only by `pnpm install`, so a pull that touched
+  // either leaves this session running old code with nothing failing — the
+  // known symptom was a gate result with no `data.gate` on it. Existence was
+  // the only check here; mtimes answer the real question. Both walks are
+  // budgeted (a hook the host kills at its deadline drops this whole report),
+  // and a plugin installed away from the monorepo has no core sources beside
+  // it — that reads as "cannot tell", never as stale.
+  if (serverBuilt) {
+    const rebuild = "Run `pnpm install` at the agentic-workflow repo root (it rebuilds core and the server), then restart the session."
+    for (const [label, dir] of [
+      ["agentic-workflow: MCP server", path.join(pluginRoot, "mcp-server")],
+      ["agentic-workflow: core", path.resolve(pluginRoot, "..", "..", "packages", "core")],
+    ]) {
+      try {
+        const warn = staleDistWarning(label, distStaleness(dir, 1500), rebuild)
+        if (warn) lines.push(warn)
+      } catch {
+        /* a staleness probe must never cost the report */
+      }
+    }
+  }
   // Every id below is a FILE NAME off the disk, and this text goes into the
   // model's context at SessionStart before the user types anything — so the
   // lists are sanitized and capped by `idList`, which states what it dropped.

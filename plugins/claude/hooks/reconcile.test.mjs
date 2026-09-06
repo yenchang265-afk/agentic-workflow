@@ -34,7 +34,7 @@ const makeRepo = (files) => {
 }
 
 /** The additionalContext the hook emitted, or "" when it emitted nothing. */
-const run = (cwd) => {
+const run = (cwd, env = {}) => {
   const res = spawnSync(process.execPath, [HOOK], {
     input: JSON.stringify({ cwd }),
     encoding: "utf8",
@@ -45,6 +45,11 @@ const run = (cwd) => {
       AGENTIC_WORKFLOW_USER_CONFIG: "",
       AGENTIC_WORKFLOW_DIR: cwd,
       AGENTIC_WORKFLOW_SERVER_JS: HOOK,
+      // The dist-staleness probe (design 62) reads src/dist mtimes under the
+      // plugin root; pointed at the temp repo there is nothing to compare, so
+      // a developer's un-rebuilt checkout cannot leak a warning into these.
+      AGENTIC_WORKFLOW_PLUGIN_ROOT: cwd,
+      ...env,
     },
   })
   assert.equal(res.status, 0, `the reconciler must never fail a session start: ${res.stderr}`)
@@ -107,4 +112,27 @@ test("the scan is bounded, and says so when it degrades", () => {
   assert.match(src, /if \(Date\.now\(\) > deadline\) \{\s*truncated = true\s*break/, "the per-file read loop checks it")
   assert.match(src, /Promise\.race\(\[\s*auditBacklog\(/, "the one async call is raced, not merely awaited")
   assert.match(src, /is PARTIAL/, "a truncated report must say it is truncated — a silent one reads as a healthy backlog")
+})
+
+test("a stale MCP server or core dist is named at session start, with the rebuild command", () => {
+  const cwd = makeRepo({ "docs/tasks/in-progress/": null })
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aw-plugin-root-"))
+  const touch = (rel, ageSeconds) => {
+    const abs = path.join(root, rel)
+    fs.mkdirSync(path.dirname(abs), { recursive: true })
+    fs.writeFileSync(abs, "x")
+    const t = new Date(Date.now() - ageSeconds * 1000)
+    fs.utimesSync(abs, t, t)
+  }
+  // Server: src newer than dist. Core (../../packages/core off the root): fresh.
+  touch("plugins/claude/mcp-server/src/server.ts", 10)
+  touch("plugins/claude/mcp-server/dist/server.js", 100)
+  touch("packages/core/src/config.ts", 100)
+  touch("packages/core/dist/config.js", 10)
+  const out = run(cwd, { AGENTIC_WORKFLOW_PLUGIN_ROOT: path.join(root, "plugins", "claude") })
+  assert.match(out, /agentic-workflow: MCP server: dist\/ is older than src\/ .*Run `pnpm install`/)
+  assert.doesNotMatch(out, /agentic-workflow: core: dist\/ is older/)
+  // Rebuilt: silence.
+  touch("plugins/claude/mcp-server/dist/server.js", 0)
+  assert.equal(run(cwd, { AGENTIC_WORKFLOW_PLUGIN_ROOT: path.join(root, "plugins", "claude") }), "")
 })

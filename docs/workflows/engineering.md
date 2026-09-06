@@ -318,14 +318,20 @@ backlog (threat model T3/T3b):
   substrates), in `workflow_status`, and as warnings on claims.
 - **Doctor** (`workflow_doctor` / `/agentic-workflow:engineering doctor [fix|config]`): reports the sweep's
   findings plus held claim markers, stray plan-request markers (a request
-  whose task has left `queued/`), and the allowlist deny log — refused bash
-  commands with the config change that would admit each; with `fix` it
+  whose task has left `queued/`), the allowlist deny log — refused bash
+  commands with the config change that would admit each — and the loop's
+  leftovers: worktrees and `feature/<id>` branches whose task is no longer
+  on the board, each branch marked merged or not; with `fix` it
   applies only the unambiguous repairs — rescue strays back to `draft/`
   (audited + committed), remove emptied stray folders, release stale
   orphaned claim markers, drop stray plan requests, clear the reported deny
-  log. Duplicates are always a human call. `doctor config` reports the
+  log, remove orphan worktrees (never `--force`, never a branch — the
+  report names the `git branch -d`/`-D` for a human). Duplicates are
+  always a human call. `doctor config` reports the
   effective configuration instead: the layer file paths, the repo-layer keys
-  the runtime ignores, and the config in force with secrets masked.
+  the runtime ignores, the keys nothing reads (each with the declared key it
+  is one typo from, when there is one), and the config in force with
+  secrets masked.
 - **Init** (`workflow_init` / `/agentic-workflow:engineering init`): scaffolds a repo on day
   one — creates the backlog's status folders, writes a safe-key
   `.agentic-workflow.json` when none exists (never overwrites one), and

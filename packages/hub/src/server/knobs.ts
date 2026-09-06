@@ -1,4 +1,5 @@
 import type { ConfigWarning, KindBoardInfo } from "../shared/api.js"
+import { isNearMiss } from "@agentic-workflow/core/config-layers"
 import { isPlainObject } from "./configlayers.js"
 
 /**
@@ -78,30 +79,6 @@ export const STRUCTURED_KEYS: readonly string[] = [
   "prBase",
   "maxDiffLines",
 ]
-
-/** Levenshtein distance, capped: we only care whether it's 1. */
-const isNearMiss = (a: string, b: string): boolean => {
-  if (a === b) return false
-  if (a.toLowerCase() === b.toLowerCase()) return true
-  if (Math.abs(a.length - b.length) > 1) return false
-  let i = 0
-  let j = 0
-  let edits = 0
-  while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) {
-      i++
-      j++
-      continue
-    }
-    if (++edits > 1) return false
-    if (a.length === b.length) {
-      i++
-      j++
-    } else if (a.length > b.length) i++
-    else j++
-  }
-  return edits + (a.length - i) + (b.length - j) <= 1
-}
 
 /**
  * Lint every `workflows.<kind>` section against the knobs its work source actually

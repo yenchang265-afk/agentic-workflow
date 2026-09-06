@@ -304,6 +304,40 @@ export const maskConfigSecrets = (value: unknown): unknown => {
   return out
 }
 
+/**
+ * Levenshtein distance ≤ 1 (or a case-only difference), for "did you mean"
+ * suggestions. Lives here — zod-free — so the hub's knob lint and core's
+ * unknown-key lint (design 60) share one notion of a near miss. Pure.
+ */
+export const isNearMiss = (a: string, b: string): boolean => {
+  if (a === b) return false
+  if (a.toLowerCase() === b.toLowerCase()) return true
+  if (Math.abs(a.length - b.length) > 1) return false
+  let i = 0
+  let j = 0
+  let edits = 0
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      i++
+      j++
+      continue
+    }
+    if (++edits > 1) return false
+    if (a.length === b.length) {
+      i++
+      j++
+    } else if (a.length > b.length) i++
+    else j++
+  }
+  return edits + (a.length - i) + (b.length - j) <= 1
+}
+
+/** A config key nothing reads (design 60): its dotted path, and the declared key it is one typo away from, when there is one. */
+export interface UnknownConfigKey {
+  readonly path: string
+  readonly suggestion?: string
+}
+
 /** What `effectiveConfigReport` returns — see there. */
 export interface EffectiveConfigReport {
   /** The user-scope file in effect, or null (layer disabled, or no file exists). */
@@ -314,6 +348,13 @@ export interface EffectiveConfigReport {
   readonly droppedRepoKeys: readonly string[]
   /** The config actually in force, secrets masked. Display only — never write it back. */
   readonly effective: unknown
+  /**
+   * Keys in the RAW merged layers that no schema declares (design 60) — a
+   * misspelled top-level key is stripped by zod before any code sees it, so it
+   * can only be named from the raw text. Empty when the caller passes no lint
+   * (this module is zod-free; `unknownConfigKeys` in config.ts is the lint).
+   */
+  readonly unknownKeys: readonly UnknownConfigKey[]
 }
 
 /**
@@ -325,7 +366,11 @@ export interface EffectiveConfigReport {
  * Filesystem reads are best-effort: outside a repo, or with no config files at
  * all, the report is simply "defaults, nothing dropped".
  */
-export const effectiveConfigReport = (cwd: string, parsedConfig: unknown): EffectiveConfigReport => {
+export const effectiveConfigReport = (
+  cwd: string,
+  parsedConfig: unknown,
+  lint?: (rawMerged: Record<string, unknown>) => readonly UnknownConfigKey[],
+): EffectiveConfigReport => {
   let userPath: string | null = null
   try {
     const resolved = resolveUserConfigPath()
@@ -340,11 +385,20 @@ export const effectiveConfigReport = (cwd: string, parsedConfig: unknown): Effec
   } catch {
     repoRaw = undefined
   }
+  let unknownKeys: readonly UnknownConfigKey[] = []
+  if (lint) {
+    try {
+      unknownKeys = lint(readRawConfigLayers(cwd))
+    } catch {
+      unknownKeys = []
+    }
+  }
   return {
     userConfigPath: userPath,
     repoConfigPath: CONFIG_FILE,
     droppedRepoKeys: droppedRepoKeys(repoRaw).map((d) => d.path),
     effective: maskConfigSecrets(parsedConfig),
+    unknownKeys,
   }
 }
 

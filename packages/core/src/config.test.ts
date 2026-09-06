@@ -6,6 +6,8 @@ import { test } from "node:test"
 import {
   deprecatedAdoKeys,
   retiredConfigKeys,
+  unknownConfigKeys,
+  workflowSectionKeys,
   RETIRED_CONFIG_KEYS,
   ConfigSchema,
   bareModel,
@@ -1660,4 +1662,38 @@ test("pairingLine falls back to the bare key when no baseUrl is set, and stays s
     /^pairing \(jira\): 1\/1 paired \(a→K-1\)$/,
   )
   assert.equal(pairingLine(pairingView(pm, { paired: 0, unpaired: ["a"], pairs: [] })), "pairing (jira): 0/1 paired; unpaired: a")
+})
+
+// --- unknown-key lint (design 60) ---
+
+test("workflowSectionKeys reads the declared section keys off the schema", () => {
+  const keys = workflowSectionKeys()
+  for (const k of ["enabled", "codePlatform", "stageModels", "stageChecks", "maxDiffLines", "trigger"]) assert.ok(keys.includes(k), k)
+})
+
+test("unknownConfigKeys names top-level typos with a suggestion, and skips declared, retired and $schema keys", () => {
+  const raw = { maxIteration: 4, tasksDir: "docs/tasks", $schema: "x", watchIntervalMinutes: 5, bogus: true }
+  assert.deepEqual(unknownConfigKeys(raw), [
+    { path: "maxIteration", suggestion: "maxIterations" },
+    { path: "bogus" },
+  ])
+  assert.deepEqual(unknownConfigKeys({}), [])
+  assert.deepEqual(unknownConfigKeys("not an object"), [])
+})
+
+test("unknownConfigKeys walks projectManagement fully, and workflows.<kind> only for near-misses of declared keys", () => {
+  const raw = {
+    projectManagement: { system: "jira", baseurl: "https://x", extra: 1 },
+    workflows: {
+      engineering: { enable: true, stagemodels: {}, severityFloor: "high", query: "is:open" },
+      "pr-sitter": "not an object",
+    },
+    ado: { organisation: "typo-but-loose-by-design" },
+  }
+  assert.deepEqual(unknownConfigKeys(raw), [
+    { path: "projectManagement.baseurl", suggestion: "baseUrl" },
+    { path: "projectManagement.extra" },
+    { path: "workflows.engineering.enable", suggestion: "enabled" },
+    { path: "workflows.engineering.stagemodels", suggestion: "stageModels" },
+  ])
 })

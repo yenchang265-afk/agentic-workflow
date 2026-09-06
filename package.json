@@ -15,6 +15,7 @@
     "hub": "pnpm --filter @agentic-workflow/core run build && pnpm --filter @agentic-workflow/hub run build && pnpm --filter @agentic-workflow/hub run start",
     "gen:prompts": "node scripts/gen-prompts.mjs",
     "build:hooks": "pnpm --filter @agentic-workflow/core run build && node scripts/build-hooks.mjs",
+    "gen:schema": "pnpm --filter @agentic-workflow/core run build && node scripts/gen-schema.mjs",
     "test:hooks": "node --test plugins/claude/hooks/*.test.mjs",
     "test:scripts": "node --test scripts/*.test.mjs",
     "typecheck:all": "pnpm -r run typecheck",

@@ -97,6 +97,7 @@ import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
 import { clearState, listSnapshotIds, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
 import { abandonTask, approveAny, approvePlan, planCaveats, rejectAny, removeTask, restoreTask, retaskTask, setTaskPriority, showTask, type GateCandidate, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
 import { notifyLoopEvent, runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
+import { auditOrphans, formatOrphans, removeOrphanWorktrees } from "@agentic-workflow/core/workflow/orphans"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
 import {
@@ -130,6 +131,7 @@ import {
   concurrencyFor,
   discoverChecksFor,
   enabledWorkflowKinds,
+  unknownConfigKeys,
   enforcesAxisCoverage,
   ignoredUserConfigPaths,
   modelFor,
@@ -4567,19 +4569,27 @@ export const handleCommand = async (
     // "what configuration is actually in force, and why isn't my repo key
     // taking effect" — so it returns the config report instead of the audit.
     if (/(^|\s)(--)?config(\s|$)/.test(rest.toLowerCase())) {
-      const cfgReport = effectiveConfigReport(deps.directory, config)
+      const cfgReport = effectiveConfigReport(deps.directory, config, unknownConfigKeys)
       await deps.log("info", `config sources: user ${cfgReport.userConfigPath ?? "(none)"} · repo ${cfgReport.repoConfigPath}`)
       if (cfgReport.droppedRepoKeys.length) {
         await deps.log("warn", `repo-layer keys ignored at runtime (honored from the user-scope config only): ${cfgReport.droppedRepoKeys.join(", ")}`)
+      }
+      // Keys nothing reads (design 60) — the typo that used to leave a setting
+      // silently on its default, now named with the key it is one edit from.
+      for (const u of cfgReport.unknownKeys) {
+        await deps.log("warn", `config key "${u.path}" is not read by anything — silently ignored.${u.suggestion ? ` Did you mean "${u.suggestion}"?` : ""}`)
       }
       await deps.log("info", `effective config (secrets masked):\n${JSON.stringify(cfgReport.effective, null, 2)}`)
       const droppedTail = cfgReport.droppedRepoKeys.length
         ? ` · ${cfgReport.droppedRepoKeys.length} repo key${cfgReport.droppedRepoKeys.length === 1 ? "" : "s"} ignored (see log)`
         : ""
+      const unknownTail = cfgReport.unknownKeys.length
+        ? ` · ${cfgReport.unknownKeys.length} unknown key${cfgReport.unknownKeys.length === 1 ? "" : "s"}: ${cfgReport.unknownKeys.map((u) => (u.suggestion ? `${u.path} (→ ${u.suggestion}?)` : u.path)).join(", ")}`
+        : ""
       return report(
         client,
-        `Config report logged — user: ${cfgReport.userConfigPath ?? "none"} · repo: ${cfgReport.repoConfigPath}${droppedTail}.`,
-        cfgReport.droppedRepoKeys.length ? "warning" : "info",
+        `Config report logged — user: ${cfgReport.userConfigPath ?? "none"} · repo: ${cfgReport.repoConfigPath}${droppedTail}${unknownTail}.`,
+        cfgReport.droppedRepoKeys.length || cfgReport.unknownKeys.length ? "warning" : "info",
       )
     }
     try {
@@ -4609,7 +4619,13 @@ export const handleCommand = async (
           return null
         }
       })
+      // The loop's leftovers (design 63): worktrees and feature/<id> branches
+      // whose task is no longer on the board. Live = any non-terminal folder.
+      const liveIds = new Set<string>()
+      for (const status of ACTIVE_STATUSES) for (const t of await listByStatus(client, deps.directory, config.tasksDir, status, deps.log)) liveIds.add(t.id)
+      const orphans = await auditOrphans(deps.$, deps.directory, config, "engineering", liveIds)
       for (const line of formatAnomalies(anomalies, config.tasksDir)) await deps.log("warn", `doctor: ${line}`)
+      for (const line of formatOrphans(orphans)) await deps.log(line.startsWith("orphan worktree") ? "warn" : "info", `doctor: ${line}`)
       if (heldQueued.length) await deps.log("info", `doctor: claim marker(s) held in queued/.claims: ${heldQueued.join(", ")}`)
       if (heldInProgress.length) await deps.log("info", `doctor: claim marker(s) held in in-progress/.claims: ${heldInProgress.join(", ")}`)
       if (strayRequests.length) {
@@ -4617,7 +4633,13 @@ export const handleCommand = async (
       }
       for (const line of formatDenyFindings(denyFindings)) await deps.log("warn", `doctor: allowlist: ${line}`)
       const findings =
-        formatAnomalies(anomalies, config.tasksDir).length + heldQueued.length + heldInProgress.length + strayRequests.length + denyFindings.length
+        formatAnomalies(anomalies, config.tasksDir).length +
+        heldQueued.length +
+        heldInProgress.length +
+        strayRequests.length +
+        denyFindings.length +
+        orphans.worktrees.length +
+        orphans.branches.length
       if (!fix) {
         return report(
           client,
@@ -4690,6 +4712,10 @@ export const handleCommand = async (
       // Deny telemetry is acknowledged by a fix: the report above carries the
       // aggregate, so the raw log is cleared rather than re-reported forever.
       const denyCleared = denyFindings.length ? clearDenyLog(deps.directory, config.tasksDir) : false
+      // Orphan worktrees are the one unambiguous leftover repair; a branch is
+      // never deleted here (unmerged commits are work — the report names the
+      // command for a human to run).
+      const removedWorktrees = orphans.worktrees.length ? await removeOrphanWorktrees(deps.$, deps.log, deps.directory, orphans) : []
       if (rescued.length) {
         await commitBookkeeping(deps, config, `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
       }
@@ -4699,6 +4725,8 @@ export const handleCommand = async (
         released.length ? `released ${released.length} stale claim marker(s)` : "",
         revokedRequests.length ? `dropped ${revokedRequests.length} stray plan request(s)` : "",
         denyCleared ? `cleared the allowlist deny log (${denyFindings.length} distinct command(s) — see the log for suggestions)` : "",
+        removedWorktrees.length ? `removed ${removedWorktrees.length} orphan worktree(s)` : "",
+        orphans.branches.length ? `${orphans.branches.length} orphan branch(es) left for you (see the log)` : "",
         anomalies.duplicates.length ? `${anomalies.duplicates.length} duplicate id(s) left for you` : "",
       ].filter(Boolean)
       return report(client, summary.length ? `Backlog doctor: ${summary.join(" · ")}.` : "Backlog doctor: nothing to repair.", "success")
