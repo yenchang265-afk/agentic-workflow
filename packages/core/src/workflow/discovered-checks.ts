@@ -45,6 +45,7 @@ import { CheckDefSchema, effectiveAllowlist, type CheckDef, type StageDef, type 
 import { commandAllowed, chainedFindMutation, chainedGithubPrMutation, chainedGitPushViolation, isBareCd, splitSegments } from "../task/write-backstop.js"
 import { bashAllowlistExtras, bashAllowlistPrefixes, checksFor, configuredChecks, discoverChecksFor, platformFor, withCommandPrefixes } from "../config.js"
 import type { Config } from "./state.js"
+import { joinClauses } from "./verdict.js"
 import type { Shell } from "../host.js"
 
 /**
@@ -185,7 +186,7 @@ const allowlistSentence = (globs: readonly string[]): string => {
 }
 
 export const checkDiscoveryBlock = (planStage: string, consumer: string, allowedGlobs?: readonly string[]): string =>
-  [
+  joinClauses([
     `CHECK DISCOVERY: inside the \`### Verification\` subsection, the ${planStage} stage's plan SHOULD end with a`,
     // The info string is SPELLED OUT rather than shown as a literal fence. A
     // rendered ```` ```agentic-checks ```` inside a one-line instruction cannot be
@@ -220,7 +221,7 @@ export const checkDiscoveryBlock = (planStage: string, consumer: string, allowed
     'Add "timeoutMinutes" to a command the project runs long (an integration or e2e suite): the default cap fits a',
     "unit-test run, and one slow command in the list must not force every fast one to share its budget.",
     "Omit the block when you cannot name a command you have verified; the loop then checks as it does today.",
-  ].join(" ")
+  ])
 
 /** One discovered command the loop refused, and why. */
 export interface RejectedCheck {
@@ -758,8 +759,8 @@ export const checksProvenanceNote = (args: {
  * it identically. Pure.
  */
 export const noMachineChecksBlock = (stage: string): string =>
-  [
+  joinClauses([
     `MACHINE-RUN CHECKS: none ran for this stage — the plan declared no ${CHECKS_FENCE} block (or none of its commands was admitted).`,
     "Nothing is established for you: every proof — tests, build, lint — is yours to run in this pass,",
     `and your PASS evidence must cite the commands you ran yourself.`,
-  ].join(" ")
+  ])

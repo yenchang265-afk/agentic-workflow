@@ -532,4 +532,9 @@ if [ "$WANT_BROWSER" -eq 1 ]; then
   echo "  - chrome-devtools MCP launches its own isolated Chrome profile on first use."
 fi
 echo
+echo "== next: what to type first =="
+echo "  /agentic-workflow:engineering init        (scaffolds docs/tasks/ + a safe config — once per repo)"
+echo "  /agentic-workflow:engineering new <idea>  (interview -> draft; then approve <id>, claim, approve)"
+echo "  pnpm hub --dir <repo>                     (the review queue, board, doctor, metrics)"
+echo
 echo "Done. Re-run this script any time — it is idempotent."

@@ -75,10 +75,15 @@ Work test-driven, bound to this loop's artifacts:
    and the ones they call into, not the directories around them. Your window also
    carries the plan and the check feedback, and this stage may be pointed at a
    small model — a speculative wide read crowds out the input you were given.
-2. **A failing test per acceptance criterion** (per review finding, on a
-   re-build) before the code that satisfies it; fixing a defect, reproduce it
-   in a test first. Then the minimum code to pass, reusing the utilities the
-   plan cited instead of writing net-new code.
+2. **A failing test first for every acceptance criterion, and for every
+   finding whose fix changes observable behaviour** — a `correctness` or
+   `performance` finding, any defect you can reproduce: write the test that
+   fails, then the minimum code to pass, reusing the utilities the plan cited
+   instead of writing net-new code. A finding that changes no behaviour — a
+   readability or architecture note, a security hardening with no exploitable
+   path, docs or naming — gets NO manufactured test: make the change and say in
+   your Test status which existing tests guard it and why no new one was
+   warranted. A tautological test written to satisfy this rule fails VERIFY.
 3. **Implement the plan's steps as increments**, suite green between them —
    never a big-bang diff that only compiles at the end. Keep the diff
    surgical: touch only what the plan (or the review feedback) needs.

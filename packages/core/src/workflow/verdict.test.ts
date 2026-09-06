@@ -37,6 +37,7 @@ import {
   workScopeBlock,
   worstOf,
   type VerdictRecord,
+  joinClauses,
 } from "./verdict.js"
 
 const AXES = ["correctness", "readability", "architecture", "security", "performance"]
@@ -1312,4 +1313,20 @@ test("planContractBlock demands checks that terminate, and forbids a criterion o
   // rather than a refusal the planner has to route around on its own.
   assert.match(block, /e2e run that boots/)
   assert.match(block, /### Out of Scope/)
+})
+
+// --- contract blocks read as paragraphs (design 67) ---
+
+test("joinClauses starts a paragraph at an ALL-CAPS label and keeps the space join everywhere else", () => {
+  assert.equal(joinClauses(["MANDATORY VERDICT: do x,", "then y.", "A FAIL that names nothing is REJECTED.", "PROOF OF WORK: cite it.", "So run first."]), "MANDATORY VERDICT: do x, then y. A FAIL that names nothing is REJECTED.\n\nPROOF OF WORK: cite it. So run first.")
+  assert.equal(joinClauses([]), "")
+  assert.equal(joinClauses(["REVIEW AXIS 1/3: security."]), "REVIEW AXIS 1/3: security.")
+})
+
+test("the VERIFY contract renders its sub-contracts as separate paragraphs, wording unchanged", () => {
+  const block = verdictContractBlock("verify", undefined, "single", true, 2)
+  const paragraphs = block.split("\n\n")
+  assert.deepEqual(paragraphs.map((p) => p.split(":")[0]), ["MANDATORY VERDICT", "PLAN DEFECT", "ACCEPTANCE CRITERIA", "PROOF OF WORK"])
+  assert.equal(block.replace(/\n\n/g, " "), verdictContractBlock("verify", undefined, "single", true, 2).replace(/\n\n/g, " "))
+  assert.ok(!block.includes("\n\n\n"))
 })

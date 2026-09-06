@@ -817,7 +817,7 @@ branches are cut from anywhere, or a kind that should target somewhere else:
 ```json
 {
   "prBase": "release/2.4",
-  "workflows": { "dep-sitter": { "prBase": "main" } }
+  "workflows": { "dep-sitter": { "enabled": true, "prBase": "main" } }
 }
 ```
 

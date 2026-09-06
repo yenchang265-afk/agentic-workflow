@@ -216,6 +216,29 @@ function Install-OpenCode {
     Write-Host "OpenCode: /agentic-workflow:engineering and the bundled skills are available in every OpenCode session."
 }
 
+# The closing block (design 66) — mirrors install.sh's next_steps: the last
+# thing on screen names the first command to type per host.
+function Write-NextSteps([string]$Target) {
+    Write-Host ""
+    Write-Host "== next: what to type first =="
+    if ($Target -in @('opencode', 'all')) {
+        Write-Host "  OpenCode:    open the repo in opencode, then"
+        Write-Host "               /agentic-workflow:engineering init        (scaffolds docs/tasks/ + a safe config)"
+        Write-Host "               /agentic-workflow:engineering new <idea>  (interview -> draft; then approve <id>, claim, approve)"
+    }
+    if ($Target -in @('claude', 'all')) {
+        Write-Host "  Claude Code: claude --plugin-dir `"$RepoDir\plugins\claude`", then"
+        Write-Host "               /agentic-workflow:engineering init"
+        Write-Host "               /agentic-workflow:engineering new <idea>"
+    }
+    if ($Target -in @('qwen', 'all')) {
+        Write-Host "  Qwen Code:   restart the session, then"
+        Write-Host "               /agentic-workflow:engineering init"
+        Write-Host "               /agentic-workflow:engineering new <idea>"
+    }
+    Write-Host "  Hub:         pnpm hub --dir `"$(Get-Location)`"   (the review queue, board, doctor, metrics)"
+}
+
 function Install-Claude {
     Write-Host "Installing agentic-workflow for Claude Code (plugins\claude\)"
     if ($Mode -eq 'copy') {
@@ -302,9 +325,8 @@ function Install-Qwen {
     if ($LASTEXITCODE -ne 0) { throw "qwen-settings.mjs merge failed with exit code $LASTEXITCODE" }
 
     Write-Host ""
-    Write-Host "Qwen Code: restart the session, then run /agentic-workflow:engineering status"
-    Write-Host "           (re-run this installer after changing stageModels/agentModels —"
-    Write-Host "            Qwen binds a subagent's model statically, at install time)"
+    Write-Host "Qwen Code: installed (re-run this installer after changing stageModels/agentModels —"
+    Write-Host "           Qwen binds a subagent's model statically, at install time)."
 }
 
 # ---------------------------------------------------------------------------
@@ -768,3 +790,4 @@ switch ($Target) {
 
 Invoke-MaybeConfigure
 Set-UserDefaults
+if ($Target -in @('opencode', 'claude', 'qwen', 'all')) { Write-NextSteps $Target }

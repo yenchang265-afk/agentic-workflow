@@ -67,4 +67,5 @@ done
 
 echo
 echo "Done. Load with:  claude --plugin-dir \"$PLUGIN_DIR\""
-echo "Then run:  /agentic-workflow:engineering new <idea>   (draft → approve <id> → claim plans & parks it → approve → claim builds → approve ships)"
+echo "Then run:  /agentic-workflow:engineering init   (scaffolds docs/tasks/ + a safe config)"
+echo "     and:  /agentic-workflow:engineering new <idea>   (draft → approve <id> → claim plans & parks it → approve → claim builds → approve ships)"
