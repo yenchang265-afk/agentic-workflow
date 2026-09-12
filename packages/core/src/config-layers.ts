@@ -230,7 +230,10 @@ export const userRepoOverrides = (userRaw: unknown, directory: string): { readon
   for (const key of Object.keys(repos)) {
     if (!isPlainObject(repos[key])) continue
     if (path.isAbsolute(key) || key.startsWith("~")) {
-      const resolved = key.startsWith("~") ? path.resolve(key.replace(/^~/, process.env.HOME ?? "")) : path.resolve(key)
+      // `os.homedir()`, never `$HOME`: the installer twin and `resolveUserConfigPath`
+      // both use it, and a host without HOME (native Windows shells) would
+      // otherwise resolve `~/x` against the cwd and silently never match.
+      const resolved = key.startsWith("~") ? path.resolve(key.replace(/^~/, os.homedir())) : path.resolve(key)
       if (resolved === abs && byPath === null) byPath = key
     } else if (key === base && byBase === null) byBase = key
   }

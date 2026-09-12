@@ -61,6 +61,8 @@ export const makeClaimMarkers = ($: Shell, directory: string, tasksDir: string, 
     release: (pr: number): Promise<void> => releaseMarker($, marker(pr)),
     /** The marker's on-disk path — stamped onto entry state so drivers can restamp a live drive (`refreshWorkClaim`). */
     markerDir: (pr: number): string => marker(pr),
+    /** Whether a marker is on disk right now — a cheap existence probe for the `remaining` count (design 65), never a claim. */
+    held: async (pr: number): Promise<boolean> => (await $`test -d ${marker(pr)}`.quiet().nothrow()).exitCode === 0,
   }
 }
 

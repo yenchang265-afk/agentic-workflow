@@ -1322,6 +1322,9 @@ test("joinClauses starts a paragraph at an ALL-CAPS label and keeps the space jo
   assert.equal(joinClauses(["MANDATORY VERDICT: do x,", "then y.", "A FAIL that names nothing is REJECTED.", "PROOF OF WORK: cite it.", "So run first."]), "MANDATORY VERDICT: do x, then y. A FAIL that names nothing is REJECTED.\n\nPROOF OF WORK: cite it. So run first.")
   assert.equal(joinClauses([]), "")
   assert.equal(joinClauses(["REVIEW AXIS 1/3: security."]), "REVIEW AXIS 1/3: security.")
+  // A comma inside a multi-word label is still a label (dependencyContractBlock's `CITE, NEVER REMEMBER:`).
+  assert.equal(joinClauses(["a.", "CITE, NEVER REMEMBER: b."]), "a.\n\nCITE, NEVER REMEMBER: b.")
+  assert.equal(joinClauses(["a.", "URL: not a label — lowercase follows, so it still is one by shape.", "e.g. x: y."]), "a.\n\nURL: not a label — lowercase follows, so it still is one by shape. e.g. x: y.")
 })
 
 test("the VERIFY contract renders its sub-contracts as separate paragraphs, wording unchanged", () => {

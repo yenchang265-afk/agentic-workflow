@@ -1024,6 +1024,9 @@ export const workflowSectionKeys = (): string[] => {
  * `ado` is skipped: it is loose by design and `deprecatedAdoKeys` covers its
  * stale names. Pure.
  */
+/** The user-scope section the admin hub reads on its own (`packages/hub/src/server/config.ts`); `ConfigSchema` never declares it. */
+export const HUB_SECTION_KEY = "hub"
+
 export const unknownConfigKeys = (raw: unknown): UnknownConfigKey[] => {
   if (!isPlainObject(raw)) return []
   const out: UnknownConfigKey[] = []
@@ -1033,7 +1036,11 @@ export const unknownConfigKeys = (raw: unknown): UnknownConfigKey[] => {
   }
   const top = Object.keys(ConfigSchema.shape)
   for (const key of Object.keys(raw)) {
-    if (top.includes(key) || key in RETIRED_CONFIG_KEYS) continue
+    // `hub` is read by the admin hub alone, through its own strict schema
+    // (packages/hub/src/server/config.ts) — real, user-scope-only, and never a
+    // typo candidate; flagging it manufactured the reads-as-broken warning this
+    // lint exists to end.
+    if (top.includes(key) || key in RETIRED_CONFIG_KEYS || key === HUB_SECTION_KEY) continue
     out.push({ path: key, ...suggest(key, top) })
   }
   const pm = raw["projectManagement"]

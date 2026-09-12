@@ -179,6 +179,7 @@ const source = (opts: { auditJson?: string; lsJson?: string; ledgers?: Record<st
         { cmd: "npm audit --json", result: { exitCode: 1, stdout: opts.auditJson ?? audit({ lodash: vuln({}) }) } },
         { cmd: "npm ls --json", result: { stdout: opts.lsJson ?? installed({ lodash: "4.17.20" }) } },
         ...(opts.script ?? []),
+        { cmd: "test -d ", result: { exitCode: 1 } },
       ],
       opts.log,
     ),

@@ -335,6 +335,8 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
         let probed = 0
         for (const pr of ordered.slice(index + 1)) {
           if (!eligible(pr)) continue
+          // Held by another sitter: being worked, not waiting (and not worth a probe).
+          if (await markers.held(pr.pullRequestId)) continue
           if (probed++ >= REMAINING_PROBE_MAX) break
           const ledger = await loadLedger(client, directory, tasksDir, kind, pr.pullRequestId, now())
           const snapshot = await buildSnapshot(pr, ledger.lastCommentAtHandled ?? "")

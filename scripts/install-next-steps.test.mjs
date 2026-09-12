@@ -41,3 +41,9 @@ test("no installer still sends the human to `status` as the first move", () => {
     assert.doesNotMatch(read(rel), /then run \/agentic-workflow:engineering status/)
   }
 })
+
+test("the Hub line names the configured target directory, not wherever the installer was run from", () => {
+  assert.match(read("install.sh"), /pnpm hub --dir \\"\$TARGET_DIR\\"/)
+  assert.match(read("install.ps1"), /pnpm hub --dir `"\$script:TargetDir`"/)
+  assert.doesNotMatch(read("install.sh"), /pnpm hub --dir \\"\$\(pwd\)\\"/)
+})

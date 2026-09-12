@@ -153,9 +153,14 @@ export const saveConfig = async (deps: HubDeps, req: ParsedRequest): Promise<Jso
     // Validate the MERGED view, not this layer alone: a repo layer is routinely
     // invalid on its own (codePlatform "ado" with the ado section in the user
     // layer) and refusing that would be wrong.
+    // …and merged the way the loader merges (design 73): the user layer's
+    // `repos.<match>` section folded in, the repo layer sanitized. Validating
+    // the raw pair let a per-repo `codePlatform: "ado"` section escape the
+    // cross-field refine, so a save the loop would later refuse passed here.
     const other = await readRawLayer(deps, layer === "repo" ? "user" : "repo")
-    const merged =
-      layer === "repo" ? mergeConfigLayers(other.raw ?? {}, next) : mergeConfigLayers(next, other.raw ?? {})
+    const userRaw = layer === "user" ? next : (other.raw ?? {})
+    const repoRaw = layer === "repo" ? next : (other.raw ?? {})
+    const merged = mergeConfigLayers(applyUserRepoOverrides(userRaw, deps.directory), sanitizeRepoLayer(repoRaw))
     const issues = issuesOf(merged)
     if (issues.length > 0) return json(400, { error: "config invalid — not written", issues })
 

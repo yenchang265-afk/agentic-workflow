@@ -169,7 +169,10 @@ test("provenance says which layer each value comes from", async () => {
 })
 
 test("writing a plaintext pat into a repo file that isn't gitignored is refused", async () => {
-  const f = makeFixture({ ado: { organization: "https://dev.azure.com/acme", project: "p", selfLogin: "bot" }, codePlatform: "ado" }, undefined, true)
+  // The ADO destination lives in the USER layer — the repo layer's copy is
+  // dropped before validation, exactly as the loader drops it — so the merged
+  // view is valid and the pat rail is what refuses.
+  const f = makeFixture({ codePlatform: "ado", ado: { project: "p" } }, { ado: { organization: "https://dev.azure.com/acme", project: "p", selfLogin: "bot" } }, true)
   const res = await save(f, { layer: "repo", edits: [{ path: "ado.pat", value: "leak-me" }] })
 
   assert.equal(res.status, 400)
@@ -204,6 +207,19 @@ test("validation runs against the MERGED view, not the layer alone", async () =>
   const res = await save(f, { layer: "repo", edits: [{ path: "codePlatform", value: "ado" }] })
   assert.equal(res.status, 200)
   assert.equal(repoFile(f)["codePlatform"], "ado")
+  cleanup(f)
+})
+
+test("validation folds the user layer's per-repo section in, exactly as the loader merges (design 73)", async () => {
+  // The per-repo section turns the platform to ado but is missing selfLogin:
+  // the loop will refuse this config at claim time, so the save must too.
+  const f = makeFixture({}, {})
+  const perRepo = { repos: { [f.deps.directory]: { codePlatform: "ado", ado: { organization: "https://dev.azure.com/acme", project: "p" } } } }
+  fs.writeFileSync(f.userFile, JSON.stringify(perRepo, null, 2))
+  const res = await save(f, { layer: "repo", edits: [{ path: "maxIterations", value: 4 }] })
+  assert.equal(res.status, 400, JSON.stringify(res.body))
+  assert.match(JSON.stringify(res.body), /selfLogin/)
+  assert.equal(repoFile(f)["maxIterations"], undefined, "nothing written")
   cleanup(f)
 })
 

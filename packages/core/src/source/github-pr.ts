@@ -259,9 +259,11 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
         const snapshot = buildSnapshot(pr, login, ledger.lastCommentAtHandled ?? "")
         return attentionTriggers(snapshot, ledger, binding.triggers).length > 0
       }
+      // A tail PR whose marker another sitter holds is being worked, not
+      // waiting — counting it would promise a claim the next walk refuses.
       const remainingAfter = async (index: number): Promise<number> => {
         let n = 0
-        for (const pr of ordered.slice(index + 1)) if (await wantsAttention(pr)) n++
+        for (const pr of ordered.slice(index + 1)) if ((await wantsAttention(pr)) && !(await markers.held(pr.number))) n++
         return n
       }
       for (const [index, pr] of ordered.entries()) {
