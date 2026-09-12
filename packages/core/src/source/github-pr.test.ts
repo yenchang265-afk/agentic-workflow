@@ -86,6 +86,9 @@ const source = (
         { cmd: "gh api user", result: { stdout: "sitter-bot\n" } },
         { cmd: "gh pr list", result: { stdout: JSON.stringify(prs) } },
         ...(opts.script ?? []),
+        // No marker is held unless a test scripts one: the unmatched-command
+        // default (exit 0) would otherwise read every `test -d` probe as held.
+        { cmd: "test -d ", result: { exitCode: 1 } },
       ],
       opts.log,
     ),
@@ -300,6 +303,9 @@ const reviewerSource = (prs: unknown[], opts: { ledgers?: Record<string, string>
         { cmd: "gh api user", result: { stdout: "sitter-bot\n" } },
         { cmd: "gh pr list", result: { stdout: JSON.stringify(prs) } },
         ...(opts.script ?? []),
+        // No marker is held unless a test scripts one: the unmatched-command
+        // default (exit 0) would otherwise read every `test -d` probe as held.
+        { cmd: "test -d ", result: { exitCode: 1 } },
       ],
       opts.log,
     ),
@@ -548,7 +554,11 @@ test("a claim carries `remaining`: the PRs behind it that also need attention, j
   ).claimNext()
   assert.equal(item?.id, "pr-7")
   assert.equal(item?.remaining, 1, "PR 8 waits; 9 is a draft, 10 needs nothing")
+  // A tail PR whose marker another sitter holds is being worked, not waiting.
+  const heldEight = [{ cmd: "test -d /r/docs/tasks/runs/pr-sitter/.claims/pr-8", result: { exitCode: 0 } }]
+  const busy = await source([pr({ number: 7, statusCheckRollup: failing }), pr({ number: 8, headRefName: "feat/eight", statusCheckRollup: failing })], { script: heldEight }).claimNext()
+  assert.equal(busy.item?.remaining, 0)
   assert.ok(log.some((c) => c.includes(".claims/pr-7")))
-  assert.ok(!log.some((c) => c.includes(".claims/pr-8")), "only the claimed PR took a marker")
+  assert.ok(!log.some((c) => c.startsWith("mkdir") && c.includes(".claims/pr-8")), "only the claimed PR took a marker — the tail is probed (test -d), never claimed")
   assert.ok(!log.some((c) => c.includes("fetch origin") && c.includes("feat/eight")), "the tail is counted, never fetched")
 })

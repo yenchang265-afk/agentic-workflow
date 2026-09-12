@@ -2266,6 +2266,10 @@ server.registerTool(
       action: parked
         ? { kind: action.kind, message: (action as { message: string }).message }
         : { kind: "stop", message: report?.message ?? (action as { message: string }).message },
+      // The claim-next offer (design 65) rides every terminal, task-backed or
+      // not — a sitter has no task, so it must not hide behind the ship-gate
+      // arm below, which is gated on `taskId`.
+      ...(report?.remaining !== undefined && report.remaining > 0 ? { remaining: report.remaining, ...(report.next ? { next: report.next } : {}) } : {}),
       ...(action.kind === "done" && parked && taskId
         ? (() => {
             const done = report?.kind === "done" ? report : null

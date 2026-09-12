@@ -407,6 +407,9 @@ export const readRunInputs = async (
     else skipped.push(id)
   })
   // Ids that vanished leave no stale cache entry behind.
-  if (opts.cache) for (const k of [...opts.cache.keys()]) if (!ids.includes(k)) opts.cache.delete(k)
+  if (opts.cache) {
+    const live = new Set(ids)
+    for (const k of [...opts.cache.keys()]) if (!live.has(k)) opts.cache.delete(k)
+  }
   return { inputs, skipped }
 }

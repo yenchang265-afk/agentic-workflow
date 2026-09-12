@@ -173,7 +173,7 @@ type Opts = {
 
 const source = (prs: unknown[], opts: Opts = {}) =>
   makeAdoPrSource({
-    $: scriptedShell(opts.shellScript ?? [], opts.shellLog),
+    $: scriptedShell([...(opts.shellScript ?? []), { cmd: "test -d ", result: { exitCode: 1 } }], opts.shellLog),
     gateway: scriptedGateway({ prs, ...(opts.script ?? {}) }, opts.calls),
     client: ledgerClient(opts.ledgers ?? {}),
     directory: "/r",

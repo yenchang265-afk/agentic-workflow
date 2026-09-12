@@ -123,6 +123,14 @@ export const getReviewDiff = async (deps: HubDeps, req: ParsedRequest): Promise<
   if (!branch) return json(409, { error: `"${id}" has no completed run on record — nothing to diff (the done note names the branch).` })
   const base = extractRunBase(task) ?? (await defaultBranchName(deps.sh, deps.directory))
   if (!base) return json(409, { error: `"${id}": the run recorded no base and the repo's default branch could not be resolved.` })
+  // Current-branch mode (`taskBranch: false`) records no base on purpose — its
+  // base is the sha pinned at first BUILD, never a branch — and its work branch
+  // is whatever was checked out, often the default branch itself. Diffing that
+  // against the default-branch fallback is a ref against itself: empty, and
+  // reported as "deleted or merged", which is false. Say what is true instead.
+  if (base === branch) {
+    return json(409, { error: `"${id}" ran in current-branch mode on ${branch}: the run recorded no pre-run ref to diff against — review its commits on that branch directly (git log).` })
+  }
   const kind = deps.boards.find((b) => b.statuses.includes(status))?.kind ?? "engineering"
   const maxLines = diffLimitFor(deps.config, kind)
   const diff = await diffText(deps.sh, deps.directory, base, branch, maxLines)

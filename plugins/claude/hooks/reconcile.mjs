@@ -184,7 +184,7 @@ var userRepoOverrides = (userRaw, directory) => {
     if (!isPlainObject(repos[key]))
       continue;
     if (path2.isAbsolute(key) || key.startsWith("~")) {
-      const resolved = key.startsWith("~") ? path2.resolve(key.replace(/^~/, process.env.HOME ?? "")) : path2.resolve(key);
+      const resolved = key.startsWith("~") ? path2.resolve(key.replace(/^~/, os.homedir())) : path2.resolve(key);
       if (resolved === abs && byPath === null)
         byPath = key;
     } else if (key === base && byBase === null)

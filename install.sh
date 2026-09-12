@@ -243,7 +243,7 @@ next_steps() {
       echo "               /agentic-workflow:engineering new <idea>"
       ;;
   esac
-  echo "  Hub:         pnpm hub --dir \"$(pwd)\"   (the review queue, board, doctor, metrics)"
+  echo "  Hub:         pnpm hub --dir \"$TARGET_DIR\"   (the review queue, board, doctor, metrics)"
 }
 
 install_claude() {

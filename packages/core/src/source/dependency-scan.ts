@@ -606,7 +606,8 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
           continue
         }
         let remaining = 0
-        for (const later of claimable.slice(index + 1)) if (await open(later)) remaining++
+        const held = async (pkg: string): Promise<boolean> => (await $`test -d ${depMarker(pkg)}`.quiet().nothrow()).exitCode === 0
+        for (const later of claimable.slice(index + 1)) if ((await open(later)) && !(await held(later.pkg))) remaining++
         return { item: { ...withClaimMarker(workItem(candidate), depMarker(candidate.pkg)), remaining }, skip: null }
       }
       if (heldIds.length) {

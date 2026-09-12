@@ -885,7 +885,7 @@ export const joinClauses = (clauses: readonly string[]): string => {
   }
   return out
 }
-const LABEL_RE = /^[A-Z][A-Z -]+:/
+const LABEL_RE = /^[A-Z][A-Z ,-]+:/
 
 /**
  * The mandatory verdict-contract paragraph appended to every CHECK stage's

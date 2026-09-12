@@ -1672,7 +1672,7 @@ test("workflowSectionKeys reads the declared section keys off the schema", () =>
 })
 
 test("unknownConfigKeys names top-level typos with a suggestion, and skips declared, retired and $schema keys", () => {
-  const raw = { maxIteration: 4, tasksDir: "docs/tasks", $schema: "x", watchIntervalMinutes: 5, bogus: true }
+  const raw = { maxIteration: 4, tasksDir: "docs/tasks", $schema: "x", watchIntervalMinutes: 5, bogus: true, hub: { port: 4317 } }
   assert.deepEqual(unknownConfigKeys(raw), [
     { path: "maxIteration", suggestion: "maxIterations" },
     { path: "bogus" },

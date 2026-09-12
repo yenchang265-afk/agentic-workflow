@@ -236,7 +236,7 @@ function Write-NextSteps([string]$Target) {
         Write-Host "               /agentic-workflow:engineering init"
         Write-Host "               /agentic-workflow:engineering new <idea>"
     }
-    Write-Host "  Hub:         pnpm hub --dir `"$(Get-Location)`"   (the review queue, board, doctor, metrics)"
+    Write-Host "  Hub:         pnpm hub --dir `"$script:TargetDir`"   (the review queue, board, doctor, metrics)"
 }
 
 function Install-Claude {

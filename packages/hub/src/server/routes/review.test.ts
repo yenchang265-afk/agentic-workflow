@@ -134,6 +134,13 @@ test("the diff route refuses a task with no recorded run, a gone branch, an unsa
     const gone = await diff(depsFor(dir), "in-review", "t1")
     assert.equal(gone.status, 409)
     assert.match((gone.body as { error: string }).error, /refs are gone/)
+    // Current-branch mode: the done note names the default branch itself and no
+    // base. The fixture has no origin, so the default branch comes from config.
+    git(dir, "config", "init.defaultBranch", "main")
+    parked(dir, ["> Loop done — review passed on branch main, awaiting human diff review " + STAMP])
+    const same = await diff(depsFor(dir), "in-review", "t1")
+    assert.equal(same.status, 409)
+    assert.match((same.body as { error: string }).error, /current-branch mode on main/)
     assert.equal((await diff(depsFor(dir), "in-review", "../t1")).status, 400)
     assert.equal((await diff(depsFor(dir), "nowhere", "t1")).status, 400)
     assert.equal((await diff(depsFor(dir), "in-review", "t9")).status, 404)

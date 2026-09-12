@@ -490,3 +490,15 @@ test("userRepoOverrides matches an absolute path before a basename, folds the se
   assert.deepEqual(droppedRepoKeys({ repos: { x: {} } }), [{ path: "repos", family: "userOnly" }])
   assert.deepEqual(sanitizeRepoLayer({ repos: { x: {} }, maxIterations: 1 }), { maxIterations: 1 })
 })
+
+test("userRepoOverrides expands a `~` key through os.homedir(), so it matches without $HOME set", () => {
+  const home = os.homedir()
+  const user = { repos: { "~/work/app": { maxIterations: 5 } } }
+  const saved = process.env["HOME"]
+  delete process.env["HOME"]
+  try {
+    assert.equal(userRepoOverrides(user, path.join(home, "work", "app")).matchedKey, "~/work/app")
+  } finally {
+    if (saved !== undefined) process.env["HOME"] = saved
+  }
+})
